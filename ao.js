@@ -13,6 +13,20 @@ const app = express()
 app.use(express.json())
 
 /* =======================
+   ENV VALIDATIE
+======================= */
+const REQUIRED_ENVS = [
+  "TELEGRAM_BOT_TOKEN",
+  "TELEGRAM_CHAT_ID"
+]
+
+for (const key of REQUIRED_ENVS) {
+  if (!process.env[key]) {
+    console.error("[AO][ENV FOUT] ontbreekt:", key)
+  }
+}
+
+/* =======================
    ENV CONFIG
 ======================= */
 const PORT = process.env.PORT || 10000
@@ -43,7 +57,14 @@ app.get("/ping", (req, res) => {
 
 app.post("/api/webhook", async (req, res) => {
   const commitMessage = req.body.head_commit?.message || "Geen commit message gevonden"
-  await sendTelegram("[AO] Webhook ontvangen: " + commitMessage)
+  console.log("[AO] Webhook ontvangen:", commitMessage)
+
+  try {
+    await sendTelegram("[AO] Webhook ontvangen: " + commitMessage)
+  } catch (err) {
+    console.error("[AO][TELEGRAM FOUT][WEBHOOK]", err.message)
+  }
+
   await handleCommand(commitMessage)
   res.status(200).send("Webhook OK")
 })
@@ -54,64 +75,74 @@ app.post("/api/webhook", async (req, res) => {
 async function handleCommand(command) {
   const lower = command.toLowerCase()
 
-  if (lower.includes("restart agent"))
-    return await sendTelegram("⏳ Agent restart wordt uitgevoerd op Render")
+  try {
+    if (lower.includes("restart agent"))
+      return await sendTelegram("⏳ Agent restart wordt uitgevoerd op Render")
 
-  if (lower.includes("ping backend"))
-    return await pingURL("Backend", BACKEND_URL)
+    if (lower.includes("ping backend"))
+      return await pingURL("Backend", BACKEND_URL)
 
-  if (lower.includes("deploy front")) {
-    const mag = await vercelRateLimitCheck()
-    if (mag) await sendTelegram("🚀 Deploycommando voor Frontend gestart")
-    return
+    if (lower.includes("deploy front")) {
+      const mag = await vercelRateLimitCheck()
+      if (mag) await sendTelegram("🚀 Deploycommando voor Frontend gestart")
+      return
+    }
+
+    if (lower.includes("importeer taken")) {
+      await sendTelegram("📦 Importeren van AO_MASTER_FULL_DEPLOY_CLEAN gestart")
+      await importTasks()
+      return
+    }
+
+    if (lower.includes("importeer supabase")) {
+      await sendTelegram("📦 Supabase import gestart")
+      await importSupabase()
+      return
+    }
+
+    if (lower.includes("sync taken backend"))
+      return await koppelNieuweModules("backend")
+
+    if (lower.includes("sync taken frontend"))
+      return await koppelNieuweModules("frontend")
+
+    if (lower.includes("sync taken executor"))
+      return await koppelNieuweModules("executor")
+
+    if (lower.includes("activeer write mode")) {
+      enableWriteMode()
+      await sendTelegram("✍️ WRITE-MODE geactiveerd. Bestanden worden nu echt gekopieerd.")
+      return
+    }
+
+    if (lower.includes("scan bron"))
+      return await scanSource()
+
+    if (lower.includes("classificeer bron"))
+      return await classifySource()
+
+    if (lower.includes("bouw remap plan"))
+      return await buildRemapPlan()
+
+    if (lower.includes("remap backend"))
+      return await executeRemap("backend")
+
+    if (lower.includes("remap frontend"))
+      return await executeRemap("frontend")
+
+    if (lower.includes("remap executor"))
+      return await executeRemap("executor")
+
+    await sendTelegram("⚠️ Onbekend commando:\n" + command)
+
+  } catch (err) {
+    console.error("[AO][COMMAND FOUT]", err)
+    try {
+      await sendTelegram("❌ AO fout:\n" + err.message)
+    } catch (e) {
+      console.error("[AO][TELEGRAM FATAAL]", e.message)
+    }
   }
-
-  if (lower.includes("importeer taken")) {
-    await sendTelegram("📦 Importeren van AO_MASTER_FULL_DEPLOY_CLEAN gestart")
-    await importTasks()
-    return
-  }
-
-  if (lower.includes("importeer supabase")) {
-    await sendTelegram("📦 Supabase import gestart")
-    await importSupabase()
-    return
-  }
-
-  if (lower.includes("sync taken backend"))
-    return await koppelNieuweModules("backend")
-
-  if (lower.includes("sync taken frontend"))
-    return await koppelNieuweModules("frontend")
-
-  if (lower.includes("sync taken executor"))
-    return await koppelNieuweModules("executor")
-
-  if (lower.includes("activeer write mode")) {
-    enableWriteMode()
-    await sendTelegram("✍️ WRITE-MODE geactiveerd. Bestanden worden nu echt gekopieerd.")
-    return
-  }
-
-  if (lower.includes("scan bron"))
-    return await scanSource()
-
-  if (lower.includes("classificeer bron"))
-    return await classifySource()
-
-  if (lower.includes("bouw remap plan"))
-    return await buildRemapPlan()
-
-  if (lower.includes("remap backend"))
-    return await executeRemap("backend")
-
-  if (lower.includes("remap frontend"))
-    return await executeRemap("frontend")
-
-  if (lower.includes("remap executor"))
-    return await executeRemap("executor")
-
-  await sendTelegram("⚠️ Onbekend commando ontvangen:\n" + command)
 }
 
 /* =======================
@@ -121,150 +152,4 @@ async function vercelRateLimitCheck() {
   const now = Date.now()
   const verschil = (now - lastFrontendDeploy) / 1000
   if (verschil < 60) {
-    await sendTelegram("🛑 Deploy geblokkeerd: minder dan 60 sec sinds laatste poging.")
-    return false
-  }
-  lastFrontendDeploy = now
-  return true
-}
-
-async function pingURL(label, url) {
-  if (!url) return
-  try {
-    const r = await axios.get(url + "/ping")
-    console.log("[AO] " + label + " OK: " + r.status)
-  } catch (e) {
-    console.log("[AO] " + label + " FOUT: " + e.message)
-  }
-}
-
-async function importTasks() {
-  const sourcePath = path.resolve("./AO_MASTER_FULL_DEPLOY_CLEAN")
-  if (!fs.existsSync(sourcePath)) {
-    await sendTelegram("❌ AO_MASTER_FULL_DEPLOY_CLEAN map niet gevonden")
-    return
-  }
-  await sendTelegram("✅ Bronmap gevonden")
-}
-
-async function importSupabase() {
-  try {
-    const { data, error } = await supabase.from("pg_tables").select("*")
-    if (error) throw error
-    await sendTelegram("✅ Supabase tabellen: " + data.length)
-  } catch (err) {
-    await sendTelegram("⚠️ Supabase fout: " + err.message)
-  }
-}
-
-async function koppelNieuweModules(target) {
-  await sendTelegram("🔗 Modules gekoppeld aan " + target)
-}
-
-/* =======================
-   AGENT LOGIC
-======================= */
-async function scanSource() {
-  const base = path.resolve("./AO_MASTER_FULL_DEPLOY_CLEAN")
-  if (!fs.existsSync(base)) {
-    await sendTelegram("❌ Bronmap ontbreekt")
-    return
-  }
-
-  const files = []
-
-  function walk(dir) {
-    for (const item of fs.readdirSync(dir)) {
-      const full = path.join(dir, item)
-      const stat = fs.statSync(full)
-      if (stat.isDirectory()) walk(full)
-      else files.push(full.replace(base + "/", ""))
-    }
-  }
-
-  walk(base)
-  sourceScan = files
-  await sendTelegram("📂 Bron gescand: " + files.length + " bestanden")
-}
-
-async function classifySource() {
-  if (!sourceScan) {
-    await sendTelegram("⚠️ Eerst 'scan bron' uitvoeren")
-    return
-  }
-
-  classifiedFiles = {
-    backend: [],
-    frontend: [],
-    executor: [],
-    unknown: []
-  }
-
-  for (const f of sourceScan) {
-    const l = f.toLowerCase()
-    if (l.includes("backend") || l.includes("api") || l.includes("routes"))
-      classifiedFiles.backend.push(f)
-    else if (l.includes("frontend") || l.includes("app") || l.includes("pages"))
-      classifiedFiles.frontend.push(f)
-    else if (l.includes("executor") || l.includes("agent") || l.includes("workflow"))
-      classifiedFiles.executor.push(f)
-    else
-      classifiedFiles.unknown.push(f)
-  }
-
-  await sendTelegram(
-    "🧠 Classificatie klaar\n" +
-    "Backend: " + classifiedFiles.backend.length + "\n" +
-    "Frontend: " + classifiedFiles.frontend.length + "\n" +
-    "Executor: " + classifiedFiles.executor.length + "\n" +
-    "Onbekend: " + classifiedFiles.unknown.length
-  )
-}
-
-async function buildRemapPlan() {
-  if (!classifiedFiles) {
-    await sendTelegram("⚠️ Eerst 'classificeer bron' uitvoeren")
-    return
-  }
-
-  remapPlan = {
-    backend: classifiedFiles.backend,
-    frontend: classifiedFiles.frontend,
-    executor: classifiedFiles.executor
-  }
-
-  await sendTelegram("🗺️ Remap-plan opgebouwd")
-}
-
-async function executeRemap(target) {
-  if (!remapPlan) {
-    await sendTelegram("⚠️ Geen remap-plan beschikbaar")
-    return
-  }
-
-  const files = remapPlan[target] || []
-  if (!files.length) {
-    await sendTelegram("⚠️ Geen bestanden voor " + target)
-    return
-  }
-
-  await sendTelegram("🚧 REMAP gestart voor " + target)
-  await runRemap(target, files)
-}
-
-/* =======================
-   AUTO START
-======================= */
-function startAutoPing() {
-  setInterval(async () => {
-    await pingURL("Backend", BACKEND_URL)
-    await pingURL("Executor", EXECUTOR_URL)
-    await pingURL("Vercel", VERCEL_URL)
-  }, 2 * 60 * 1000)
-}
-
-app.listen(PORT, async () => {
-  console.log("AO Executor draait op poort " + PORT)
-  await sendTelegram("[AO] Executor gestart")
-  startAutoPing()
-})
+    await sendTelegram("🛑 Deploy geblokkeerd:
