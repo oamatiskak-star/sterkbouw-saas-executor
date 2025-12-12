@@ -10,19 +10,13 @@ app.use(express.json())
 
 const PORT = process.env.PORT || 10000
 const BACKEND_URL = process.env.BACKEND_URL
+const FRONTEND_URL = process.env.FRONTEND_URL
+const EXECUTOR_URL = process.env.EXECUTOR_URL
+const SUPABASE_URL = process.env.SUPABASE_URL
+const GITHUB_URL = process.env.GITHUB_URL
+const VERCEL_URL = process.env.VERCEL_URL
 
-// Vercel deploy rate limiter
 let lastFrontendDeploy = 0
-async function vercelRateLimitCheck() {
-  const now = Date.now()
-  const verschil = (now - lastFrontendDeploy) / 1000
-  if (verschil < 60) {
-    await sendTelegram("🛑 Deploy geblokkeerd: minder dan 60 sec sinds laatste poging.")
-    return false
-  }
-  lastFrontendDeploy = now
-  return true
-}
 
 app.get("/ping", (req, res) => {
   res.status(200).send("AO EXECUTOR OK")
@@ -40,12 +34,11 @@ async function handleCommand(command) {
 
   if (lower.includes("restart agent")) {
     await sendTelegram("⏳ Agent restart wordt uitgevoerd op Render")
-    // TODO: Trigger herstart via Render API
     return
   }
 
   if (lower.includes("ping backend")) {
-    await pingBackend()
+    await pingURL("Backend", BACKEND_URL)
     return
   }
 
@@ -53,48 +46,70 @@ async function handleCommand(command) {
     const magDeployen = await vercelRateLimitCheck()
     if (!magDeployen) return
     await sendTelegram("🚀 Deploycommando voor Frontend gestart")
-    // TODO: Trigger Vercel redeploy via API
     return
   }
 
   if (lower.includes("importeer taken")) {
     await sendTelegram("📦 Start import taken vanuit AO_MASTER_FULL_DEPLOY_CLEAN")
-    // TODO: Start migratie uit MAIN project
     return
   }
 
   if (lower.includes("sync taken backend")) {
     await sendTelegram("📁 Taken synchroniseren met SterkBouw Backend")
-    // TODO: Specifieke backend taken ophalen en registreren
     return
   }
 
   if (lower.includes("sync taken frontend")) {
     await sendTelegram("📁 Taken synchroniseren met SterkBouw Frontend")
-    // TODO: Specifieke frontend taken ophalen en registreren
     return
   }
 
   if (lower.includes("sync taken executor")) {
     await sendTelegram("📁 Taken synchroniseren met SterkBouw Executor")
-    // TODO: Executor taken bijwerken
     return
   }
 
   await sendTelegram("⚠️ Onbekend commando ontvangen:\n" + command)
 }
 
-async function pingBackend() {
-  try {
-    const r = await axios.get(BACKEND_URL + "/ping")
-    await sendTelegram("[AO] Backend OK: " + r.status)
-  } catch (e) {
-    await sendTelegram("[AO] Backend FOUT: " + e.message)
+async function vercelRateLimitCheck() {
+  const now = Date.now()
+  const verschil = (now - lastFrontendDeploy) / 1000
+  if (verschil < 60) {
+    await sendTelegram("🛑 Deploy geblokkeerd: minder dan 60 sec sinds laatste poging.")
+    return false
   }
+  lastFrontendDeploy = now
+  return true
+}
+
+async function pingURL(label, url) {
+  if (!url) {
+    await sendTelegram(`⚠️ Geen URL ingesteld voor ${label}`)
+    return
+  }
+  try {
+    const r = await axios.get(url + "/ping")
+    await sendTelegram(`[AO] ${label} OK: ${r.status}`)
+  } catch (e) {
+    await sendTelegram(`[AO] ${label} FOUT: ${e.message}`)
+  }
+}
+
+function startAutoPing() {
+  setInterval(async () => {
+    await pingURL("Backend", BACKEND_URL)
+    await pingURL("Frontend", FRONTEND_URL)
+    await pingURL("Executor", EXECUTOR_URL)
+    await pingURL("Vercel", VERCEL_URL)
+    await pingURL("GitHub", GITHUB_URL)
+    await pingURL("Supabase", SUPABASE_URL)
+  }, 2 * 60 * 1000) // elke 2 minuten
 }
 
 app.listen(PORT, async () => {
   console.log("AO Executor draait op poort " + PORT)
   await sendTelegram("[AO] Executor gestart")
-  await pingBackend()
+  await pingURL("Backend", BACKEND_URL)
+  startAutoPing()
 })
