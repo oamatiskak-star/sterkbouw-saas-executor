@@ -27,9 +27,6 @@ for (const key of REQUIRED_ENVS) {
    ENV CONFIG
 ======================= */
 const PORT = process.env.PORT || 10000
-const BACKEND_URL = process.env.BACKEND_URL
-const EXECUTOR_URL = process.env.EXECUTOR_URL
-const VERCEL_URL = process.env.VERCEL_URL
 const SUPABASE_URL = process.env.SUPABASE_URL
 const SUPABASE_KEY = process.env.SUPABASE_KEY
 
@@ -51,29 +48,41 @@ app.get("/ping", (req, res) => {
 
 /* GitHub webhook */
 app.post("/api/webhook", async (req, res) => {
-  const commitMessage = req.body.head_commit?.message || ""
-  console.log("[AO] GitHub webhook:", commitMessage)
+  const commitMessage = req.body?.head_commit?.message || ""
+  console.log("[AO] GitHub webhook ontvangen:", commitMessage)
 
-  await handleCommand(commitMessage)
+  try {
+    await handleCommand(commitMessage)
+  } catch (e) {
+    console.error("[AO][GITHUB COMMAND FOUT]", e.message)
+  }
+
   res.status(200).send("Webhook OK")
 })
 
 /* Telegram webhook */
 app.post("/telegram/webhook", async (req, res) => {
+  console.log("[AO] Telegram webhook HIT")
+
   try {
     const message = req.body?.message?.text
-    if (!message) {
-      return res.status(200).send("No message")
+    const chatId = req.body?.message?.chat?.id
+
+    if (!message || !chatId) {
+      console.log("[AO] Telegram payload ongeldig")
+      return res.sendStatus(200)
     }
 
-    console.log("[AO] Telegram bericht ontvangen:", message)
+    console.log("[AO] Telegram bericht:", message)
+
+    await sendTelegram("📥 Ontvangen: " + message)
     await handleCommand(message)
 
-    res.status(200).send("Telegram OK")
   } catch (err) {
     console.error("[AO][TELEGRAM WEBHOOK FOUT]", err.message)
-    res.status(200).send("Telegram error")
   }
+
+  res.sendStatus(200)
 })
 
 /* =======================
@@ -82,37 +91,21 @@ app.post("/telegram/webhook", async (req, res) => {
 async function handleCommand(command) {
   const lower = command.toLowerCase()
 
-  try {
-    if (lower.includes("scan bron"))
-      return await scanSource()
+  if (lower.includes("scan bron")) return await scanSource()
+  if (lower.includes("classificeer bron")) return await classifySource()
+  if (lower.includes("bouw remap plan")) return await buildRemapPlan()
 
-    if (lower.includes("classificeer bron"))
-      return await classifySource()
-
-    if (lower.includes("bouw remap plan"))
-      return await buildRemapPlan()
-
-    if (lower.includes("activeer write mode")) {
-      enableWriteMode()
-      await sendTelegram("WRITE MODE geactiveerd")
-      return
-    }
-
-    if (lower.includes("remap backend"))
-      return await executeRemap("backend")
-
-    if (lower.includes("remap frontend"))
-      return await executeRemap("frontend")
-
-    if (lower.includes("remap executor"))
-      return await executeRemap("executor")
-
-    await sendTelegram("Onbekend commando: " + command)
-
-  } catch (err) {
-    console.error("[AO][COMMAND FOUT]", err.message)
-    await sendTelegram("AO fout: " + err.message)
+  if (lower.includes("activeer write mode")) {
+    enableWriteMode()
+    await sendTelegram("✍️ WRITE MODE geactiveerd")
+    return
   }
+
+  if (lower.includes("remap backend")) return await executeRemap("backend")
+  if (lower.includes("remap frontend")) return await executeRemap("frontend")
+  if (lower.includes("remap executor")) return await executeRemap("executor")
+
+  await sendTelegram("⚠️ Onbekend commando: " + command)
 }
 
 /* =======================
@@ -121,7 +114,7 @@ async function handleCommand(command) {
 async function scanSource() {
   const base = path.resolve("./AO_MASTER_FULL_DEPLOY_CLEAN")
   if (!fs.existsSync(base)) {
-    await sendTelegram("Bronmap ontbreekt")
+    await sendTelegram("❌ Bronmap ontbreekt")
     return
   }
 
@@ -138,12 +131,13 @@ async function scanSource() {
 
   walk(base)
   sourceScan = files
-  await sendTelegram("Bron gescand: " + files.length + " bestanden")
+
+  await sendTelegram("📂 Bron gescand: " + files.length + " bestanden")
 }
 
 async function classifySource() {
   if (!sourceScan) {
-    await sendTelegram("Eerst scan uitvoeren")
+    await sendTelegram("⚠️ Eerst scan bron uitvoeren")
     return
   }
 
@@ -153,7 +147,7 @@ async function classifySource() {
     const l = f.toLowerCase()
     if (l.includes("backend") || l.includes("api") || l.includes("routes"))
       classifiedFiles.backend.push(f)
-    else if (l.includes("frontend") || l.includes("pages"))
+    else if (l.includes("frontend") || l.includes("pages") || l.includes("app"))
       classifiedFiles.frontend.push(f)
     else if (l.includes("executor") || l.includes("agent"))
       classifiedFiles.executor.push(f)
@@ -162,7 +156,7 @@ async function classifySource() {
   }
 
   await sendTelegram(
-    "Classificatie klaar\n" +
+    "🧠 Classificatie klaar\n" +
     "Backend: " + classifiedFiles.backend.length + "\n" +
     "Frontend: " + classifiedFiles.frontend.length + "\n" +
     "Executor: " + classifiedFiles.executor.length
@@ -170,22 +164,28 @@ async function classifySource() {
 }
 
 async function buildRemapPlan() {
+  if (!classifiedFiles) {
+    await sendTelegram("⚠️ Geen classificatie beschikbaar")
+    return
+  }
+
   remapPlan = {
     backend: classifiedFiles.backend,
     frontend: classifiedFiles.frontend,
     executor: classifiedFiles.executor
   }
-  await sendTelegram("Remap plan opgebouwd")
+
+  await sendTelegram("🗺️ Remap plan opgebouwd")
 }
 
 async function executeRemap(target) {
   const files = remapPlan?.[target] || []
   if (!files.length) {
-    await sendTelegram("Geen bestanden voor " + target)
+    await sendTelegram("⚠️ Geen bestanden voor " + target)
     return
   }
 
-  await sendTelegram("Remap gestart voor " + target)
+  await sendTelegram("🚧 REMAP gestart voor " + target)
   await runRemap(target, files)
 }
 
@@ -194,5 +194,11 @@ async function executeRemap(target) {
 ======================= */
 app.listen(PORT, async () => {
   console.log("AO Executor draait op poort " + PORT)
-  await sendTelegram("AO Executor gestart")
+
+  try {
+    await sendTelegram("✅ AO Executor gestart en luistert naar Telegram")
+    console.log("[AO] Telegram test verzonden")
+  } catch (err) {
+    console.error("[AO][TELEGRAM START FOUT]", err.message)
+  }
 })
