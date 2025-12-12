@@ -15,10 +15,7 @@ app.use(express.json())
 /* =======================
    ENV VALIDATIE
 ======================= */
-const REQUIRED_ENVS = [
-  "TELEGRAM_BOT_TOKEN",
-  "TELEGRAM_CHAT_ID"
-]
+const REQUIRED_ENVS = ["TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"]
 
 for (const key of REQUIRED_ENVS) {
   if (!process.env[key]) {
@@ -31,10 +28,8 @@ for (const key of REQUIRED_ENVS) {
 ======================= */
 const PORT = process.env.PORT || 10000
 const BACKEND_URL = process.env.BACKEND_URL
-const FRONTEND_URL = process.env.FRONTEND_URL
 const EXECUTOR_URL = process.env.EXECUTOR_URL
 const VERCEL_URL = process.env.VERCEL_URL
-const SOURCE_PROJECT_URL = process.env.GITHUB_URL
 const SUPABASE_URL = process.env.SUPABASE_URL
 const SUPABASE_KEY = process.env.SUPABASE_KEY
 
@@ -76,42 +71,24 @@ async function handleCommand(command) {
   const lower = command.toLowerCase()
 
   try {
-    if (lower.includes("restart agent"))
-      return await sendTelegram("⏳ Agent restart wordt uitgevoerd op Render")
-
     if (lower.includes("ping backend"))
       return await pingURL("Backend", BACKEND_URL)
 
-    if (lower.includes("deploy front")) {
-      const mag = await vercelRateLimitCheck()
-      if (mag) await sendTelegram("🚀 Deploycommando voor Frontend gestart")
-      return
-    }
-
     if (lower.includes("importeer taken")) {
-      await sendTelegram("📦 Importeren van AO_MASTER_FULL_DEPLOY_CLEAN gestart")
+      await sendTelegram("Import taken gestart")
       await importTasks()
       return
     }
 
     if (lower.includes("importeer supabase")) {
-      await sendTelegram("📦 Supabase import gestart")
+      await sendTelegram("Supabase import gestart")
       await importSupabase()
       return
     }
 
-    if (lower.includes("sync taken backend"))
-      return await koppelNieuweModules("backend")
-
-    if (lower.includes("sync taken frontend"))
-      return await koppelNieuweModules("frontend")
-
-    if (lower.includes("sync taken executor"))
-      return await koppelNieuweModules("executor")
-
     if (lower.includes("activeer write mode")) {
       enableWriteMode()
-      await sendTelegram("✍️ WRITE-MODE geactiveerd. Bestanden worden nu echt gekopieerd.")
+      await sendTelegram("WRITE MODE geactiveerd")
       return
     }
 
@@ -133,23 +110,132 @@ async function handleCommand(command) {
     if (lower.includes("remap executor"))
       return await executeRemap("executor")
 
-    await sendTelegram("⚠️ Onbekend commando:\n" + command)
+    await sendTelegram("Onbekend commando: " + command)
 
   } catch (err) {
-    console.error("[AO][COMMAND FOUT]", err)
+    console.error("[AO][COMMAND FOUT]", err.message)
     try {
-      await sendTelegram("❌ AO fout:\n" + err.message)
-    } catch (e) {
-      console.error("[AO][TELEGRAM FATAAL]", e.message)
-    }
+      await sendTelegram("AO fout: " + err.message)
+    } catch {}
   }
 }
 
 /* =======================
    HELPERS
 ======================= */
-async function vercelRateLimitCheck() {
-  const now = Date.now()
-  const verschil = (now - lastFrontendDeploy) / 1000
-  if (verschil < 60) {
-    await sendTelegram("🛑 Deploy geblokkeerd:
+async function pingURL(label, url) {
+  if (!url) return
+  try {
+    const r = await axios.get(url + "/ping")
+    console.log("[AO]", label, "OK:", r.status)
+  } catch (e) {
+    console.log("[AO]", label, "FOUT:", e.message)
+  }
+}
+
+async function importTasks() {
+  const sourcePath = path.resolve("./AO_MASTER_FULL_DEPLOY_CLEAN")
+  if (!fs.existsSync(sourcePath)) {
+    await sendTelegram("Bronmap niet gevonden")
+    return
+  }
+  await sendTelegram("Bronmap gevonden")
+}
+
+async function importSupabase() {
+  try {
+    const { data, error } = await supabase.from("pg_tables").select("*")
+    if (error) throw error
+    await sendTelegram("Supabase tabellen: " + data.length)
+  } catch (err) {
+    await sendTelegram("Supabase fout: " + err.message)
+  }
+}
+
+/* =======================
+   AGENT LOGIC
+======================= */
+async function scanSource() {
+  const base = path.resolve("./AO_MASTER_FULL_DEPLOY_CLEAN")
+  if (!fs.existsSync(base)) {
+    await sendTelegram("Bronmap ontbreekt")
+    return
+  }
+
+  const files = []
+
+  function walk(dir) {
+    for (const item of fs.readdirSync(dir)) {
+      const full = path.join(dir, item)
+      const stat = fs.statSync(full)
+      if (stat.isDirectory()) walk(full)
+      else files.push(full.replace(base + "/", ""))
+    }
+  }
+
+  walk(base)
+  sourceScan = files
+  await sendTelegram("Bron gescand: " + files.length + " bestanden")
+}
+
+async function classifySource() {
+  if (!sourceScan) {
+    await sendTelegram("Eerst scan uitvoeren")
+    return
+  }
+
+  classifiedFiles = { backend: [], frontend: [], executor: [], unknown: [] }
+
+  for (const f of sourceScan) {
+    const l = f.toLowerCase()
+    if (l.includes("backend") || l.includes("api") || l.includes("routes"))
+      classifiedFiles.backend.push(f)
+    else if (l.includes("frontend") || l.includes("pages"))
+      classifiedFiles.frontend.push(f)
+    else if (l.includes("executor") || l.includes("agent"))
+      classifiedFiles.executor.push(f)
+    else
+      classifiedFiles.unknown.push(f)
+  }
+
+  await sendTelegram(
+    "Classificatie klaar\n" +
+    "Backend: " + classifiedFiles.backend.length + "\n" +
+    "Frontend: " + classifiedFiles.frontend.length + "\n" +
+    "Executor: " + classifiedFiles.executor.length
+  )
+}
+
+async function buildRemapPlan() {
+  remapPlan = {
+    backend: classifiedFiles.backend,
+    frontend: classifiedFiles.frontend,
+    executor: classifiedFiles.executor
+  }
+  await sendTelegram("Remap plan opgebouwd")
+}
+
+async function executeRemap(target) {
+  const files = remapPlan?.[target] || []
+  if (!files.length) {
+    await sendTelegram("Geen bestanden voor " + target)
+    return
+  }
+
+  await sendTelegram("Remap gestart voor " + target)
+  await runRemap(target, files)
+}
+
+/* =======================
+   START
+======================= */
+app.listen(PORT, async () => {
+  console.log("AO Executor draait op poort " + PORT)
+
+  try {
+    await sendTelegram("AO Executor gestart")
+    console.log("Telegram test verzonden")
+  } catch (err) {
+    console.error("Telegram fout:", err.message)
+  }
+})
