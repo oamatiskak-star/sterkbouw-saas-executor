@@ -12,16 +12,16 @@ app.use(express.json())
 ENV VALIDATIE
 ======================= */
 const REQUIRED_ENVS = [
-"TELEGRAM_BOT_TOKEN",
-"TELEGRAM_CHAT_ID",
-"GITHUB_PAT",
-"GITHUB_REPO"
+  "TELEGRAM_BOT_TOKEN",
+  "TELEGRAM_CHAT_ID",
+  "GITHUB_PAT",
+  "GITHUB_REPO"
 ]
 
 for (const key of REQUIRED_ENVS) {
-if (!process.env[key]) {
-console.error("[AO][ENV FOUT] ontbreekt:", key)
-}
+  if (!process.env[key]) {
+    console.error("[AO][ENV FOUT] ontbreekt:", key)
+  }
 }
 
 /* =======================
@@ -43,137 +43,154 @@ let remapPlan = null
 ROUTES
 ======================= */
 app.get("/ping", (req, res) => {
-res.status(200).send("AO EXECUTOR OK")
+  res.status(200).send("AO EXECUTOR OK")
 })
 
 app.post("/telegram/webhook", async (req, res) => {
-const message = req.body?.message?.text
-if (!message) return res.sendStatus(200)
+  const message = req.body?.message?.text
+  if (!message) return res.sendStatus(200)
 
-console.log("[AO][TELEGRAM]", message)
+  console.log("[AO][TELEGRAM] ontvangen:", message)
 
-await sendTelegram("📥 Ontvangen: " + message)
-await handleCommand(message)
+  try {
+    await sendTelegram("📥 Command ontvangen: " + message)
+    await handleCommand(message)
+  } catch (err) {
+    console.error("[AO][TELEGRAM COMMAND FOUT]", err.message)
+    await sendTelegram("❌ Fout: " + err.message)
+  }
 
-res.sendStatus(200)
+  res.sendStatus(200)
 })
 
 /* =======================
 COMMAND ROUTER
 ======================= */
 async function handleCommand(command) {
-const clean = command
-.toLowerCase()
-.trim()
-.replace(/\s+/g, " ")
+  const clean = command
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, " ")
 
-console.log("[AO][CMD]", clean)
+  console.log("[AO][CMD]", clean)
 
-if (clean === "activeer write mode") {
-enableWriteMode()
-await sendTelegram("✍️ WRITE MODE geactiveerd")
-return
-}
+  if (clean === "activeer write mode") {
+    enableWriteMode()
+    console.log("[AO][WRITE MODE] AAN")
+    await sendTelegram("✍️ WRITE MODE STAAT AAN")
+    return
+  }
 
-if (clean === "scan bron") {
-return await scanSource()
-}
+  if (clean === "scan bron") {
+    console.log("[AO][ACTIE] scan bron")
+    return await scanSource()
+  }
 
-if (clean === "classificeer bron") {
-return await classifySource()
-}
+  if (clean === "classificeer bron") {
+    console.log("[AO][ACTIE] classificeer bron")
+    return await classifySource()
+  }
 
-if (clean === "bouw remap plan") {
-return await buildRemapPlan()
-}
+  if (clean === "bouw remap plan") {
+    console.log("[AO][ACTIE] bouw remap plan")
+    return await buildRemapPlan()
+  }
 
-if (clean === "remap backend") {
-return await executeRemap("backend")
-}
+  if (clean === "remap backend") {
+    console.log("[AO][ACTIE] remap backend")
+    return await executeRemap("backend")
+  }
 
-if (clean === "remap frontend") {
-return await executeRemap("frontend")
-}
+  if (clean === "remap frontend") {
+    console.log("[AO][ACTIE] remap frontend")
+    return await executeRemap("frontend")
+  }
 
-if (clean === "remap executor") {
-return await executeRemap("executor")
-}
+  if (clean === "remap executor") {
+    console.log("[AO][ACTIE] remap executor")
+    return await executeRemap("executor")
+  }
 
-await sendTelegram("⚠️ Onbekend commando: " + clean)
+  await sendTelegram("⚠️ Onbekend commando: " + clean)
 }
 
 /* =======================
 LOGIC
 ======================= */
 async function scanSource() {
-const files = await runRemap("scan")
-sourceScan = files
+  console.log("[AO][SCAN] gestart")
 
-await sendTelegram("📂 Scan klaar: " + files.length + " bestanden")
+  const files = await runRemap("scan")
+  sourceScan = files
+
+  console.log("[AO][SCAN] klaar:", files.length)
+  await sendTelegram("📂 Scan klaar: " + files.length + " bestanden")
 }
 
 async function classifySource() {
-if (!sourceScan) {
-await sendTelegram("⚠️ Eerst scan bron uitvoeren")
-return
-}
+  if (!sourceScan) {
+    await sendTelegram("⚠️ Eerst scan bron uitvoeren")
+    return
+  }
 
-classifiedFiles = {
-backend: [],
-frontend: [],
-executor: [],
-unknown: []
-}
+  classifiedFiles = {
+    backend: [],
+    frontend: [],
+    executor: [],
+    unknown: []
+  }
 
-for (const f of sourceScan) {
-const l = f.toLowerCase()
+  for (const f of sourceScan) {
+    const l = f.toLowerCase()
 
-if (l.includes("backend") || l.includes("api") || l.includes("routes"))
-  classifiedFiles.backend.push(f)
-else if (l.includes("frontend") || l.includes("pages") || l.includes("app"))
-  classifiedFiles.frontend.push(f)
-else if (l.includes("executor") || l.includes("agent"))
-  classifiedFiles.executor.push(f)
-else
-  classifiedFiles.unknown.push(f)
+    if (l.includes("backend") || l.includes("api") || l.includes("routes"))
+      classifiedFiles.backend.push(f)
+    else if (l.includes("frontend") || l.includes("pages") || l.includes("app"))
+      classifiedFiles.frontend.push(f)
+    else if (l.includes("executor") || l.includes("agent"))
+      classifiedFiles.executor.push(f)
+    else
+      classifiedFiles.unknown.push(f)
+  }
 
-
-}
-
-await sendTelegram(
-"🧠 Classificatie\n" +
-"Backend: " + classifiedFiles.backend.length + "\n" +
-"Frontend: " + classifiedFiles.frontend.length + "\n" +
-"Executor: " + classifiedFiles.executor.length
-)
+  await sendTelegram(
+    "🧠 Classificatie klaar\n" +
+    "Backend: " + classifiedFiles.backend.length + "\n" +
+    "Frontend: " + classifiedFiles.frontend.length + "\n" +
+    "Executor: " + classifiedFiles.executor.length
+  )
 }
 
 async function buildRemapPlan() {
-if (!classifiedFiles) {
-await sendTelegram("⚠️ Geen classificatie")
-return
-}
+  if (!classifiedFiles) {
+    await sendTelegram("⚠️ Geen classificatie beschikbaar")
+    return
+  }
 
-remapPlan = classifiedFiles
-await sendTelegram("🗺️ Remap plan opgebouwd")
+  remapPlan = classifiedFiles
+  await sendTelegram("🗺️ Remap plan opgebouwd")
 }
 
 async function executeRemap(target) {
-const files = remapPlan?.[target] || []
+  const files = remapPlan?.[target] || []
 
-if (!files.length) {
-await sendTelegram("⚠️ Geen bestanden voor " + target)
-return
-}
+  if (!files.length) {
+    await sendTelegram("⚠️ Geen bestanden voor " + target)
+    return
+  }
 
-await sendTelegram("🚧 REMAP gestart voor " + target)
-await runRemap(target, files)
+  console.log("[AO][REMAP] start", target, files.length)
+  await sendTelegram("🚧 REMAP gestart voor " + target)
+
+  await runRemap(target, files)
+
+  await sendTelegram("✅ REMAP afgerond voor " + target)
 }
 
 /* =======================
 START
 ======================= */
 app.listen(PORT, async () => {
-console.log("AO Executor draait op poort " + PORT)
-await sendTelegram("✅ AO Executor live en gereed")
+  console.log("AO Executor draait op poort " + PORT)
+  await sendTelegram("✅ AO Executor live en gereed")
 })
