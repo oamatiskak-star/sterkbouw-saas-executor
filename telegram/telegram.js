@@ -1,14 +1,13 @@
-import axios from 'axios'
-import dotenv from 'dotenv'
-dotenv.config()
+import axios from "axios"
 
-const token = process.env.TELEGRAM_BOT_TOKEN
-const chatId = process.env.TELEGRAM_CHAT_ID
+const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN
+const CHAT_ID = process.env.TELEGRAM_CHAT_ID
 
-export async function sendTelegram(message) {
-  const url = `https://api.telegram.org/bot${token}/sendMessage`
+export async function sendTelegram(msg) {
+  if (!TELEGRAM_TOKEN || !CHAT_ID) return
+  const url = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`
   await axios.post(url, {
-    chat_id: chatId,
-    text: message
+    chat_id: CHAT_ID,
+    text: msg,
   })
 }
