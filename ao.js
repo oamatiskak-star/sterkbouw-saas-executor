@@ -7,6 +7,7 @@ import { sendTelegram } from "./telegram/telegram.js"
 import { createClient } from "@supabase/supabase-js"
 import fs from "fs"
 import path from "path"
+import { runRemap } from "./remap/remapEngine.js"
 
 const app = express()
 app.use(express.json())
@@ -85,10 +86,6 @@ async function handleCommand(command) {
 
   if (lower.includes("sync taken executor"))
     return await koppelNieuweModules("executor")
-
-  /* =======================
-     NIEUWE AGENT COMMANDS
-  ======================= */
 
   if (lower.includes("scan bron"))
     return await scanSource()
@@ -240,8 +237,14 @@ async function executeRemap(target) {
     return
   }
 
-  const count = remapPlan[target]?.length || 0
-  await sendTelegram(`🚧 Remap gestart voor ${target} (${count} bestanden)`)
+  const files = remapPlan[target] || []
+  if (!files.length) {
+    await sendTelegram("⚠️ Geen bestanden voor " + target)
+    return
+  }
+
+  await sendTelegram(`🧪 DRY-RUN gestart voor ${target}`)
+  await runRemap(target, files, "dry")
 }
 
 /* =======================
