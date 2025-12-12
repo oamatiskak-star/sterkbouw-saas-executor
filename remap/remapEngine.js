@@ -7,32 +7,24 @@ export function enableWriteMode() {
   console.log("[AO][REMAP] WRITE MODE = AAN")
 }
 
-/* =======================
-   ENV
-======================= */
-const GITHUB_OWNER = process.env.GITHUB_OWNER
-const GITHUB_REPO = process.env.GITHUB_REPO
+const GITHUB_PAT = process.env.GITHUB_PAT
+const GITHUB_REPO_FULL = process.env.GITHUB_REPO
 const GITHUB_BRANCH = process.env.GITHUB_BRANCH || "main"
-const GITHUB_TOKEN = process.env.GITHUB_TOKEN
 
-if (!GITHUB_OWNER || !GITHUB_REPO || !GITHUB_TOKEN) {
-  console.error("[AO][REMAP][ENV FOUT] GitHub configuratie ontbreekt")
+if (!GITHUB_PAT || !GITHUB_REPO_FULL) {
+  console.error("[AO][REMAP][ENV FOUT] GITHUB_PAT of GITHUB_REPO ontbreekt")
 }
 
-/* =======================
-   GITHUB CLIENT
-======================= */
+const [GITHUB_OWNER, GITHUB_REPO] = GITHUB_REPO_FULL.split("/")
+
 const github = axios.create({
   baseURL: "https://api.github.com",
   headers: {
-    Authorization: "Bearer " + GITHUB_TOKEN,
+    Authorization: "Bearer " + GITHUB_PAT,
     Accept: "application/vnd.github+json"
   }
 })
 
-/* =======================
-   REMAP ENGINE
-======================= */
 export async function runRemap(target, files) {
   console.log("[AO][REMAP] START", target, "bestanden:", files.length)
 
@@ -53,22 +45,21 @@ export async function runRemap(target, files) {
         { params: { ref: GITHUB_BRANCH } }
       )
 
-      const contentBase64 = fileRes.data?.content
-      if (!contentBase64) {
-        console.log("[AO][REMAP] Geen content:", filePath)
+      const content = fileRes.data.content
+      const sha = fileRes.data.sha
+
+      if (!content || !sha) {
         failed++
         continue
       }
 
       const newPath = buildTargetPath(target, filePath)
 
-      console.log("[AO][REMAP] Schrijf naar:", newPath)
-
       await github.put(
         `/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${newPath}`,
         {
-          message: "AO remap: " + filePath + " -> " + target,
-          content: contentBase64,
+          message: "AO remap: " + filePath + " → " + target,
+          content: content,
           branch: GITHUB_BRANCH
         }
       )
@@ -85,33 +76,15 @@ export async function runRemap(target, files) {
     }
   }
 
-  console.log(
-    "[AO][REMAP] KLAAR",
-    target,
-    "OK:",
-    success,
-    "FOUT:",
-    failed
-  )
+  console.log("[AO][REMAP] KLAAR", target, "OK:", success, "FOUT:", failed)
 }
 
-/* =======================
-   PATH HELPERS
-======================= */
 function buildTargetPath(target, originalPath) {
-  const clean = originalPath.replace(/^\/+/, "")
+  const clean = originalPath.replace(/^\/+/g, "")
 
-  if (target === "backend") {
-    return "backend/" + stripRoot(clean)
-  }
-
-  if (target === "frontend") {
-    return "frontend/" + stripRoot(clean)
-  }
-
-  if (target === "executor") {
-    return "executor/" + stripRoot(clean)
-  }
+  if (target === "backend") return "backend/" + stripRoot(clean)
+  if (target === "frontend") return "frontend/" + stripRoot(clean)
+  if (target === "executor") return "executor/" + stripRoot(clean)
 
   return target + "/" + stripRoot(clean)
 }
