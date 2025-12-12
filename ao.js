@@ -1,11 +1,9 @@
-// AO Executor - ao.js
-
 import * as dotenv from "dotenv"
 dotenv.config()
 
 import express from "express"
 import axios from "axios"
-import sendTelegram from "./telegram/telegram.js"
+import { sendTelegram } from "./telegram/telegram.js"
 
 const app = express()
 app.use(express.json())
@@ -14,8 +12,6 @@ const PORT = process.env.PORT || 10000
 const BACKEND_URL = process.env.BACKEND_URL
 const FRONTEND_URL = process.env.FRONTEND_URL
 const EXECUTOR_URL = process.env.EXECUTOR_URL
-const SUPABASE_URL = process.env.SUPABASE_URL
-const GITHUB_URL = process.env.GITHUB_URL
 const VERCEL_URL = process.env.VERCEL_URL
 
 let lastFrontendDeploy = 0
@@ -40,7 +36,7 @@ async function handleCommand(command) {
   }
 
   if (lower.includes("ping backend")) {
-    await pingURL("Backend", BACKEND_URL, true)
+    await pingURL("Backend", BACKEND_URL)
     return
   }
 
@@ -85,16 +81,14 @@ async function vercelRateLimitCheck() {
   return true
 }
 
-async function pingURL(label, url, notify = false) {
-  if (!url) {
-    if (notify) await sendTelegram(`⚠️ Geen URL ingesteld voor ${label}`)
-    return
-  }
+async function pingURL(label, url) {
+  if (!url) return
   try {
     const r = await axios.get(url + "/ping")
-    if (notify) await sendTelegram(`[AO] ${label} OK: ${r.status}`)
+    // GEEN Telegrammelding meer hier
+    console.log(`[AO] ${label} OK: ${r.status}`)
   } catch (e) {
-    await sendTelegram(`[AO] ${label} FOUT: ${e.message}`)
+    console.log(`[AO] ${label} FOUT: ${e.message}`)
   }
 }
 
@@ -104,14 +98,13 @@ function startAutoPing() {
     await pingURL("Frontend", FRONTEND_URL)
     await pingURL("Executor", EXECUTOR_URL)
     await pingURL("Vercel", VERCEL_URL)
-    await pingURL("GitHub", GITHUB_URL)
-    await pingURL("Supabase", SUPABASE_URL)
+    // GitHub & Supabase eruit
   }, 2 * 60 * 1000)
 }
 
 app.listen(PORT, async () => {
   console.log("AO Executor draait op poort " + PORT)
   await sendTelegram("[AO] Executor gestart")
-  await pingURL("Backend", BACKEND_URL, true)
+  await pingURL("Backend", BACKEND_URL)
   startAutoPing()
 })
