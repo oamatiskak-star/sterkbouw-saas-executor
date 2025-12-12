@@ -1,57 +1,117 @@
-import fs from "fs"
-import path from "path"
-import { sendTelegram } from "../telegram/telegram.js"
-
-const SOURCE_ROOT = path.resolve("./AO_MASTER_FULL_DEPLOY_CLEAN")
-
-const TARGETS = {
-  backend: path.resolve("./TARGET_BACKEND"),
-  frontend: path.resolve("./TARGET_FRONTEND"),
-  executor: path.resolve("./TARGET_EXECUTOR")
-}
+import axios from "axios"
 
 let WRITE_MODE = false
 
 export function enableWriteMode() {
-  WRITE_MODE = true
+WRITE_MODE = true
+console.log("[AO][REMAP] WRITE MODE = AAN")
 }
 
-export async function runRemap(target, files, mode = "dry") {
-  if (!TARGETS[target]) {
-    await sendTelegram("❌ Ongeldig remap-target: " + target)
-    return
-  }
+const GITHUB_OWNER = process.env.GITHUB_OWNER
+const GITHUB_REPO = process.env.GITHUB_REPO
+const GITHUB_BRANCH = process.env.GITHUB_BRANCH || "main"
+const GITHUB_TOKEN = process.env.GITHUB_TOKEN
 
-  const realMode = WRITE_MODE ? "write" : "dry"
-  let processed = 0
-  let errors = 0
+if (!GITHUB_OWNER || !GITHUB_REPO || !GITHUB_TOKEN) {
+console.error("[AO][REMAP][ENV FOUT] GitHub configuratie ontbreekt")
+}
 
-  for (const relPath of files) {
-    const src = path.join(SOURCE_ROOT, relPath)
-    const dest = path.join(TARGETS[target], relPath)
+const github = axios.create({
+baseURL: "https://api.github.com
+",
+headers: {
+Authorization: "Bearer " + GITHUB_TOKEN,
+Accept: "application/vnd.github+json"
+}
+})
 
-    if (!fs.existsSync(src)) {
-      errors++
-      continue
-    }
+export async function runRemap(target, files) {
+console.log("[AO][REMAP] START", target, "bestanden:", files.length)
 
-    if (realMode === "write") {
-      try {
-        fs.mkdirSync(path.dirname(dest), { recursive: true })
-        fs.copyFileSync(src, dest)
-      } catch (e) {
-        errors++
-        continue
-      }
-    }
+if (!WRITE_MODE) {
+console.log("[AO][REMAP] WRITE MODE UIT. Stop.")
+return
+}
 
-    processed++
-  }
+let success = 0
+let failed = 0
 
-  await sendTelegram(
-    `📦 Remap ${realMode.toUpperCase()} afgerond\n` +
-    `Target: ${target}\n` +
-    `Bestanden verwerkt: ${processed}\n` +
-    `Fouten: ${errors}`
+for (const filePath of files) {
+try {
+console.log("[AO][REMAP] Lees bestand:", filePath)
+
+  const fileRes = await github.get(
+    `/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${filePath}`,
+    { params: { ref: GITHUB_BRANCH } }
   )
+
+  const contentBase64 = fileRes.data.content
+  const sha = fileRes.data.sha
+
+  if (!contentBase64 || !sha) {
+    console.log("[AO][REMAP] Skip leeg bestand:", filePath)
+    failed++
+    continue
+  }
+
+  const newPath = buildTargetPath(target, filePath)
+
+  console.log("[AO][REMAP] Schrijf naar:", newPath)
+
+  await github.put(
+    `/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${newPath}`,
+    {
+      message: "AO remap: " + filePath + " -> " + target,
+      content: contentBase64,
+      branch: GITHUB_BRANCH
+    }
+  )
+
+  success++
+
+} catch (err) {
+  failed++
+  console.error(
+    "[AO][REMAP][FOUT]",
+    filePath,
+    err.response?.data?.message || err.message
+  )
+}
+
+
+}
+
+console.log(
+"[AO][REMAP] KLAAR",
+target,
+"OK:",
+success,
+"FOUT:",
+failed
+)
+}
+
+function buildTargetPath(target, originalPath) {
+const clean = originalPath.replace(/^/+/g, "")
+
+if (target === "backend") {
+return "backend/" + stripRoot(clean)
+}
+
+if (target === "frontend") {
+return "frontend/" + stripRoot(clean)
+}
+
+if (target === "executor") {
+return "executor/" + stripRoot(clean)
+}
+
+return target + "/" + stripRoot(clean)
+}
+
+function stripRoot(p) {
+return p
+.replace(/^backend//, "")
+.replace(/^frontend//, "")
+.replace(/^executor//, "")
 }
