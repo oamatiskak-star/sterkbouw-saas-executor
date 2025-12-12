@@ -4,6 +4,10 @@ dotenv.config()
 import express from "express"
 import axios from "axios"
 import { sendTelegram } from "./telegram/telegram.js"
+import { importeerTakenUitOudeRepo } from "./agent/importeerTakenUitOudeRepo.js"
+import { syncTakenBackend } from "./agent/syncTakenBackend.js"
+import { syncTakenFrontend } from "./agent/syncTakenFrontend.js"
+import { syncTakenExecutor } from "./agent/syncTakenExecutor.js"
 
 const app = express()
 app.use(express.json())
@@ -44,25 +48,25 @@ async function handleCommand(command) {
 
   if (lower.includes("importeer taken")) {
     await sendTelegram("📦 Start import taken vanuit AO_MASTER_FULL_DEPLOY_CLEAN")
-    // TODO: Start migratie uit MAIN project
+    await importeerTakenUitOudeRepo()
     return
   }
 
   if (lower.includes("sync taken backend")) {
     await sendTelegram("📁 Taken synchroniseren met SterkBouw Backend")
-    // TODO: Specifieke backend taken ophalen en registreren
+    await syncTakenBackend()
     return
   }
 
   if (lower.includes("sync taken frontend")) {
     await sendTelegram("📁 Taken synchroniseren met SterkBouw Frontend")
-    // TODO: Specifieke frontend taken ophalen en registreren
+    await syncTakenFrontend()
     return
   }
 
   if (lower.includes("sync taken executor")) {
     await sendTelegram("📁 Taken synchroniseren met SterkBouw Executor")
-    // TODO: Executor taken bijwerken
+    await syncTakenExecutor()
     return
   }
 
