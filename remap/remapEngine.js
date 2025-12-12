@@ -7,6 +7,9 @@ WRITE_MODE = true
 console.log("[AO][REMAP] WRITE MODE = AAN")
 }
 
+/* =======================
+ENV
+======================= */
 const GITHUB_OWNER = process.env.GITHUB_OWNER
 const GITHUB_REPO = process.env.GITHUB_REPO
 const GITHUB_BRANCH = process.env.GITHUB_BRANCH || "main"
@@ -16,6 +19,9 @@ if (!GITHUB_OWNER || !GITHUB_REPO || !GITHUB_TOKEN) {
 console.error("[AO][REMAP][ENV FOUT] GitHub configuratie ontbreekt")
 }
 
+/* =======================
+GITHUB CLIENT
+======================= */
 const github = axios.create({
 baseURL: "https://api.github.com
 ",
@@ -25,6 +31,9 @@ Accept: "application/vnd.github+json"
 }
 })
 
+/* =======================
+REMAP ENGINE
+======================= */
 export async function runRemap(target, files) {
 console.log("[AO][REMAP] START", target, "bestanden:", files.length)
 
@@ -38,18 +47,16 @@ let failed = 0
 
 for (const filePath of files) {
 try {
-console.log("[AO][REMAP] Lees bestand:", filePath)
+console.log("[AO][REMAP] Lees:", filePath)
 
   const fileRes = await github.get(
     `/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${filePath}`,
     { params: { ref: GITHUB_BRANCH } }
   )
 
-  const contentBase64 = fileRes.data.content
-  const sha = fileRes.data.sha
-
-  if (!contentBase64 || !sha) {
-    console.log("[AO][REMAP] Skip leeg bestand:", filePath)
+  const contentBase64 = fileRes.data?.content
+  if (!contentBase64) {
+    console.log("[AO][REMAP] Geen content:", filePath)
     failed++
     continue
   }
@@ -91,8 +98,11 @@ failed
 )
 }
 
+/* =======================
+PATH HELPERS
+======================= */
 function buildTargetPath(target, originalPath) {
-const clean = originalPath.replace(/^/+/g, "")
+const clean = originalPath.replace(/^/+/, "")
 
 if (target === "backend") {
 return "backend/" + stripRoot(clean)
