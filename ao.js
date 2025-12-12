@@ -1,61 +1,48 @@
-import * as dotenv from "dotenv"
-dotenv.config()
+import { exec } from "child_process"
+import fs from "fs"
+import path from "path"
 
-import express from "express"
-import axios from "axios"
-import { sendTelegram } from "./telegram/telegram.js"
+const OLD_PROJECT_PATH = "/path/to/AO_MASTER_FULL_DEPLOY_CLEAN" // Pas aan met je werkelijke pad
+const NEW_PROJECT_PATH = path.resolve("/opt/render/project/src/sterkbouw-saas-executor")
 
-const app = express()
-app.use(express.json())
+export async function importFromMaster() {
+  console.log("[AO] Start importeren van oude modules uit AO_MASTER")
 
-const PORT = process.env.PORT || 10000
-const BACKEND_URL = process.env.BACKEND_URL
-
-app.get("/ping", (req, res) => {
-  res.status(200).send("AO EXECUTOR OK")
-})
-
-app.post("/api/webhook", async (req, res) => {
-  await sendTelegram("[AO] Webhook ontvangen van Vercel")
-  const commitMessage = req.body.head_commit?.message || "Geen commit message gevonden"
-  await handleCommand(commitMessage)
-  res.status(200).send("Webhook OK")
-})
-
-async function handleCommand(command) {
-  const lower = command.toLowerCase()
-
-  if (lower.includes("restart agent")) {
-    await sendTelegram("⏳ Agent restart wordt uitgevoerd op Render")
-    // eventueel extra logica
-    return
-  }
-
-  if (lower.includes("ping backend")) {
-    await pingBackend()
-    return
-  }
-
-  if (lower.includes("deploy front")) {
-    await sendTelegram("🚀 Deploycommando voor Frontend ontvangen")
-    // trigger op supabase of Vercel (optioneel)
-    return
-  }
-
-  await sendTelegram("⚠️ Onbekend commando ontvangen:\n" + command)
-}
-
-async function pingBackend() {
   try {
-    const r = await axios.get(BACKEND_URL + "/ping")
-    await sendTelegram("[AO] Backend OK: " + r.status)
-  } catch (e) {
-    await sendTelegram("[AO] Backend FOUT: " + e.message)
+    // Importeren van backend-logica naar backend map
+    const backendDir = path.join(OLD_PROJECT_PATH, "backend/api")
+    const backendDest = path.join(NEW_PROJECT_PATH, "sterkbouw-saas-back/backend/api")
+    copyFiles(backendDir, backendDest)
+
+    // Importeren van frontend-pagina's naar frontend map
+    const frontendDir = path.join(OLD_PROJECT_PATH, "frontend/pages")
+    const frontendDest = path.join(NEW_PROJECT_PATH, "sterkbouw-saas-front/pages")
+    copyFiles(frontendDir, frontendDest)
+
+    // Importeren van algemene executor-taken
+    const executorDir = path.join(OLD_PROJECT_PATH, "executor/tasks")
+    const executorDest = path.join(NEW_PROJECT_PATH, "sterkbouw-saas-executor/executor/tasks")
+    copyFiles(executorDir, executorDest)
+
+    // Telegrapherend loggen van succesvolle import
+    await sendTelegram("[AO] Import van oude modules uit AO_MASTER voltooid.")
+  } catch (err) {
+    console.error("[AO] Fout bij importeren van oude modules:", err)
+    await sendTelegram("[AO] Fout bij importeren van oude modules.")
   }
 }
 
-app.listen(PORT, async () => {
-  console.log("AO Executor draait op poort " + PORT)
-  await sendTelegram("[AO] Executor gestart")
-  await pingBackend()
-})
+// Hulpfunctie om bestanden en mappen te kopiëren
+function copyFiles(sourceDir, destDir) {
+  const files = fs.readdirSync(sourceDir)
+  files.forEach(file => {
+    const srcPath = path.join(sourceDir, file)
+    const destPath = path.join(destDir, file)
+    if (fs.lstatSync(srcPath).isDirectory()) {
+      if (!fs.existsSync(destPath)) fs.mkdirSync(destPath)
+      copyFiles(srcPath, destPath) // Recursieve kopie van submappen
+    } else {
+      fs.copyFileSync(srcPath, destPath)
+    }
+  })
+}
