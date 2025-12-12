@@ -7,7 +7,7 @@ import { sendTelegram } from "./telegram/telegram.js"
 import { createClient } from "@supabase/supabase-js"
 import fs from "fs"
 import path from "path"
-import { runRemap } from "./remap/remapEngine.js"
+import { runRemap, enableWriteMode } from "./remap/remapEngine.js"
 
 const app = express()
 app.use(express.json())
@@ -86,6 +86,13 @@ async function handleCommand(command) {
 
   if (lower.includes("sync taken executor"))
     return await koppelNieuweModules("executor")
+
+  /* === WRITE MODE === */
+  if (lower.includes("activeer write mode")) {
+    enableWriteMode()
+    await sendTelegram("✍️ WRITE-MODE geactiveerd. Bestanden worden nu echt gekopieerd.")
+    return
+  }
 
   if (lower.includes("scan bron"))
     return await scanSource()
@@ -243,8 +250,8 @@ async function executeRemap(target) {
     return
   }
 
-  await sendTelegram(`🧪 DRY-RUN gestart voor ${target}`)
-  await runRemap(target, files, "dry")
+  await sendTelegram(`🚧 REMAP gestart voor ${target}`)
+  await runRemap(target, files)
 }
 
 /* =======================
