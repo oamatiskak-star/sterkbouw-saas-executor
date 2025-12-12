@@ -12,25 +12,30 @@ const PORT = process.env.PORT || 10000
 const BACKEND_URL = process.env.BACKEND_URL
 
 app.get("/ping", (req, res) => {
-res.status(200).send("AO EXECUTOR OK")
+  res.status(200).send("AO EXECUTOR OK")
 })
 
 app.post("/api/webhook", async (req, res) => {
-await sendTelegram("[AO] Webhook ontvangen van Vercel")
-res.status(200).send("Webhook OK")
+  await sendTelegram("[AO] Webhook ontvangen van Vercel of GitHub")
+  res.status(200).send("Webhook OK")
 })
 
 async function pingBackend() {
-try {
-const r = await axios.get(BACKEND_URL + "/ping")
-await sendTelegram("[AO] Backend OK: " + r.status)
-} catch (e) {
-await sendTelegram("[AO] Backend FOUT: " + e.message)
-}
+  try {
+    console.log("[AO] Backend ping naar:", BACKEND_URL + "/ping")
+    const r = await axios.get(BACKEND_URL + "/ping")
+    await sendTelegram("[AO] Backend OK: " + r.status)
+  } catch (e) {
+    await sendTelegram("[AO] Backend FOUT: " + e.message)
+  }
 }
 
 app.listen(PORT, async () => {
-console.log("AO Executor draait op poort " + PORT)
-await sendTelegram("[AO] Executor gestart")
-await pingBackend()
+  console.log("AO Executor draait op poort " + PORT)
+  await sendTelegram("[AO] Executor gestart. Backend ping volgt over 10 seconden...")
+
+  setTimeout(() => {
+    pingBackend()
+  }, 10000)
 })
+
