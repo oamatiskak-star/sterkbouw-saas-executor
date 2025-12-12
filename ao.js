@@ -66,6 +66,14 @@ async function handleCommand(command) {
   if (lower.includes("genereer w installaties")) return await sendTelegram("🔥 W-installaties gemapt")
   if (lower.includes("sync bim architecten")) return await sendTelegram("🏗️ BIM Architectenmodule gekoppeld")
 
+  if (lower.includes("remap alles")) {
+    await sendTelegram("🔄 Volledige remap van backend, frontend en executor gestart")
+    await handleCommand("sync taken backend")
+    await handleCommand("sync taken frontend")
+    await handleCommand("sync taken executor")
+    return
+  }
+
   await sendTelegram("⚠️ Onbekend commando ontvangen:\n" + command)
 }
 
