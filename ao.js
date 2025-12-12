@@ -34,7 +34,6 @@ const SUPABASE_URL = process.env.SUPABASE_URL
 const SUPABASE_KEY = process.env.SUPABASE_KEY
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY)
-let lastFrontendDeploy = 0
 
 /* =======================
    AGENT STATE
@@ -50,18 +49,31 @@ app.get("/ping", (req, res) => {
   res.status(200).send("AO EXECUTOR OK")
 })
 
+/* GitHub webhook */
 app.post("/api/webhook", async (req, res) => {
-  const commitMessage = req.body.head_commit?.message || "Geen commit message gevonden"
-  console.log("[AO] Webhook ontvangen:", commitMessage)
-
-  try {
-    await sendTelegram("[AO] Webhook ontvangen: " + commitMessage)
-  } catch (err) {
-    console.error("[AO][TELEGRAM FOUT][WEBHOOK]", err.message)
-  }
+  const commitMessage = req.body.head_commit?.message || ""
+  console.log("[AO] GitHub webhook:", commitMessage)
 
   await handleCommand(commitMessage)
   res.status(200).send("Webhook OK")
+})
+
+/* Telegram webhook */
+app.post("/telegram/webhook", async (req, res) => {
+  try {
+    const message = req.body?.message?.text
+    if (!message) {
+      return res.status(200).send("No message")
+    }
+
+    console.log("[AO] Telegram bericht ontvangen:", message)
+    await handleCommand(message)
+
+    res.status(200).send("Telegram OK")
+  } catch (err) {
+    console.error("[AO][TELEGRAM WEBHOOK FOUT]", err.message)
+    res.status(200).send("Telegram error")
+  }
 })
 
 /* =======================
@@ -71,27 +83,6 @@ async function handleCommand(command) {
   const lower = command.toLowerCase()
 
   try {
-    if (lower.includes("ping backend"))
-      return await pingURL("Backend", BACKEND_URL)
-
-    if (lower.includes("importeer taken")) {
-      await sendTelegram("Import taken gestart")
-      await importTasks()
-      return
-    }
-
-    if (lower.includes("importeer supabase")) {
-      await sendTelegram("Supabase import gestart")
-      await importSupabase()
-      return
-    }
-
-    if (lower.includes("activeer write mode")) {
-      enableWriteMode()
-      await sendTelegram("WRITE MODE geactiveerd")
-      return
-    }
-
     if (lower.includes("scan bron"))
       return await scanSource()
 
@@ -100,6 +91,12 @@ async function handleCommand(command) {
 
     if (lower.includes("bouw remap plan"))
       return await buildRemapPlan()
+
+    if (lower.includes("activeer write mode")) {
+      enableWriteMode()
+      await sendTelegram("WRITE MODE geactiveerd")
+      return
+    }
 
     if (lower.includes("remap backend"))
       return await executeRemap("backend")
@@ -114,41 +111,7 @@ async function handleCommand(command) {
 
   } catch (err) {
     console.error("[AO][COMMAND FOUT]", err.message)
-    try {
-      await sendTelegram("AO fout: " + err.message)
-    } catch {}
-  }
-}
-
-/* =======================
-   HELPERS
-======================= */
-async function pingURL(label, url) {
-  if (!url) return
-  try {
-    const r = await axios.get(url + "/ping")
-    console.log("[AO]", label, "OK:", r.status)
-  } catch (e) {
-    console.log("[AO]", label, "FOUT:", e.message)
-  }
-}
-
-async function importTasks() {
-  const sourcePath = path.resolve("./AO_MASTER_FULL_DEPLOY_CLEAN")
-  if (!fs.existsSync(sourcePath)) {
-    await sendTelegram("Bronmap niet gevonden")
-    return
-  }
-  await sendTelegram("Bronmap gevonden")
-}
-
-async function importSupabase() {
-  try {
-    const { data, error } = await supabase.from("pg_tables").select("*")
-    if (error) throw error
-    await sendTelegram("Supabase tabellen: " + data.length)
-  } catch (err) {
-    await sendTelegram("Supabase fout: " + err.message)
+    await sendTelegram("AO fout: " + err.message)
   }
 }
 
@@ -231,11 +194,5 @@ async function executeRemap(target) {
 ======================= */
 app.listen(PORT, async () => {
   console.log("AO Executor draait op poort " + PORT)
-
-  try {
-    await sendTelegram("AO Executor gestart")
-    console.log("Telegram test verzonden")
-  } catch (err) {
-    console.error("Telegram fout:", err.message)
-  }
+  await sendTelegram("AO Executor gestart")
 })
