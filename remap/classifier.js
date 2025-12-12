@@ -1,10 +1,12 @@
 import fs from "fs"
+import path from "path"
 
-function has(entry, names) {
-  return entry.children?.some(c => names.includes(c.name))
+function hasChild(node, names) {
+  if (!node.children) return false
+  return node.children.some(c => names.includes(c.name))
 }
 
-export function classify(tree) {
+export function classifyTree(tree) {
   const backend = []
   const frontend = []
   const executor = []
@@ -13,11 +15,11 @@ export function classify(tree) {
   function walk(node) {
     if (!node.children) return
 
-    if (has(node, ["server.js", "controllers", "services", "models", "supabase", "api"])) {
+    if (hasChild(node, ["server.js", "api", "controllers", "services", "models", "supabase"])) {
       backend.push(node.path)
-    } else if (has(node, ["app", "pages", "layout.js", "page.jsx", "styles", "components"])) {
+    } else if (hasChild(node, ["app", "pages", "layout.js", "page.jsx", "styles", "components"])) {
       frontend.push(node.path)
-    } else if (has(node, ["execution_engine", "modules", "ai_workers", "github_sync", "vercel_deploy", "worker.js"])) {
+    } else if (hasChild(node, ["execution_engine", "modules", "ai_workers", "github_sync", "vercel_deploy", "worker.js"])) {
       executor.push(node.path)
     } else {
       unknown.push(node.path)
@@ -31,9 +33,10 @@ export function classify(tree) {
   return { backend, frontend, executor, unknown }
 }
 
-export function writeMaps(result, outDir) {
-  fs.writeFileSync(`${outDir}/backend-map.json`, JSON.stringify(result.backend, null, 2))
-  fs.writeFileSync(`${outDir}/frontend-map.json`, JSON.stringify(result.frontend, null, 2))
-  fs.writeFileSync(`${outDir}/executor-map.json`, JSON.stringify(result.executor, null, 2))
-  fs.writeFileSync(`${outDir}/unknown-map.json`, JSON.stringify(result.unknown, null, 2))
+export function writeClassification(result, outDir) {
+  fs.mkdirSync(outDir, { recursive: true })
+  fs.writeFileSync(path.join(outDir, "backend-map.json"), JSON.stringify(result.backend, null, 2))
+  fs.writeFileSync(path.join(outDir, "frontend-map.json"), JSON.stringify(result.frontend, null, 2))
+  fs.writeFileSync(path.join(outDir, "executor-map.json"), JSON.stringify(result.executor, null, 2))
+  fs.writeFileSync(path.join(outDir, "unknown-map.json"), JSON.stringify(result.unknown, null, 2))
 }
