@@ -6,7 +6,7 @@ import axios from "axios"
 import cors from "cors"
 import morgan from "morgan"
 
-import { sendTelegram } from "./telegram/telegram.js"
+import sendTelegram from "./telegram/telegram.js"
 import triggerLogRouter from "./routes/trigger-log.js"
 
 const app = express()
@@ -28,12 +28,11 @@ app.get("/ping", (req, res) => {
   res.status(200).send("AO EXECUTOR OK")
 })
 
-// ✅ EVENTTRIGGER VOOR TELEGRAM MELDINGEN
 app.use("/trigger-log", triggerLogRouter)
 
 app.post("/api/webhook", async (req, res) => {
   await sendTelegram("[AO] Webhook ontvangen van Vercel")
-  const commitMessage = req.body.head_commit?.message || "Geen commit message gevonden"
+  const commitMessage = req.body?.head_commit?.message || "Geen commit message gevonden"
   await handleCommand(commitMessage)
   res.status(200).send("Webhook OK")
 })
