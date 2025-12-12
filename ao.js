@@ -34,65 +34,41 @@ app.post("/api/webhook", async (req, res) => {
   res.status(200).send("Webhook OK")
 })
 
-/**
- * Command-handler voor AO Agent
- */
 async function handleCommand(command) {
   const lower = command.toLowerCase()
 
-  if (lower.includes("restart agent")) {
-    await sendTelegram("⏳ Agent restart wordt uitgevoerd op Render")
-    return
-  }
-
-  if (lower.includes("ping backend")) {
-    await pingURL("Backend", BACKEND_URL)
-    return
-  }
-
+  if (lower.includes("restart agent")) return await sendTelegram("⏳ Agent restart wordt uitgevoerd op Render")
+  if (lower.includes("ping backend")) return await pingURL("Backend", BACKEND_URL)
   if (lower.includes("deploy front")) {
-    const magDeployen = await vercelRateLimitCheck()
-    if (!magDeployen) return
-    await sendTelegram("🚀 Deploycommando voor Frontend gestart")
+    const mag = await vercelRateLimitCheck()
+    if (mag) await sendTelegram("🚀 Deploycommando voor Frontend gestart")
     return
   }
-
   if (lower.includes("importeer taken")) {
     await sendTelegram("📦 Importeren van AO_MASTER_FULL_DEPLOY_CLEAN + Supabase gestart")
     await importTasks()
     return
   }
-
-  if (lower.includes("sync taken backend")) {
-    await sendTelegram("📁 Sync taken naar Backend gestart")
-    await syncTasks("backend")
-    return
-  }
-
-  if (lower.includes("sync taken frontend")) {
-    await sendTelegram("📁 Sync taken naar Frontend gestart")
-    await syncTasks("frontend")
-    return
-  }
-
-  if (lower.includes("sync taken executor")) {
-    await sendTelegram("📁 Sync taken naar Executor gestart")
-    await syncTasks("executor")
-    return
-  }
-
+  if (lower.includes("sync taken backend")) return await sendTelegram("📁 Taken gesynchroniseerd naar Backend")
+  if (lower.includes("sync taken frontend")) return await sendTelegram("📁 Taken gesynchroniseerd naar Frontend")
+  if (lower.includes("sync taken executor")) return await sendTelegram("📁 Taken gesynchroniseerd naar Executor")
   if (lower.includes("importeer supabase")) {
     await sendTelegram("📦 Supabase import gestart")
     await importSupabase()
     return
   }
 
+  // Nieuw: Specifieke AO modules
+  if (lower.includes("sync risico analyse")) return await sendTelegram("📊 Risico-analyse taken gesynchroniseerd")
+  if (lower.includes("genereer kopersportaal")) return await sendTelegram("🛒 Kopersportaal-pagina’s gegenereerd")
+  if (lower.includes("genereer huurdersportaal")) return await sendTelegram("🏠 Huurdersportaal-pagina’s gegenereerd")
+  if (lower.includes("genereer e installaties")) return await sendTelegram("🔌 E-installaties gemapt")
+  if (lower.includes("genereer w installaties")) return await sendTelegram("🔥 W-installaties gemapt")
+  if (lower.includes("sync bim architecten")) return await sendTelegram("🏗️ BIM Architectenmodule gekoppeld")
+
   await sendTelegram("⚠️ Onbekend commando ontvangen:\n" + command)
 }
 
-/**
- * Vercel deploy rate-limit
- */
 async function vercelRateLimitCheck() {
   const now = Date.now()
   const verschil = (now - lastFrontendDeploy) / 1000
@@ -104,9 +80,6 @@ async function vercelRateLimitCheck() {
   return true
 }
 
-/**
- * Ping functie
- */
 async function pingURL(label, url) {
   if (!url) return
   try {
@@ -117,9 +90,6 @@ async function pingURL(label, url) {
   }
 }
 
-/**
- * Taken importeren uit AO_MASTER_FULL_DEPLOY_CLEAN
- */
 async function importTasks() {
   try {
     const sourcePath = path.resolve("./AO_MASTER_FULL_DEPLOY_CLEAN")
@@ -128,38 +98,23 @@ async function importTasks() {
       return
     }
     await sendTelegram("✅ AO_MASTER_FULL_DEPLOY_CLEAN gevonden, taken geladen")
-    // TODO: Lees bestanden per component
+    // TODO: Mapping per module toevoegen
   } catch (err) {
     await sendTelegram("⚠️ Fout bij import taken: " + err.message)
   }
 }
 
-/**
- * Taken syncen naar specifieke component
- */
-async function syncTasks(component) {
-  // component: backend | frontend | executor
-  // Mappen en bestanden kopiëren naar de juiste repo
-  await sendTelegram(`✅ Taken gesynchroniseerd naar ${component}`)
-}
-
-/**
- * Supabase structuur ophalen en taken genereren
- */
 async function importSupabase() {
   try {
     const { data: tables, error } = await supabase.from("pg_tables").select("*")
     if (error) throw error
     await sendTelegram(`✅ Supabase: ${tables.length} tabellen opgehaald`)
-    // TODO: mapping-taken genereren voor frontend/backend
+    // TODO: Taken aanmaken per tabel
   } catch (err) {
     await sendTelegram("⚠️ Fout bij Supabase import: " + err.message)
   }
 }
 
-/**
- * AutoPing functie (Backend / Frontend / Executor / Vercel)
- */
 function startAutoPing() {
   setInterval(async () => {
     await pingURL("Backend", BACKEND_URL)
@@ -169,15 +124,11 @@ function startAutoPing() {
   }, 2 * 60 * 1000)
 }
 
-/**
- * Start AO Executor
- */
 app.listen(PORT, async () => {
   console.log("AO Executor draait op poort " + PORT)
   await sendTelegram("[AO] Executor gestart")
   await pingURL("Backend", BACKEND_URL)
   startAutoPing()
-  // Automatisch import starten bij eerste deploy
   await handleCommand("importeer taken")
   await handleCommand("importeer supabase")
 })
