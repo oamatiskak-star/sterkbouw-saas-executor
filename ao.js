@@ -15,10 +15,8 @@ app.use(express.json())
 const REQUIRED_ENVS = [
   "TELEGRAM_BOT_TOKEN",
   "TELEGRAM_CHAT_ID",
-  "GITHUB_TOKEN",
-  "GITHUB_OWNER",
-  "GITHUB_REPO",
-  "GITHUB_BRANCH"
+  "GITHUB_PAT",
+  "GITHUB_REPO"
 ]
 
 for (const key of REQUIRED_ENVS) {
@@ -31,14 +29,15 @@ for (const key of REQUIRED_ENVS) {
    CONFIG
 ======================= */
 const PORT = process.env.PORT || 10000
-const GITHUB_OWNER = process.env.GITHUB_OWNER
-const GITHUB_REPO = process.env.GITHUB_REPO
-const GITHUB_BRANCH = process.env.GITHUB_BRANCH
+const GITHUB_REPO_FULL = process.env.GITHUB_REPO
+const GITHUB_BRANCH = process.env.GITHUB_BRANCH || "main"
+
+const [GITHUB_OWNER, GITHUB_REPO] = GITHUB_REPO_FULL.split("/")
 
 const github = axios.create({
   baseURL: "https://api.github.com",
   headers: {
-    Authorization: "Bearer " + process.env.GITHUB_TOKEN,
+    Authorization: "Bearer " + process.env.GITHUB_PAT,
     Accept: "application/vnd.github+json"
   }
 })
@@ -116,8 +115,8 @@ async function scanSourceFromGitHub() {
   }
 
   await walk()
-
   sourceScan = files
+
   await sendTelegram("📂 GitHub scan klaar: " + files.length + " bestanden")
 }
 
@@ -130,12 +129,7 @@ async function classifySource() {
     return
   }
 
-  classifiedFiles = {
-    backend: [],
-    frontend: [],
-    executor: [],
-    unknown: []
-  }
+  classifiedFiles = { backend: [], frontend: [], executor: [], unknown: [] }
 
   for (const f of sourceScan) {
     const l = f.toLowerCase()
@@ -144,14 +138,14 @@ async function classifySource() {
       classifiedFiles.backend.push(f)
     else if (l.includes("frontend") || l.includes("pages") || l.includes("app"))
       classifiedFiles.frontend.push(f)
-    else if (l.includes("executor") || l.includes("agent") || l.includes("workflow"))
+    else if (l.includes("executor") || l.includes("agent"))
       classifiedFiles.executor.push(f)
     else
       classifiedFiles.unknown.push(f)
   }
 
   await sendTelegram(
-    "🧠 Classificatie klaar\n" +
+    "🧠 Classificatie\n" +
     "Backend: " + classifiedFiles.backend.length + "\n" +
     "Frontend: " + classifiedFiles.frontend.length + "\n" +
     "Executor: " + classifiedFiles.executor.length + "\n" +
@@ -197,5 +191,5 @@ async function executeRemap(target) {
 ======================= */
 app.listen(PORT, async () => {
   console.log("AO Executor draait op poort " + PORT)
-  await sendTelegram("✅ AO Executor live. GitHub scan actief.")
+  await sendTelegram("✅ AO Executor live en klaar voor remap")
 })
