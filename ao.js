@@ -11,7 +11,18 @@ app.use(express.json())
 const PORT = process.env.PORT || 10000
 const BACKEND_URL = process.env.BACKEND_URL
 
-let statusLog = "🟢 AO Executor actief\nNog geen taken uitgevoerd"
+// Vercel deploy rate limiter
+let lastFrontendDeploy = 0
+async function vercelRateLimitCheck() {
+  const now = Date.now()
+  const verschil = (now - lastFrontendDeploy) / 1000
+  if (verschil < 60) {
+    await sendTelegram("🛑 Deploy geblokkeerd: minder dan 60 sec sinds laatste poging.")
+    return false
+  }
+  lastFrontendDeploy = now
+  return true
+}
 
 app.get("/ping", (req, res) => {
   res.status(200).send("AO EXECUTOR OK")
@@ -29,48 +40,48 @@ async function handleCommand(command) {
 
   if (lower.includes("restart agent")) {
     await sendTelegram("⏳ Agent restart wordt uitgevoerd op Render")
-    statusLog = "🔁 Restart commando ontvangen"
+    // TODO: Trigger herstart via Render API
     return
   }
 
   if (lower.includes("ping backend")) {
     await pingBackend()
-    statusLog = "📡 Ping backend uitgevoerd"
     return
   }
 
   if (lower.includes("deploy front")) {
-    await sendTelegram("🚀 Deploycommando voor Frontend ontvangen")
-    statusLog = "🚀 Frontend deploy commando ontvangen"
+    const magDeployen = await vercelRateLimitCheck()
+    if (!magDeployen) return
+    await sendTelegram("🚀 Deploycommando voor Frontend gestart")
+    // TODO: Trigger Vercel redeploy via API
     return
   }
 
   if (lower.includes("importeer taken")) {
     await sendTelegram("📦 Start import taken vanuit AO_MASTER_FULL_DEPLOY_CLEAN")
-    statusLog = "📦 Takenimport gestart vanaf MAIN"
+    // TODO: Start migratie uit MAIN project
     return
   }
 
   if (lower.includes("sync taken backend")) {
     await sendTelegram("📁 Taken synchroniseren met SterkBouw Backend")
-    statusLog = "✅ Taken Backend gesynchroniseerd"
+    // TODO: Specifieke backend taken ophalen en registreren
     return
   }
 
   if (lower.includes("sync taken frontend")) {
     await sendTelegram("📁 Taken synchroniseren met SterkBouw Frontend")
-    statusLog = "✅ Taken Frontend gesynchroniseerd"
+    // TODO: Specifieke frontend taken ophalen en registreren
     return
   }
 
   if (lower.includes("sync taken executor")) {
     await sendTelegram("📁 Taken synchroniseren met SterkBouw Executor")
-    statusLog = "✅ Taken Executor gesynchroniseerd"
+    // TODO: Executor taken bijwerken
     return
   }
 
   await sendTelegram("⚠️ Onbekend commando ontvangen:\n" + command)
-  statusLog = "⚠️ Onbekend commando: " + command
 }
 
 async function pingBackend() {
@@ -81,11 +92,6 @@ async function pingBackend() {
     await sendTelegram("[AO] Backend FOUT: " + e.message)
   }
 }
-
-// Live status logging naar Telegram elke 10 seconden
-setInterval(async () => {
-  await sendTelegram("🔄 Statusupdate:\n" + statusLog)
-}, 10000)
 
 app.listen(PORT, async () => {
   console.log("AO Executor draait op poort " + PORT)
