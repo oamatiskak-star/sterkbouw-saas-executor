@@ -3,10 +3,16 @@ dotenv.config()
 
 import express from "express"
 import axios from "axios"
+import cors from "cors"
+import morgan from "morgan"
+
 import { sendTelegram } from "./telegram/telegram.js"
+import triggerLogRouter from "./routes/trigger-log.js"
 
 const app = express()
+app.use(cors())
 app.use(express.json())
+app.use(morgan("dev"))
 
 const PORT = process.env.PORT || 10000
 const BACKEND_URL = process.env.BACKEND_URL
@@ -21,6 +27,9 @@ let lastFrontendDeploy = 0
 app.get("/ping", (req, res) => {
   res.status(200).send("AO EXECUTOR OK")
 })
+
+// ✅ EVENTTRIGGER VOOR TELEGRAM MELDINGEN
+app.use("/trigger-log", triggerLogRouter)
 
 app.post("/api/webhook", async (req, res) => {
   await sendTelegram("[AO] Webhook ontvangen van Vercel")
@@ -104,7 +113,7 @@ function startAutoPing() {
     await pingURL("Vercel", VERCEL_URL)
     await pingURL("GitHub", GITHUB_URL)
     await pingURL("Supabase", SUPABASE_URL)
-  }, 2 * 60 * 1000) // elke 2 minuten
+  }, 2 * 60 * 1000)
 }
 
 app.listen(PORT, async () => {
