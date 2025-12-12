@@ -4,7 +4,7 @@ dotenv.config()
 import express from "express"
 import axios from "axios"
 import { sendTelegram } from "./telegram/telegram.js"
-import { runRemap, enableWriteMode } from "./remap/remapEngine.js"
+import { runRemap, enableWriteMode, initRemapConfig } from "./remap/remapEngine.js"
 
 const app = express()
 app.use(express.json())
@@ -29,21 +29,12 @@ for (const key of REQUIRED_ENVS) {
    CONFIG
 ======================= */
 const PORT = process.env.PORT || 10000
-const GITHUB_REPO_FULL = process.env.GITHUB_REPO
-const GITHUB_BRANCH = process.env.GITHUB_BRANCH || "main"
 
-const [GITHUB_OWNER, GITHUB_REPO] = GITHUB_REPO_FULL.split("/")
-
-const github = axios.create({
-  baseURL: "https://api.github.com",
-  headers: {
-    Authorization: "Bearer " + process.env.GITHUB_PAT,
-    Accept: "application/vnd.github+json"
-  }
-})
+/* init remap config 1x */
+initRemapConfig()
 
 /* =======================
-   AGENT STATE
+   STATE
 ======================= */
 let sourceScan = null
 let classifiedFiles = null
@@ -60,8 +51,7 @@ app.post("/telegram/webhook", async (req, res) => {
   const message = req.body?.message?.text
   if (!message) return res.sendStatus(200)
 
-  console.log("[AO] Telegram bericht:", message)
-
+  console.log("[AO] Telegram:", message)
   await sendTelegram("📥 Ontvangen: " + message)
   await handleCommand(message)
 
@@ -74,7 +64,7 @@ app.post("/telegram/webhook", async (req, res) => {
 async function handleCommand(command) {
   const lower = command.toLowerCase()
 
-  if (lower.includes("scan bron")) return await scanSourceFromGitHub()
+  if (lower.includes("scan bron")) return await scanSource()
   if (lower.includes("classificeer bron")) return await classifySource()
   if (lower.includes("bouw remap plan")) return await buildRemapPlan()
 
@@ -92,37 +82,14 @@ async function handleCommand(command) {
 }
 
 /* =======================
-   GITHUB SCAN
+   LOGIC
 ======================= */
-async function scanSourceFromGitHub() {
-  await sendTelegram("🔍 GitHub bron scan gestart")
-
-  const files = []
-
-  async function walk(dir = "") {
-    const res = await github.get(
-      `/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${dir}`,
-      { params: { ref: GITHUB_BRANCH } }
-    )
-
-    for (const item of res.data) {
-      if (item.type === "dir") {
-        await walk(item.path)
-      } else if (item.type === "file") {
-        files.push(item.path)
-      }
-    }
-  }
-
-  await walk()
+async function scanSource() {
+  const files = await runRemap("scan")
   sourceScan = files
-
-  await sendTelegram("📂 GitHub scan klaar: " + files.length + " bestanden")
+  await sendTelegram("📂 Scan klaar: " + files.length + " bestanden")
 }
 
-/* =======================
-   CLASSIFICATIE
-======================= */
 async function classifySource() {
   if (!sourceScan) {
     await sendTelegram("⚠️ Eerst scan bron uitvoeren")
@@ -133,7 +100,6 @@ async function classifySource() {
 
   for (const f of sourceScan) {
     const l = f.toLowerCase()
-
     if (l.includes("backend") || l.includes("api") || l.includes("routes"))
       classifiedFiles.backend.push(f)
     else if (l.includes("frontend") || l.includes("pages") || l.includes("app"))
@@ -148,35 +114,22 @@ async function classifySource() {
     "🧠 Classificatie\n" +
     "Backend: " + classifiedFiles.backend.length + "\n" +
     "Frontend: " + classifiedFiles.frontend.length + "\n" +
-    "Executor: " + classifiedFiles.executor.length + "\n" +
-    "Onbekend: " + classifiedFiles.unknown.length
+    "Executor: " + classifiedFiles.executor.length
   )
 }
 
-/* =======================
-   REMAP PLAN
-======================= */
 async function buildRemapPlan() {
   if (!classifiedFiles) {
-    await sendTelegram("⚠️ Geen classificatie beschikbaar")
+    await sendTelegram("⚠️ Geen classificatie")
     return
   }
 
-  remapPlan = {
-    backend: classifiedFiles.backend,
-    frontend: classifiedFiles.frontend,
-    executor: classifiedFiles.executor
-  }
-
+  remapPlan = classifiedFiles
   await sendTelegram("🗺️ Remap plan opgebouwd")
 }
 
-/* =======================
-   REMAP EXECUTIE
-======================= */
 async function executeRemap(target) {
   const files = remapPlan?.[target] || []
-
   if (!files.length) {
     await sendTelegram("⚠️ Geen bestanden voor " + target)
     return
@@ -191,5 +144,5 @@ async function executeRemap(target) {
 ======================= */
 app.listen(PORT, async () => {
   console.log("AO Executor draait op poort " + PORT)
-  await sendTelegram("✅ AO Executor live en klaar voor remap")
+  await sendTelegram("✅ AO Executor live")
 })
