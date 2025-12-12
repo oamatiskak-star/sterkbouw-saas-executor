@@ -11,6 +11,9 @@ import path from "path"
 const app = express()
 app.use(express.json())
 
+/* =======================
+   ENV CONFIG
+======================= */
 const PORT = process.env.PORT || 10000
 const BACKEND_URL = process.env.BACKEND_URL
 const FRONTEND_URL = process.env.FRONTEND_URL
@@ -23,6 +26,16 @@ const SUPABASE_KEY = process.env.SUPABASE_KEY
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY)
 let lastFrontendDeploy = 0
 
+/* =======================
+   AGENT STATE
+======================= */
+let sourceScan = null
+let classifiedFiles = null
+let remapPlan = null
+
+/* =======================
+   ROUTES
+======================= */
 app.get("/ping", (req, res) => {
   res.status(200).send("AO EXECUTOR OK")
 })
@@ -34,40 +47,73 @@ app.post("/api/webhook", async (req, res) => {
   res.status(200).send("Webhook OK")
 })
 
+/* =======================
+   COMMAND ROUTER
+======================= */
 async function handleCommand(command) {
   const lower = command.toLowerCase()
 
-  if (lower.includes("restart agent")) return await sendTelegram("⏳ Agent restart wordt uitgevoerd op Render")
-  if (lower.includes("ping backend")) return await pingURL("Backend", BACKEND_URL)
+  if (lower.includes("restart agent"))
+    return await sendTelegram("⏳ Agent restart wordt uitgevoerd op Render")
+
+  if (lower.includes("ping backend"))
+    return await pingURL("Backend", BACKEND_URL)
+
   if (lower.includes("deploy front")) {
     const mag = await vercelRateLimitCheck()
     if (mag) await sendTelegram("🚀 Deploycommando voor Frontend gestart")
     return
   }
+
   if (lower.includes("importeer taken")) {
-    await sendTelegram("📦 Importeren van AO_MASTER_FULL_DEPLOY_CLEAN + Supabase gestart")
+    await sendTelegram("📦 Importeren van AO_MASTER_FULL_DEPLOY_CLEAN gestart")
     await importTasks()
     return
   }
-  if (lower.includes("sync taken backend")) return await koppelNieuweModules("backend")
-  if (lower.includes("sync taken frontend")) return await koppelNieuweModules("frontend")
-  if (lower.includes("sync taken executor")) return await koppelNieuweModules("executor")
+
   if (lower.includes("importeer supabase")) {
     await sendTelegram("📦 Supabase import gestart")
     await importSupabase()
     return
   }
 
-  if (lower.includes("sync risico analyse")) return await sendTelegram("📊 Risico-analyse taken gesynchroniseerd")
-  if (lower.includes("genereer kopersportaal")) return await sendTelegram("🛒 Kopersportaal-pagina’s gegenereerd")
-  if (lower.includes("genereer huurdersportaal")) return await sendTelegram("🏠 Huurdersportaal-pagina’s gegenereerd")
-  if (lower.includes("genereer e installaties")) return await sendTelegram("🔌 E-installaties gemapt")
-  if (lower.includes("genereer w installaties")) return await sendTelegram("🔥 W-installaties gemapt")
-  if (lower.includes("sync bim architecten")) return await sendTelegram("🏗️ BIM Architectenmodule gekoppeld")
+  if (lower.includes("sync taken backend"))
+    return await koppelNieuweModules("backend")
+
+  if (lower.includes("sync taken frontend"))
+    return await koppelNieuweModules("frontend")
+
+  if (lower.includes("sync taken executor"))
+    return await koppelNieuweModules("executor")
+
+  /* =======================
+     NIEUWE AGENT COMMANDS
+  ======================= */
+
+  if (lower.includes("scan bron"))
+    return await scanSource()
+
+  if (lower.includes("classificeer bron"))
+    return await classifySource()
+
+  if (lower.includes("bouw remap plan"))
+    return await buildRemapPlan()
+
+  if (lower.includes("remap backend"))
+    return await executeRemap("backend")
+
+  if (lower.includes("remap frontend"))
+    return await executeRemap("frontend")
+
+  if (lower.includes("remap executor"))
+    return await executeRemap("executor")
 
   await sendTelegram("⚠️ Onbekend commando ontvangen:\n" + command)
 }
 
+/* =======================
+   EXISTING FUNCTIONS
+======================= */
 async function vercelRateLimitCheck() {
   const now = Date.now()
   const verschil = (now - lastFrontendDeploy) / 1000
@@ -90,33 +136,117 @@ async function pingURL(label, url) {
 }
 
 async function importTasks() {
-  try {
-    const sourcePath = path.resolve("./AO_MASTER_FULL_DEPLOY_CLEAN")
-    if (!fs.existsSync(sourcePath)) {
-      await sendTelegram("❌ AO_MASTER_FULL_DEPLOY_CLEAN map niet gevonden!")
-      return
-    }
-    await sendTelegram("✅ AO_MASTER_FULL_DEPLOY_CLEAN gevonden, taken geladen")
-  } catch (err) {
-    await sendTelegram("⚠️ Fout bij import taken: " + err.message)
+  const sourcePath = path.resolve("./AO_MASTER_FULL_DEPLOY_CLEAN")
+  if (!fs.existsSync(sourcePath)) {
+    await sendTelegram("❌ AO_MASTER_FULL_DEPLOY_CLEAN map niet gevonden")
+    return
   }
+  await sendTelegram("✅ Bronmap gevonden")
 }
 
 async function importSupabase() {
   try {
-    const { data: tables, error } = await supabase.from("pg_tables").select("*")
+    const { data, error } = await supabase.from("pg_tables").select("*")
     if (error) throw error
-    await sendTelegram(`✅ Supabase: ${tables.length} tabellen opgehaald`)
+    await sendTelegram(`✅ Supabase tabellen: ${data.length}`)
   } catch (err) {
-    await sendTelegram("⚠️ Fout bij Supabase import: " + err.message)
+    await sendTelegram("⚠️ Supabase fout: " + err.message)
   }
 }
 
 async function koppelNieuweModules(target) {
-  await sendTelegram(`🔗 Nieuwe modules gekoppeld aan ${target} met SterkBouw huisstijl.`)
-  // TODO: Implementatie mapping naar juiste map + stijl injectie
+  await sendTelegram(`🔗 Modules gekoppeld aan ${target}`)
 }
 
+/* =======================
+   AGENT IMPLEMENTATIE
+======================= */
+async function scanSource() {
+  const base = path.resolve("./AO_MASTER_FULL_DEPLOY_CLEAN")
+  if (!fs.existsSync(base)) {
+    await sendTelegram("❌ Bronmap ontbreekt")
+    return
+  }
+
+  const files = []
+
+  function walk(dir) {
+    for (const item of fs.readdirSync(dir)) {
+      const full = path.join(dir, item)
+      const stat = fs.statSync(full)
+      if (stat.isDirectory()) walk(full)
+      else files.push(full.replace(base + "/", ""))
+    }
+  }
+
+  walk(base)
+  sourceScan = files
+
+  await sendTelegram(`📂 Bron gescand: ${files.length} bestanden`)
+}
+
+async function classifySource() {
+  if (!sourceScan) {
+    await sendTelegram("⚠️ Eerst 'scan bron' uitvoeren")
+    return
+  }
+
+  classifiedFiles = {
+    backend: [],
+    frontend: [],
+    executor: [],
+    unknown: []
+  }
+
+  for (const f of sourceScan) {
+    const l = f.toLowerCase()
+    if (l.includes("backend") || l.includes("api") || l.includes("routes"))
+      classifiedFiles.backend.push(f)
+    else if (l.includes("frontend") || l.includes("app") || l.includes("pages"))
+      classifiedFiles.frontend.push(f)
+    else if (l.includes("executor") || l.includes("agent") || l.includes("workflow"))
+      classifiedFiles.executor.push(f)
+    else
+      classifiedFiles.unknown.push(f)
+  }
+
+  await sendTelegram(
+    `🧠 Classificatie klaar\n` +
+    `Backend: ${classifiedFiles.backend.length}\n` +
+    `Frontend: ${classifiedFiles.frontend.length}\n` +
+    `Executor: ${classifiedFiles.executor.length}\n` +
+    `Onbekend: ${classifiedFiles.unknown.length}`
+  )
+}
+
+async function buildRemapPlan() {
+  if (!classifiedFiles) {
+    await sendTelegram("⚠️ Eerst 'classificeer bron' uitvoeren")
+    return
+  }
+
+  remapPlan = {
+    backend: classifiedFiles.backend,
+    frontend: classifiedFiles.frontend,
+    executor: classifiedFiles.executor
+  }
+
+  await sendTelegram("🗺️ Remap-plan opgebouwd")
+}
+
+async function executeRemap(target) {
+  if (!remapPlan) {
+    await sendTelegram("⚠️ Geen remap-plan beschikbaar")
+    return
+  }
+
+  const count = remapPlan[target]?.length || 0
+  await sendTelegram(`🚧 Remap gestart voor ${target} (${count} bestanden)`)
+}
+
+/* =======================
+   AUTO START
+======================= */
 function startAutoPing() {
   setInterval(async () => {
     await pingURL("Backend", BACKEND_URL)
@@ -129,8 +259,5 @@ function startAutoPing() {
 app.listen(PORT, async () => {
   console.log("AO Executor draait op poort " + PORT)
   await sendTelegram("[AO] Executor gestart")
-  await pingURL("Backend", BACKEND_URL)
   startAutoPing()
-  await handleCommand("importeer taken")
-  await handleCommand("importeer supabase")
 })
