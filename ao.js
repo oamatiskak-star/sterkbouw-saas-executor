@@ -87,7 +87,6 @@ async function handleCommand(command) {
   if (lower.includes("sync taken executor"))
     return await koppelNieuweModules("executor")
 
-  /* === WRITE MODE === */
   if (lower.includes("activeer write mode")) {
     enableWriteMode()
     await sendTelegram("✍️ WRITE-MODE geactiveerd. Bestanden worden nu echt gekopieerd.")
@@ -116,7 +115,7 @@ async function handleCommand(command) {
 }
 
 /* =======================
-   EXISTING FUNCTIONS
+   HELPERS
 ======================= */
 async function vercelRateLimitCheck() {
   const now = Date.now()
@@ -133,9 +132,9 @@ async function pingURL(label, url) {
   if (!url) return
   try {
     const r = await axios.get(url + "/ping")
-    console.log(`[AO] ${label} OK: ${r.status}`)
+    console.log("[AO] " + label + " OK: " + r.status)
   } catch (e) {
-    console.log(`[AO] ${label} FOUT: ${e.message}`)
+    console.log("[AO] " + label + " FOUT: " + e.message)
   }
 }
 
@@ -152,18 +151,18 @@ async function importSupabase() {
   try {
     const { data, error } = await supabase.from("pg_tables").select("*")
     if (error) throw error
-    await sendTelegram(`✅ Supabase tabellen: ${data.length}`)
+    await sendTelegram("✅ Supabase tabellen: " + data.length)
   } catch (err) {
     await sendTelegram("⚠️ Supabase fout: " + err.message)
   }
 }
 
 async function koppelNieuweModules(target) {
-  await sendTelegram(`🔗 Modules gekoppeld aan ${target}`)
+  await sendTelegram("🔗 Modules gekoppeld aan " + target)
 }
 
 /* =======================
-   AGENT IMPLEMENTATIE
+   AGENT LOGIC
 ======================= */
 async function scanSource() {
   const base = path.resolve("./AO_MASTER_FULL_DEPLOY_CLEAN")
@@ -185,8 +184,7 @@ async function scanSource() {
 
   walk(base)
   sourceScan = files
-
-  await sendTelegram(`📂 Bron gescand: ${files.length} bestanden`)
+  await sendTelegram("📂 Bron gescand: " + files.length + " bestanden")
 }
 
 async function classifySource() {
@@ -215,11 +213,11 @@ async function classifySource() {
   }
 
   await sendTelegram(
-    `🧠 Classificatie klaar\n` +
-    `Backend: ${classifiedFiles.backend.length}\n` +
-    `Frontend: ${classifiedFiles.frontend.length}\n` +
-    `Executor: ${classifiedFiles.executor.length}\n` +
-    `Onbekend: ${classifiedFiles.unknown.length}`
+    "🧠 Classificatie klaar\n" +
+    "Backend: " + classifiedFiles.backend.length + "\n" +
+    "Frontend: " + classifiedFiles.frontend.length + "\n" +
+    "Executor: " + classifiedFiles.executor.length + "\n" +
+    "Onbekend: " + classifiedFiles.unknown.length
   )
 }
 
@@ -250,7 +248,7 @@ async function executeRemap(target) {
     return
   }
 
-  await sendTelegram(`🚧 REMAP gestart voor ${target}`)
+  await sendTelegram("🚧 REMAP gestart voor " + target)
   await runRemap(target, files)
 }
 
@@ -260,7 +258,6 @@ async function executeRemap(target) {
 function startAutoPing() {
   setInterval(async () => {
     await pingURL("Backend", BACKEND_URL)
-    await pingURL("Frontend", FRONTEND_URL)
     await pingURL("Executor", EXECUTOR_URL)
     await pingURL("Vercel", VERCEL_URL)
   }, 2 * 60 * 1000)
