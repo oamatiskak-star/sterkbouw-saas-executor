@@ -5,7 +5,7 @@ import express from "express"
 import axios from "axios"
 import { sendTelegram } from "./telegram/telegram.js"
 import { createClient } from "@supabase/supabase-js"
-import fs from "fs"
+import fs from "fs-extra"
 import path from "path"
 
 const app = express()
@@ -22,6 +22,21 @@ const SUPABASE_KEY = process.env.SUPABASE_KEY
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY)
 let lastFrontendDeploy = 0
+
+const MAPS = {
+  backend: {
+    src: "./AO_MASTER_FULL_DEPLOY_CLEAN/backend",
+    dest: "./sterkbouw-saas-back"
+  },
+  frontend: {
+    src: "./AO_MASTER_FULL_DEPLOY_CLEAN/frontend",
+    dest: "./sterkbouw-saas-front"
+  },
+  executor: {
+    src: "./AO_MASTER_FULL_DEPLOY_CLEAN/executor",
+    dest: "./sterkbouw-saas-executor"
+  }
+}
 
 app.get("/ping", (req, res) => {
   res.status(200).send("AO EXECUTOR OK")
@@ -49,30 +64,21 @@ async function handleCommand(command) {
     await importTasks()
     return
   }
-  if (lower.includes("sync taken backend")) return await sendTelegram("📁 Taken gesynchroniseerd naar Backend")
-  if (lower.includes("sync taken frontend")) return await sendTelegram("📁 Taken gesynchroniseerd naar Frontend")
-  if (lower.includes("sync taken executor")) return await sendTelegram("📁 Taken gesynchroniseerd naar Executor")
+  if (lower.includes("sync taken backend")) return await syncTasks("backend")
+  if (lower.includes("sync taken frontend")) return await syncTasks("frontend")
+  if (lower.includes("sync taken executor")) return await syncTasks("executor")
   if (lower.includes("importeer supabase")) {
     await sendTelegram("📦 Supabase import gestart")
     await importSupabase()
     return
   }
 
-  // Nieuw: Specifieke AO modules
   if (lower.includes("sync risico analyse")) return await sendTelegram("📊 Risico-analyse taken gesynchroniseerd")
   if (lower.includes("genereer kopersportaal")) return await sendTelegram("🛒 Kopersportaal-pagina’s gegenereerd")
   if (lower.includes("genereer huurdersportaal")) return await sendTelegram("🏠 Huurdersportaal-pagina’s gegenereerd")
   if (lower.includes("genereer e installaties")) return await sendTelegram("🔌 E-installaties gemapt")
   if (lower.includes("genereer w installaties")) return await sendTelegram("🔥 W-installaties gemapt")
   if (lower.includes("sync bim architecten")) return await sendTelegram("🏗️ BIM Architectenmodule gekoppeld")
-
-  if (lower.includes("remap alles")) {
-    await sendTelegram("🔄 Volledige remap van backend, frontend en executor gestart")
-    await handleCommand("sync taken backend")
-    await handleCommand("sync taken frontend")
-    await handleCommand("sync taken executor")
-    return
-  }
 
   await sendTelegram("⚠️ Onbekend commando ontvangen:\n" + command)
 }
@@ -106,9 +112,19 @@ async function importTasks() {
       return
     }
     await sendTelegram("✅ AO_MASTER_FULL_DEPLOY_CLEAN gevonden, taken geladen")
-    // TODO: Mapping per module toevoegen
   } catch (err) {
     await sendTelegram("⚠️ Fout bij import taken: " + err.message)
+  }
+}
+
+async function syncTasks(component) {
+  try {
+    const map = MAPS[component]
+    if (!map) throw new Error("Onbekende component: " + component)
+    await fs.copy(map.src, map.dest, { overwrite: true })
+    await sendTelegram(`✅ Taken gesynchroniseerd naar ${component}`)
+  } catch (err) {
+    await sendTelegram(`❌ Fout bij synchronisatie ${component}: ${err.message}`)
   }
 }
 
@@ -117,7 +133,6 @@ async function importSupabase() {
     const { data: tables, error } = await supabase.from("pg_tables").select("*")
     if (error) throw error
     await sendTelegram(`✅ Supabase: ${tables.length} tabellen opgehaald`)
-    // TODO: Taken aanmaken per tabel
   } catch (err) {
     await sendTelegram("⚠️ Fout bij Supabase import: " + err.message)
   }
