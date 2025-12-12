@@ -85,7 +85,6 @@ async function pingURL(label, url) {
   if (!url) return
   try {
     const r = await axios.get(url + "/ping")
-    // GEEN Telegrammelding meer hier
     console.log(`[AO] ${label} OK: ${r.status}`)
   } catch (e) {
     console.log(`[AO] ${label} FOUT: ${e.message}`)
@@ -98,7 +97,6 @@ function startAutoPing() {
     await pingURL("Frontend", FRONTEND_URL)
     await pingURL("Executor", EXECUTOR_URL)
     await pingURL("Vercel", VERCEL_URL)
-    // GitHub & Supabase eruit
   }, 2 * 60 * 1000)
 }
 
