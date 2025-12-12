@@ -17,7 +17,8 @@ const REQUIRED_ENVS = [
   "TELEGRAM_CHAT_ID",
   "GITHUB_TOKEN",
   "GITHUB_OWNER",
-  "GITHUB_REPO"
+  "GITHUB_REPO",
+  "GITHUB_BRANCH"
 ]
 
 for (const key of REQUIRED_ENVS) {
@@ -32,6 +33,7 @@ for (const key of REQUIRED_ENVS) {
 const PORT = process.env.PORT || 10000
 const GITHUB_OWNER = process.env.GITHUB_OWNER
 const GITHUB_REPO = process.env.GITHUB_REPO
+const GITHUB_BRANCH = process.env.GITHUB_BRANCH
 
 const github = axios.create({
   baseURL: "https://api.github.com",
@@ -56,8 +58,6 @@ app.get("/ping", (req, res) => {
 })
 
 app.post("/telegram/webhook", async (req, res) => {
-  console.log("[AO] Telegram webhook HIT")
-
   const message = req.body?.message?.text
   if (!message) return res.sendStatus(200)
 
@@ -100,23 +100,24 @@ async function scanSourceFromGitHub() {
 
   const files = []
 
-  async function walk(path = "") {
+  async function walk(dir = "") {
     const res = await github.get(
-      `/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${path}`
+      `/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${dir}`,
+      { params: { ref: GITHUB_BRANCH } }
     )
 
     for (const item of res.data) {
       if (item.type === "dir") {
         await walk(item.path)
-      } else {
+      } else if (item.type === "file") {
         files.push(item.path)
       }
     }
   }
 
   await walk()
-  sourceScan = files
 
+  sourceScan = files
   await sendTelegram("📂 GitHub scan klaar: " + files.length + " bestanden")
 }
 
@@ -138,6 +139,7 @@ async function classifySource() {
 
   for (const f of sourceScan) {
     const l = f.toLowerCase()
+
     if (l.includes("backend") || l.includes("api") || l.includes("routes"))
       classifiedFiles.backend.push(f)
     else if (l.includes("frontend") || l.includes("pages") || l.includes("app"))
@@ -180,6 +182,7 @@ async function buildRemapPlan() {
 ======================= */
 async function executeRemap(target) {
   const files = remapPlan?.[target] || []
+
   if (!files.length) {
     await sendTelegram("⚠️ Geen bestanden voor " + target)
     return
