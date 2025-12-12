@@ -1,13 +1,12 @@
 import axios from "axios"
+import config from "../config.js"
 
-const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN
-const CHAT_ID = process.env.TELEGRAM_CHAT_ID
+export default async function sendTelegram(message) {
+  const token = config.telegram.bot_token
+  const chatId = config.telegram.chat_id
 
-export async function sendTelegram(msg) {
-  if (!TELEGRAM_TOKEN || !CHAT_ID) return
-  const url = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`
-  await axios.post(url, {
-    chat_id: CHAT_ID,
-    text: msg,
+  await axios.post(`https://api.telegram.org/bot${token}/sendMessage`, {
+    chat_id: chatId,
+    text: message
   })
 }
