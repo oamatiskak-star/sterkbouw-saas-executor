@@ -4,9 +4,6 @@ dotenv.config()
 import express from "express"
 import axios from "axios"
 import { sendTelegram } from "./telegram/telegram.js"
-import { createClient } from "@supabase/supabase-js"
-import fs from "fs"
-import path from "path"
 import { runRemap, enableWriteMode } from "./remap/remapEngine.js"
 
 const app = express()
@@ -15,7 +12,13 @@ app.use(express.json())
 /* =======================
    ENV VALIDATIE
 ======================= */
-const REQUIRED_ENVS = ["TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"]
+const REQUIRED_ENVS = [
+  "TELEGRAM_BOT_TOKEN",
+  "TELEGRAM_CHAT_ID",
+  "GITHUB_TOKEN",
+  "GITHUB_OWNER",
+  "GITHUB_REPO"
+]
 
 for (const key of REQUIRED_ENVS) {
   if (!process.env[key]) {
@@ -24,13 +27,19 @@ for (const key of REQUIRED_ENVS) {
 }
 
 /* =======================
-   ENV CONFIG
+   CONFIG
 ======================= */
 const PORT = process.env.PORT || 10000
-const SUPABASE_URL = process.env.SUPABASE_URL
-const SUPABASE_KEY = process.env.SUPABASE_KEY
+const GITHUB_OWNER = process.env.GITHUB_OWNER
+const GITHUB_REPO = process.env.GITHUB_REPO
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_KEY)
+const github = axios.create({
+  baseURL: "https://api.github.com",
+  headers: {
+    Authorization: "Bearer " + process.env.GITHUB_TOKEN,
+    Accept: "application/vnd.github+json"
+  }
+})
 
 /* =======================
    AGENT STATE
@@ -46,41 +55,16 @@ app.get("/ping", (req, res) => {
   res.status(200).send("AO EXECUTOR OK")
 })
 
-/* GitHub webhook */
-app.post("/api/webhook", async (req, res) => {
-  const commitMessage = req.body?.head_commit?.message || ""
-  console.log("[AO] GitHub webhook ontvangen:", commitMessage)
-
-  try {
-    await handleCommand(commitMessage)
-  } catch (e) {
-    console.error("[AO][GITHUB COMMAND FOUT]", e.message)
-  }
-
-  res.status(200).send("Webhook OK")
-})
-
-/* Telegram webhook */
 app.post("/telegram/webhook", async (req, res) => {
   console.log("[AO] Telegram webhook HIT")
 
-  try {
-    const message = req.body?.message?.text
-    const chatId = req.body?.message?.chat?.id
+  const message = req.body?.message?.text
+  if (!message) return res.sendStatus(200)
 
-    if (!message || !chatId) {
-      console.log("[AO] Telegram payload ongeldig")
-      return res.sendStatus(200)
-    }
+  console.log("[AO] Telegram bericht:", message)
 
-    console.log("[AO] Telegram bericht:", message)
-
-    await sendTelegram("📥 Ontvangen: " + message)
-    await handleCommand(message)
-
-  } catch (err) {
-    console.error("[AO][TELEGRAM WEBHOOK FOUT]", err.message)
-  }
+  await sendTelegram("📥 Ontvangen: " + message)
+  await handleCommand(message)
 
   res.sendStatus(200)
 })
@@ -91,7 +75,7 @@ app.post("/telegram/webhook", async (req, res) => {
 async function handleCommand(command) {
   const lower = command.toLowerCase()
 
-  if (lower.includes("scan bron")) return await scanSource()
+  if (lower.includes("scan bron")) return await scanSourceFromGitHub()
   if (lower.includes("classificeer bron")) return await classifySource()
   if (lower.includes("bouw remap plan")) return await buildRemapPlan()
 
@@ -109,39 +93,48 @@ async function handleCommand(command) {
 }
 
 /* =======================
-   AGENT LOGIC
+   GITHUB SCAN
 ======================= */
-async function scanSource() {
-  const base = path.resolve("./AO_MASTER_FULL_DEPLOY_CLEAN")
-  if (!fs.existsSync(base)) {
-    await sendTelegram("❌ Bronmap ontbreekt")
-    return
-  }
+async function scanSourceFromGitHub() {
+  await sendTelegram("🔍 GitHub bron scan gestart")
 
   const files = []
 
-  function walk(dir) {
-    for (const item of fs.readdirSync(dir)) {
-      const full = path.join(dir, item)
-      const stat = fs.statSync(full)
-      if (stat.isDirectory()) walk(full)
-      else files.push(full.replace(base + "/", ""))
+  async function walk(path = "") {
+    const res = await github.get(
+      `/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${path}`
+    )
+
+    for (const item of res.data) {
+      if (item.type === "dir") {
+        await walk(item.path)
+      } else {
+        files.push(item.path)
+      }
     }
   }
 
-  walk(base)
+  await walk()
   sourceScan = files
 
-  await sendTelegram("📂 Bron gescand: " + files.length + " bestanden")
+  await sendTelegram("📂 GitHub scan klaar: " + files.length + " bestanden")
 }
 
+/* =======================
+   CLASSIFICATIE
+======================= */
 async function classifySource() {
   if (!sourceScan) {
     await sendTelegram("⚠️ Eerst scan bron uitvoeren")
     return
   }
 
-  classifiedFiles = { backend: [], frontend: [], executor: [], unknown: [] }
+  classifiedFiles = {
+    backend: [],
+    frontend: [],
+    executor: [],
+    unknown: []
+  }
 
   for (const f of sourceScan) {
     const l = f.toLowerCase()
@@ -149,7 +142,7 @@ async function classifySource() {
       classifiedFiles.backend.push(f)
     else if (l.includes("frontend") || l.includes("pages") || l.includes("app"))
       classifiedFiles.frontend.push(f)
-    else if (l.includes("executor") || l.includes("agent"))
+    else if (l.includes("executor") || l.includes("agent") || l.includes("workflow"))
       classifiedFiles.executor.push(f)
     else
       classifiedFiles.unknown.push(f)
@@ -159,10 +152,14 @@ async function classifySource() {
     "🧠 Classificatie klaar\n" +
     "Backend: " + classifiedFiles.backend.length + "\n" +
     "Frontend: " + classifiedFiles.frontend.length + "\n" +
-    "Executor: " + classifiedFiles.executor.length
+    "Executor: " + classifiedFiles.executor.length + "\n" +
+    "Onbekend: " + classifiedFiles.unknown.length
   )
 }
 
+/* =======================
+   REMAP PLAN
+======================= */
 async function buildRemapPlan() {
   if (!classifiedFiles) {
     await sendTelegram("⚠️ Geen classificatie beschikbaar")
@@ -178,6 +175,9 @@ async function buildRemapPlan() {
   await sendTelegram("🗺️ Remap plan opgebouwd")
 }
 
+/* =======================
+   REMAP EXECUTIE
+======================= */
 async function executeRemap(target) {
   const files = remapPlan?.[target] || []
   if (!files.length) {
@@ -194,11 +194,5 @@ async function executeRemap(target) {
 ======================= */
 app.listen(PORT, async () => {
   console.log("AO Executor draait op poort " + PORT)
-
-  try {
-    await sendTelegram("✅ AO Executor gestart en luistert naar Telegram")
-    console.log("[AO] Telegram test verzonden")
-  } catch (err) {
-    console.error("[AO][TELEGRAM START FOUT]", err.message)
-  }
+  await sendTelegram("✅ AO Executor live. GitHub scan actief.")
 })
