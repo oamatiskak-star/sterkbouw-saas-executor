@@ -23,9 +23,9 @@ if (!GITHUB_OWNER || !GITHUB_REPO || !GITHUB_TOKEN) {
    GITHUB CLIENT
 ======================= */
 const github = axios.create({
-  baseURL: "https://github.com/oamatiskak-star/AO_MASTER_FULL_DEPLOY_CLEAN",
+  baseURL: "https://api.github.com",
   headers: {
-    Authorization: "Bearer " + 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,
+    Authorization: "Bearer " + GITHUB_TOKEN,
     Accept: "application/vnd.github+json"
   }
 })
