@@ -1,60 +1,44 @@
-export default function initTelegram(bot, ao) {
-  console.log("[AO][TELEGRAM] SterkBouw SaaS router actief")
+import fetch from "node-fetch"
 
-  bot.on("text", async (ctx) => {
-    const text = (ctx.message.text || "").trim()
-    const cmd = text.toLowerCase()
+const TELEGRAM_API = "https://api.telegram.org"
 
-    console.log("[AO][TELEGRAM] ontvangen:", cmd)
+/* =======================
+SEND TELEGRAM MESSAGE
+======================= */
+export async function sendTelegram(text) {
+  const token = process.env.TELEGRAM_BOT_TOKEN
+  const chatId = process.env.TELEGRAM_CHAT_ID
 
-    const reply = (msg) => ctx.reply(msg)
-    const is = (...list) => list.includes(cmd)
+  if (!token || !chatId) {
+    console.error("[AO][TELEGRAM] ontbrekende token of chat id")
+    return
+  }
 
-    // ====== HOOFDCOMMANDO ======
-    if (
-      is(
-        "bouw sterkbouw",
-        "start sterkbouw",
-        "build",
-        "alles bouwen",
-        "sterkbouw"
-      )
-    ) {
-      reply("SterkBouw SaaS bouw gestart")
-      console.log("[AO][PIPELINE] START STERKBOUW SAAS")
+  try {
+    await fetch(`${TELEGRAM_API}/bot${token}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text
+      })
+    })
+  } catch (err) {
+    console.error("[AO][TELEGRAM] send fout:", err.message)
+  }
+}
 
-      // Volledige pipeline, vaste volgorde
-      ao.emit("SCAN_SOURCE")
-      ao.emit("CLASSIFY_SOURCE")
-      ao.emit("BUILD_SAAS_STRUCTURE")
-      ao.emit("GENERATE_MISSING_CODE")
-      ao.emit("APPLY_CODE")
-      ao.emit("FINAL_HEALTH_CHECK")
+/* =======================
+INIT TELEGRAM WEBHOOK
+======================= */
+export default function initTelegram(app) {
+  console.log("[AO][TELEGRAM] module geladen")
 
-      return
-    }
+  app.post("/telegram/webhook", async (req, res) => {
+    const message = req.body?.message?.text
+    if (!message) return res.sendStatus(200)
 
-    // ====== LOSSE COMMANDO’S (optioneel) ======
-    if (is("scan bron")) {
-      reply("Scan gestart")
-      ao.emit("SCAN_SOURCE")
-      return
-    }
-
-    // ====== HELP ======
-    if (is("help")) {
-      reply(
-        "SterkBouw SaaS commando’s:\n" +
-        "- bouw sterkbouw\n" +
-        "- start sterkbouw\n" +
-        "- build\n\n" +
-        "Dit start automatisch:\n" +
-        "scan → classificatie → structuur → code → health"
-      )
-      return
-    }
-
-    // ====== DEFAULT ======
-    reply("Onbekend commando. Typ: help")
+    console.log("[AO][TELEGRAM] ontvangen:", message)
+    res.sendStatus(200)
   })
 }
