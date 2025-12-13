@@ -79,6 +79,19 @@ async function handleCommand(cmd) {
   console.log("[AO][CMD]", cmd)
 
   if (
+    cmd !== "scan bron" &&
+    cmd !== "activeer write mode" &&
+    (!Array.isArray(sourceScan) || sourceScan.length === 0) &&
+    cmd !== "bouw sterkbouw" &&
+    cmd !== "start sterkbouw" &&
+    cmd !== "build" &&
+    cmd !== "alles bouwen"
+  ) {
+    await sendTelegram("⛔ Eerst: scan bron")
+    return
+  }
+
+  if (
     cmd === "bouw sterkbouw" ||
     cmd === "start sterkbouw" ||
     cmd === "build" ||
@@ -129,6 +142,7 @@ LOGIC
 ======================= */
 async function scanSource() {
   console.log("[AO][SCAN] gestart")
+
   const files = await runRemap("scan")
   sourceScan = files
 
@@ -137,8 +151,9 @@ async function scanSource() {
 }
 
 async function classifySource() {
-  if (!sourceScan) {
-    await sendTelegram("⚠️ Eerst scan bron uitvoeren")
+  if (!Array.isArray(sourceScan) || sourceScan.length === 0) {
+    await sendTelegram("⛔ Geen scan aanwezig. Eerst: scan bron")
+    console.log("[AO][CLASSIFY] afgebroken. Geen sourceScan")
     return
   }
 
@@ -161,6 +176,13 @@ async function classifySource() {
     else
       classifiedFiles.unknown.push(f)
   }
+
+  console.log("[AO][CLASSIFY] klaar", {
+    backend: classifiedFiles.backend.length,
+    frontend: classifiedFiles.frontend.length,
+    executor: classifiedFiles.executor.length,
+    unknown: classifiedFiles.unknown.length
+  })
 
   await sendTelegram(
     "🧠 Classificatie klaar\n" +
