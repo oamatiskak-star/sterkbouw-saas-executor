@@ -3,8 +3,15 @@ dotenv.config()
 
 import express from "express"
 import { sendTelegram } from "./telegram/telegram.js"
-import { runRemap, enableWriteMode, initRemapConfig } from "./remap/remapEngine.js"
+import {
+  runRemap,
+  enableWriteMode,
+  initRemapConfig
+} from "./remap/remapEngine.js"
 
+/* =======================
+APP
+======================= */
 const app = express()
 app.use(express.json())
 
@@ -50,13 +57,15 @@ app.post("/telegram/webhook", async (req, res) => {
   const message = req.body?.message?.text
   if (!message) return res.sendStatus(200)
 
-  console.log("[AO][TELEGRAM] ontvangen:", message)
+  const clean = message.toLowerCase().trim().replace(/\s+/g, " ")
+
+  console.log("[AO][TELEGRAM] ontvangen:", clean)
 
   try {
-    await sendTelegram("📥 Command ontvangen: " + message)
-    await handleCommand(message)
+    await sendTelegram("📥 Command ontvangen: " + clean)
+    await handleCommand(clean)
   } catch (err) {
-    console.error("[AO][TELEGRAM COMMAND FOUT]", err.message)
+    console.error("[AO][COMMAND FOUT]", err.message)
     await sendTelegram("❌ Fout: " + err.message)
   }
 
@@ -66,52 +75,53 @@ app.post("/telegram/webhook", async (req, res) => {
 /* =======================
 COMMAND ROUTER
 ======================= */
-async function handleCommand(command) {
-  const clean = command
-    .toLowerCase()
-    .trim()
-    .replace(/\s+/g, " ")
+async function handleCommand(cmd) {
+  console.log("[AO][CMD]", cmd)
 
-  console.log("[AO][CMD]", clean)
+  if (
+    cmd === "bouw sterkbouw" ||
+    cmd === "start sterkbouw" ||
+    cmd === "build" ||
+    cmd === "alles bouwen"
+  ) {
+    return await runFullSterkbouwPipeline()
+  }
 
-  if (clean === "activeer write mode") {
+  if (cmd === "activeer write mode") {
     enableWriteMode()
-    console.log("[AO][WRITE MODE] AAN")
     await sendTelegram("✍️ WRITE MODE STAAT AAN")
     return
   }
 
-  if (clean === "scan bron") {
-    console.log("[AO][ACTIE] scan bron")
-    return await scanSource()
-  }
+  if (cmd === "scan bron") return await scanSource()
+  if (cmd === "classificeer bron") return await classifySource()
+  if (cmd === "bouw remap plan") return await buildRemapPlan()
 
-  if (clean === "classificeer bron") {
-    console.log("[AO][ACTIE] classificeer bron")
-    return await classifySource()
-  }
+  if (cmd === "remap backend") return await executeRemap("backend")
+  if (cmd === "remap frontend") return await executeRemap("frontend")
+  if (cmd === "remap executor") return await executeRemap("executor")
 
-  if (clean === "bouw remap plan") {
-    console.log("[AO][ACTIE] bouw remap plan")
-    return await buildRemapPlan()
-  }
+  await sendTelegram("⚠️ Onbekend commando: " + cmd)
+}
 
-  if (clean === "remap backend") {
-    console.log("[AO][ACTIE] remap backend")
-    return await executeRemap("backend")
-  }
+/* =======================
+VOLLEDIGE PIPELINE
+======================= */
+async function runFullSterkbouwPipeline() {
+  await sendTelegram("🚀 SterkBouw SaaS build gestart")
 
-  if (clean === "remap frontend") {
-    console.log("[AO][ACTIE] remap frontend")
-    return await executeRemap("frontend")
-  }
+  enableWriteMode()
+  await sendTelegram("✍️ WRITE MODE geactiveerd")
 
-  if (clean === "remap executor") {
-    console.log("[AO][ACTIE] remap executor")
-    return await executeRemap("executor")
-  }
+  await scanSource()
+  await classifySource()
+  await buildRemapPlan()
 
-  await sendTelegram("⚠️ Onbekend commando: " + clean)
+  await executeRemap("backend")
+  await executeRemap("frontend")
+  await executeRemap("executor")
+
+  await sendTelegram("✅ SterkBouw SaaS build volledig afgerond")
 }
 
 /* =======================
@@ -119,7 +129,6 @@ LOGIC
 ======================= */
 async function scanSource() {
   console.log("[AO][SCAN] gestart")
-
   const files = await runRemap("scan")
   sourceScan = files
 
@@ -157,7 +166,8 @@ async function classifySource() {
     "🧠 Classificatie klaar\n" +
     "Backend: " + classifiedFiles.backend.length + "\n" +
     "Frontend: " + classifiedFiles.frontend.length + "\n" +
-    "Executor: " + classifiedFiles.executor.length
+    "Executor: " + classifiedFiles.executor.length + "\n" +
+    "Overig: " + classifiedFiles.unknown.length
   )
 }
 
