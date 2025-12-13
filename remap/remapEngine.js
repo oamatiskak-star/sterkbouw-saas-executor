@@ -48,28 +48,22 @@ export async function runRemap(target, files = []) {
   }
 
   /* =======================
-     SCAN MODE
+     SCAN MODE (GIT TREE)
   ======================= */
   if (target === "scan") {
-    const all = []
+    console.log("[AO][SCAN] git tree scan gestart")
 
-    async function walk(dir = "") {
-      const res = await github.get(
-        `/repos/${OWNER}/${REPO}/contents/${dir}`,
-        { params: { ref: BRANCH } }
-      )
+    const res = await github.get(
+      `/repos/${OWNER}/${REPO}/git/trees/${BRANCH}`,
+      { params: { recursive: 1 } }
+    )
 
-      for (const item of res.data) {
-        if (item.type === "dir") {
-          await walk(item.path)
-        } else if (item.type === "file") {
-          all.push(item.path)
-        }
-      }
-    }
+    const allFiles = res.data.tree
+      .filter(item => item.type === "blob")
+      .map(item => item.path)
 
-    await walk()
-    return all
+    console.log("[AO][SCAN] git tree klaar:", allFiles.length)
+    return allFiles
   }
 
   /* =======================
