@@ -8,6 +8,7 @@ import {
   enableWriteMode,
   initRemapConfig
 } from "./remap/remapEngine.js"
+import { supabase } from "./lib/supabase.js"
 
 /* =======================
 APP
@@ -22,7 +23,9 @@ const REQUIRED_ENVS = [
   "TELEGRAM_BOT_TOKEN",
   "TELEGRAM_CHAT_ID",
   "GITHUB_PAT",
-  "GITHUB_REPO"
+  "GITHUB_REPO",
+  "SUPABASE_URL",
+  "SUPABASE_SERVICE_ROLE_KEY"
 ]
 
 for (const key of REQUIRED_ENVS) {
@@ -35,6 +38,8 @@ for (const key of REQUIRED_ENVS) {
 CONFIG
 ======================= */
 const PORT = process.env.PORT || 10000
+const REPO = process.env.GITHUB_REPO
+const BRANCH = process.env.GITHUB_BRANCH || "main"
 
 initRemapConfig()
 
@@ -106,7 +111,13 @@ async function runFullPipeline() {
     enableWriteMode()
     await sendTelegram("✍️ WRITE MODE geactiveerd")
 
-    await scanSource()
+    const hasScan = await loadScanIfExists()
+    if (!hasScan) {
+      await scanSource()
+    } else {
+      await sendTelegram("♻️ Bestaande scan hergebruikt")
+    }
+
     await classifySource()
     await buildRemapPlan()
 
@@ -123,7 +134,7 @@ async function runFullPipeline() {
     if (err.message.includes("403")) {
       await sendTelegram(
         "⛔ GitHub 403 bij scan.\n" +
-        "Controleer of je GITHUB_PAT een CLASSIC token is met scope:\n" +
+        "Gebruik een CLASSIC GitHub token met scopes:\n" +
         "- repo\n" +
         "- read:org\n" +
         "Daarna Render redeploy met cache clear."
@@ -137,22 +148,47 @@ async function runFullPipeline() {
 }
 
 /* =======================
-LOGIC
+SCAN LOGIC
 ======================= */
+async function loadScanIfExists() {
+  const { data } = await supabase
+    .from("ao_repo_scan")
+    .select("files")
+    .eq("repo", REPO)
+    .eq("branch", BRANCH)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .single()
+
+  if (data?.files) {
+    sourceScan = data.files
+    return true
+  }
+
+  return false
+}
+
 async function scanSource() {
   console.log("[AO][SCAN] gestart")
 
-  try {
-    const files = await runRemap("scan")
-    sourceScan = files
+  const files = await runRemap("scan")
+  sourceScan = files
 
-    console.log("[AO][SCAN] klaar:", files.length)
-    await sendTelegram("📂 Scan klaar: " + files.length + " bestanden")
-  } catch (err) {
-    throw new Error("403 scan fout")
-  }
+  await supabase
+    .from("ao_repo_scan")
+    .insert({
+      repo: REPO,
+      branch: BRANCH,
+      files
+    })
+
+  console.log("[AO][SCAN] klaar:", files.length)
+  await sendTelegram("📂 Scan klaar en opgeslagen: " + files.length)
 }
 
+/* =======================
+CLASSIFICATIE
+======================= */
 async function classifySource() {
   if (!Array.isArray(sourceScan) || sourceScan.length === 0) {
     throw new Error("Geen scan beschikbaar")
@@ -186,6 +222,9 @@ async function classifySource() {
   )
 }
 
+/* =======================
+REMAP
+======================= */
 async function buildRemapPlan() {
   remapPlan = classifiedFiles
   await sendTelegram("🗺️ Remap plan opgebouwd")
