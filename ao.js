@@ -44,6 +44,7 @@ STATE
 let sourceScan = null
 let classifiedFiles = null
 let remapPlan = null
+let pipelineRunning = false
 
 /* =======================
 ROUTES
@@ -65,6 +66,7 @@ app.post("/telegram/webhook", async (req, res) => {
   } catch (err) {
     console.error("[AO][COMMAND FOUT]", err.message)
     await sendTelegram("❌ Fout: " + err.message)
+    pipelineRunning = false
   }
 
   res.sendStatus(200)
@@ -76,12 +78,18 @@ COMMAND ROUTER
 async function handleCommand(cmd) {
   console.log("[AO][CMD]", cmd)
 
+  if (pipelineRunning) {
+    await sendTelegram("⛔ Pipeline draait al. Wacht tot deze klaar is.")
+    return
+  }
+
   if (
     cmd === "build alles" ||
     cmd === "bouw alles" ||
     cmd === "start build" ||
     cmd === "volledige build"
   ) {
+    pipelineRunning = true
     return await runFullPipeline()
   }
 
@@ -94,20 +102,38 @@ VOLLEDIGE PIPELINE
 async function runFullPipeline() {
   await sendTelegram("🚀 Volledige SterkBouw build gestart")
 
-  enableWriteMode()
-  await sendTelegram("✍️ WRITE MODE geactiveerd")
+  try {
+    enableWriteMode()
+    await sendTelegram("✍️ WRITE MODE geactiveerd")
 
-  await scanSource()
-  await classifySource()
-  await buildRemapPlan()
+    await scanSource()
+    await classifySource()
+    await buildRemapPlan()
 
-  await executeRemap("backend")
-  await executeRemap("frontend")
-  await executeRemap("executor")
+    await executeRemap("backend")
+    await executeRemap("frontend")
+    await executeRemap("executor")
 
-  await runBuild()
+    await runBuild()
 
-  await sendTelegram("✅ Volledige build afgerond")
+    await sendTelegram("✅ Volledige build afgerond")
+  } catch (err) {
+    console.error("[AO][PIPELINE FOUT]", err.message)
+
+    if (err.message.includes("403")) {
+      await sendTelegram(
+        "⛔ GitHub 403 bij scan.\n" +
+        "Controleer of je GITHUB_PAT een CLASSIC token is met scope:\n" +
+        "- repo\n" +
+        "- read:org\n" +
+        "Daarna Render redeploy met cache clear."
+      )
+    } else {
+      await sendTelegram("❌ Pipeline gestopt: " + err.message)
+    }
+  } finally {
+    pipelineRunning = false
+  }
 }
 
 /* =======================
@@ -115,11 +141,16 @@ LOGIC
 ======================= */
 async function scanSource() {
   console.log("[AO][SCAN] gestart")
-  const files = await runRemap("scan")
-  sourceScan = files
 
-  console.log("[AO][SCAN] klaar:", files.length)
-  await sendTelegram("📂 Scan klaar: " + files.length + " bestanden")
+  try {
+    const files = await runRemap("scan")
+    sourceScan = files
+
+    console.log("[AO][SCAN] klaar:", files.length)
+    await sendTelegram("📂 Scan klaar: " + files.length + " bestanden")
+  } catch (err) {
+    throw new Error("403 scan fout")
+  }
 }
 
 async function classifySource() {
@@ -179,7 +210,6 @@ BUILD
 ======================= */
 async function runBuild() {
   await sendTelegram("🏗️ Build gestart")
-  // hier later Render / Vercel triggers
   await sendTelegram("✅ Build afgerond")
 }
 
