@@ -49,7 +49,6 @@ STATE
 let sourceScan = null
 let classifiedFiles = null
 let remapPlan = null
-let pipelineRunning = false
 
 /* =======================
 ROUTES
@@ -62,89 +61,74 @@ app.post("/telegram/webhook", async (req, res) => {
   const message = req.body?.message?.text
   if (!message) return res.sendStatus(200)
 
-  const clean = message.toLowerCase().trim().replace(/\s+/g, " ")
-  console.log("[AO][TELEGRAM] ontvangen:", clean)
+  const cmd = message.toLowerCase().trim().replace(/\s+/g, " ")
+  console.log("[AO][TELEGRAM] ontvangen:", cmd)
 
   try {
-    await sendTelegram("📥 Command ontvangen: " + clean)
-    await handleCommand(clean)
+    await sendTelegram("📥 Command ontvangen: " + cmd)
+    await handleCommand(cmd)
   } catch (err) {
     console.error("[AO][COMMAND FOUT]", err.message)
     await sendTelegram("❌ Fout: " + err.message)
-    pipelineRunning = false
   }
 
   res.sendStatus(200)
 })
 
 /* =======================
-COMMAND ROUTER
+COMMAND ROUTER (HANDMATIG)
 ======================= */
 async function handleCommand(cmd) {
   console.log("[AO][CMD]", cmd)
 
-  if (pipelineRunning) {
-    await sendTelegram("⛔ Pipeline draait al. Wacht tot deze klaar is.")
+  if (cmd === "activeer write mode") {
+    enableWriteMode()
+    await sendTelegram("✍️ WRITE MODE geactiveerd")
     return
   }
 
-  if (
-    cmd === "build alles" ||
-    cmd === "bouw alles" ||
-    cmd === "start build" ||
-    cmd === "volledige build"
-  ) {
-    pipelineRunning = true
-    return await runFullPipeline()
+  if (cmd === "scan bron") {
+    return await scanSource()
+  }
+
+  if (cmd === "scan hergebruiken") {
+    const ok = await loadScanIfExists()
+    if (ok) {
+      await sendTelegram("♻️ Scan geladen uit Supabase")
+    } else {
+      await sendTelegram("⚠️ Geen bestaande scan gevonden")
+    }
+    return
+  }
+
+  if (cmd === "classificeer bron") {
+    return await classifySource()
+  }
+
+  if (cmd === "bouw remap plan") {
+    return await buildRemapPlan()
+  }
+
+  if (cmd === "remap backend") {
+    enableWriteMode()
+    return await executeRemap("backend")
+  }
+
+  if (cmd === "remap frontend") {
+    enableWriteMode()
+    return await executeRemap("frontend")
+  }
+
+  if (cmd === "remap executor") {
+    enableWriteMode()
+    return await executeRemap("executor")
+  }
+
+  if (cmd === "build") {
+    return await runBuild()
   }
 
   await sendTelegram("⚠️ Onbekend commando: " + cmd)
-}
-
-/* =======================
-VOLLEDIGE PIPELINE
-======================= */
-async function runFullPipeline() {
-  await sendTelegram("🚀 Volledige SterkBouw build gestart")
-
-  try {
-    enableWriteMode()
-    await sendTelegram("✍️ WRITE MODE geactiveerd")
-
-    const hasScan = await loadScanIfExists()
-    if (!hasScan) {
-      await scanSource()
-    } else {
-      await sendTelegram("♻️ Bestaande scan hergebruikt")
-    }
-
-    await classifySource()
-    await buildRemapPlan()
-
-    await executeRemap("backend")
-    await executeRemap("frontend")
-    await executeRemap("executor")
-
-    await runBuild()
-
-    await sendTelegram("✅ Volledige build afgerond")
-  } catch (err) {
-    console.error("[AO][PIPELINE FOUT]", err.message)
-
-    if (err.message.includes("403")) {
-      await sendTelegram(
-        "⛔ GitHub 403 bij scan.\n" +
-        "Gebruik een CLASSIC GitHub token met scopes:\n" +
-        "- repo\n" +
-        "- read:org\n" +
-        "Daarna Render redeploy met cache clear."
-      )
-    } else {
-      await sendTelegram("❌ Pipeline gestopt: " + err.message)
-    }
-  } finally {
-    pipelineRunning = false
-  }
 }
 
 /* =======================
@@ -182,7 +166,6 @@ async function scanSource() {
       files
     })
 
-  console.log("[AO][SCAN] klaar:", files.length)
   await sendTelegram("📂 Scan klaar en opgeslagen: " + files.length)
 }
 
@@ -191,7 +174,8 @@ CLASSIFICATIE
 ======================= */
 async function classifySource() {
   if (!Array.isArray(sourceScan) || sourceScan.length === 0) {
-    throw new Error("Geen scan beschikbaar")
+    await sendTelegram("⛔ Geen scan beschikbaar")
+    return
   }
 
   classifiedFiles = {
@@ -226,14 +210,18 @@ async function classifySource() {
 REMAP
 ======================= */
 async function buildRemapPlan() {
+  if (!classifiedFiles) {
+    await sendTelegram("⛔ Eerst classificeren")
+    return
+  }
+
   remapPlan = classifiedFiles
   await sendTelegram("🗺️ Remap plan opgebouwd")
 }
 
 async function executeRemap(target) {
-  enableWriteMode()
-
   const files = remapPlan?.[target] || []
+
   if (!files.length) {
     await sendTelegram("⚠️ Geen bestanden voor " + target)
     return
