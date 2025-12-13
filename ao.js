@@ -36,7 +36,6 @@ CONFIG
 ======================= */
 const PORT = process.env.PORT || 10000
 
-/* init remap config exact 1x */
 initRemapConfig()
 
 /* =======================
@@ -58,7 +57,6 @@ app.post("/telegram/webhook", async (req, res) => {
   if (!message) return res.sendStatus(200)
 
   const clean = message.toLowerCase().trim().replace(/\s+/g, " ")
-
   console.log("[AO][TELEGRAM] ontvangen:", clean)
 
   try {
@@ -78,35 +76,38 @@ COMMAND ROUTER
 async function handleCommand(cmd) {
   console.log("[AO][CMD]", cmd)
 
-  if (cmd === "activeer write mode") {
-    enableWriteMode()
-    await sendTelegram("✍️ WRITE MODE STAAT AAN")
-    return
-  }
-
-  if (cmd === "scan bron") return await scanSource()
-  if (cmd === "classificeer bron") return await classifySource()
-  if (cmd === "bouw remap plan") return await buildRemapPlan()
-
-  if (cmd.startsWith("remap") && cmd.includes("backend")) {
-    await executeRemap("backend")
-    await runBuild()
-    return
-  }
-
-  if (cmd.startsWith("remap") && (cmd.includes("frontend") || cmd.includes("front"))) {
-    await executeRemap("frontend")
-    await runBuild()
-    return
-  }
-
-  if (cmd.startsWith("remap") && (cmd.includes("executor") || cmd.includes("exec"))) {
-    await executeRemap("executor")
-    await runBuild()
-    return
+  if (
+    cmd === "build alles" ||
+    cmd === "bouw alles" ||
+    cmd === "start build" ||
+    cmd === "volledige build"
+  ) {
+    return await runFullPipeline()
   }
 
   await sendTelegram("⚠️ Onbekend commando: " + cmd)
+}
+
+/* =======================
+VOLLEDIGE PIPELINE
+======================= */
+async function runFullPipeline() {
+  await sendTelegram("🚀 Volledige SterkBouw build gestart")
+
+  enableWriteMode()
+  await sendTelegram("✍️ WRITE MODE geactiveerd")
+
+  await scanSource()
+  await classifySource()
+  await buildRemapPlan()
+
+  await executeRemap("backend")
+  await executeRemap("frontend")
+  await executeRemap("executor")
+
+  await runBuild()
+
+  await sendTelegram("✅ Volledige build afgerond")
 }
 
 /* =======================
@@ -123,8 +124,7 @@ async function scanSource() {
 
 async function classifySource() {
   if (!Array.isArray(sourceScan) || sourceScan.length === 0) {
-    await sendTelegram("⛔ Eerst scan bron uitvoeren")
-    return
+    throw new Error("Geen scan beschikbaar")
   }
 
   classifiedFiles = {
@@ -151,51 +151,36 @@ async function classifySource() {
     "🧠 Classificatie klaar\n" +
     "Backend: " + classifiedFiles.backend.length + "\n" +
     "Frontend: " + classifiedFiles.frontend.length + "\n" +
-    "Executor: " + classifiedFiles.executor.length + "\n" +
-    "Overig: " + classifiedFiles.unknown.length
+    "Executor: " + classifiedFiles.executor.length
   )
 }
 
 async function buildRemapPlan() {
-  if (!classifiedFiles) {
-    await sendTelegram("⚠️ Geen classificatie beschikbaar")
-    return
-  }
-
   remapPlan = classifiedFiles
   await sendTelegram("🗺️ Remap plan opgebouwd")
 }
 
 async function executeRemap(target) {
   enableWriteMode()
-  console.log("[AO][REMAP] WRITE MODE GEFORCEERD")
 
   const files = remapPlan?.[target] || []
-
   if (!files.length) {
     await sendTelegram("⚠️ Geen bestanden voor " + target)
     return
   }
 
-  console.log("[AO][REMAP] start", target, files.length)
   await sendTelegram("🚧 REMAP gestart voor " + target)
-
   await runRemap(target, files)
-
   await sendTelegram("✅ REMAP afgerond voor " + target)
 }
 
 /* =======================
-BUILD (AUTOMATISCH NA REMAP)
+BUILD
 ======================= */
 async function runBuild() {
-  console.log("[AO][BUILD] gestart")
   await sendTelegram("🏗️ Build gestart")
-
-  // hier koppel je later Render / Vercel hooks
-
+  // hier later Render / Vercel triggers
   await sendTelegram("✅ Build afgerond")
-  console.log("[AO][BUILD] afgerond")
 }
 
 /* =======================
