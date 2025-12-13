@@ -1,34 +1,74 @@
 import fetch from "node-fetch"
-import config from "../config.js"
 
-// Named export zodat AO dit kan importeren
-export async function sendTelegram(message) {
-  const token = config.telegram.bot_token
-  const chatId = config.telegram.chat_id
+export default function initTelegram(bot, ao) {
+  console.log("[AO][TELEGRAM] router actief")
 
-  if (!token || !chatId) {
-    console.error("❌ Ontbrekende Telegram-configuratie in config.js")
-    return
-  }
+  bot.on("text", async (ctx) => {
+    const text = (ctx.message.text || "").trim()
+    const cmd = text.toLowerCase()
 
-  const url = `https://api.telegram.org/bot${token}/sendMessage`
+    console.log("[AO][TELEGRAM] ontvangen:", cmd)
 
-  const body = {
-    chat_id: chatId,
-    text: message,
-    parse_mode: "HTML"
-  }
+    const reply = (msg) => ctx.reply(msg)
 
-  try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body)
-    })
+    const is = (...list) => list.includes(cmd)
 
-    const data = await res.json()
-    if (!data.ok) console.error("⚠️ Telegram API error:", data)
-  } catch (err) {
-    console.error("⚠️ Fout bij verzenden Telegram-bericht:", err)
-  }
+    // SCAN
+    if (is("scan bron", "scan", "scan source")) {
+      reply("Scan gestart")
+      console.log("[AO][CMD] scan bron")
+      ao.emit("SCAN_SOURCE")
+      return
+    }
+
+    // CLASSIFY
+    if (is("classificeer bron", "classificeer", "classify source", "classify")) {
+      reply("Classificatie gestart")
+      console.log("[AO][CMD] classificeer bron")
+      ao.emit("CLASSIFY_SOURCE")
+      return
+    }
+
+    // BUILD STRUCTURE
+    if (is("bouw doelstructuur", "bouw structuur", "build structure")) {
+      reply("Doelstructuur wordt opgebouwd")
+      console.log("[AO][CMD] bouw doelstructuur")
+      ao.emit("BUILD_STRUCTURE")
+      return
+    }
+
+    // WRITE CODE
+    if (is("schrijf ontbrekende code", "write code", "generate code")) {
+      reply("Ontbrekende code wordt geschreven")
+      console.log("[AO][CMD] schrijf ontbrekende code")
+      ao.emit("WRITE_CODE")
+      return
+    }
+
+    // HEALTH
+    if (is("health", "health check", "status")) {
+      reply("Health check gestart")
+      console.log("[AO][CMD] health")
+      ao.emit("HEALTH_CHECK")
+      return
+    }
+
+    // HELP
+    if (is("help")) {
+      reply(
+        "Beschikbare commando’s:\n" +
+        "- scan bron\n" +
+        "- classificeer bron\n" +
+        "- bouw doelstructuur\n" +
+        "- schrijf ontbrekende code\n" +
+        "- health"
+      )
+      console.log("[AO][CMD] help")
+      return
+    }
+
+    // DEFAULT
+    reply("Onbekend commando. Typ: help")
+    console.log("[AO][CMD] onbekend commando")
+  })
 }
