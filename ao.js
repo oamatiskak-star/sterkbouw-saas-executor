@@ -204,6 +204,9 @@ async function buildRemapPlan() {
 }
 
 async function executeRemap(target) {
+  enableWriteMode()
+  console.log("[AO][REMAP] WRITE MODE GEFORCEERD")
+
   const files = remapPlan?.[target] || []
 
   if (!files.length) {
