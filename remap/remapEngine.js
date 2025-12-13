@@ -48,17 +48,25 @@ export async function runRemap(target, files = []) {
   }
 
   /* =======================
-     SCAN MODE (GIT TREE)
+     SCAN MODE (BRANCH → SHA → TREE)
   ======================= */
   if (target === "scan") {
     console.log("[AO][SCAN] git tree scan gestart")
 
-    const res = await github.get(
-      `/repos/${OWNER}/${REPO}/git/trees/${BRANCH}`,
+    // 1. Haal branch info op
+    const branchRes = await github.get(
+      `/repos/${OWNER}/${REPO}/branches/${BRANCH}`
+    )
+
+    const sha = branchRes.data.commit.sha
+
+    // 2. Haal volledige tree op via commit SHA
+    const treeRes = await github.get(
+      `/repos/${OWNER}/${REPO}/git/trees/${sha}`,
       { params: { recursive: 1 } }
     )
 
-    const allFiles = res.data.tree
+    const allFiles = treeRes.data.tree
       .filter(item => item.type === "blob")
       .map(item => item.path)
 
