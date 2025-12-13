@@ -78,28 +78,6 @@ COMMAND ROUTER
 async function handleCommand(cmd) {
   console.log("[AO][CMD]", cmd)
 
-  if (
-    cmd !== "scan bron" &&
-    cmd !== "activeer write mode" &&
-    (!Array.isArray(sourceScan) || sourceScan.length === 0) &&
-    cmd !== "bouw sterkbouw" &&
-    cmd !== "start sterkbouw" &&
-    cmd !== "build" &&
-    cmd !== "alles bouwen"
-  ) {
-    await sendTelegram("⛔ Eerst: scan bron")
-    return
-  }
-
-  if (
-    cmd === "bouw sterkbouw" ||
-    cmd === "start sterkbouw" ||
-    cmd === "build" ||
-    cmd === "alles bouwen"
-  ) {
-    return await runFullSterkbouwPipeline()
-  }
-
   if (cmd === "activeer write mode") {
     enableWriteMode()
     await sendTelegram("✍️ WRITE MODE STAAT AAN")
@@ -110,31 +88,25 @@ async function handleCommand(cmd) {
   if (cmd === "classificeer bron") return await classifySource()
   if (cmd === "bouw remap plan") return await buildRemapPlan()
 
-  if (cmd === "remap backend") return await executeRemap("backend")
-  if (cmd === "remap frontend") return await executeRemap("frontend")
-  if (cmd === "remap executor") return await executeRemap("executor")
+  if (cmd.startsWith("remap") && cmd.includes("backend")) {
+    await executeRemap("backend")
+    await runBuild()
+    return
+  }
+
+  if (cmd.startsWith("remap") && (cmd.includes("frontend") || cmd.includes("front"))) {
+    await executeRemap("frontend")
+    await runBuild()
+    return
+  }
+
+  if (cmd.startsWith("remap") && (cmd.includes("executor") || cmd.includes("exec"))) {
+    await executeRemap("executor")
+    await runBuild()
+    return
+  }
 
   await sendTelegram("⚠️ Onbekend commando: " + cmd)
-}
-
-/* =======================
-VOLLEDIGE PIPELINE
-======================= */
-async function runFullSterkbouwPipeline() {
-  await sendTelegram("🚀 SterkBouw SaaS build gestart")
-
-  enableWriteMode()
-  await sendTelegram("✍️ WRITE MODE geactiveerd")
-
-  await scanSource()
-  await classifySource()
-  await buildRemapPlan()
-
-  await executeRemap("backend")
-  await executeRemap("frontend")
-  await executeRemap("executor")
-
-  await sendTelegram("✅ SterkBouw SaaS build volledig afgerond")
 }
 
 /* =======================
@@ -142,7 +114,6 @@ LOGIC
 ======================= */
 async function scanSource() {
   console.log("[AO][SCAN] gestart")
-
   const files = await runRemap("scan")
   sourceScan = files
 
@@ -152,8 +123,7 @@ async function scanSource() {
 
 async function classifySource() {
   if (!Array.isArray(sourceScan) || sourceScan.length === 0) {
-    await sendTelegram("⛔ Geen scan aanwezig. Eerst: scan bron")
-    console.log("[AO][CLASSIFY] afgebroken. Geen sourceScan")
+    await sendTelegram("⛔ Eerst scan bron uitvoeren")
     return
   }
 
@@ -176,13 +146,6 @@ async function classifySource() {
     else
       classifiedFiles.unknown.push(f)
   }
-
-  console.log("[AO][CLASSIFY] klaar", {
-    backend: classifiedFiles.backend.length,
-    frontend: classifiedFiles.frontend.length,
-    executor: classifiedFiles.executor.length,
-    unknown: classifiedFiles.unknown.length
-  })
 
   await sendTelegram(
     "🧠 Classificatie klaar\n" +
@@ -220,6 +183,19 @@ async function executeRemap(target) {
   await runRemap(target, files)
 
   await sendTelegram("✅ REMAP afgerond voor " + target)
+}
+
+/* =======================
+BUILD (AUTOMATISCH NA REMAP)
+======================= */
+async function runBuild() {
+  console.log("[AO][BUILD] gestart")
+  await sendTelegram("🏗️ Build gestart")
+
+  // hier koppel je later Render / Vercel hooks
+
+  await sendTelegram("✅ Build afgerond")
+  console.log("[AO][BUILD] afgerond")
 }
 
 /* =======================
