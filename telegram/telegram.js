@@ -1,7 +1,5 @@
-import fetch from "node-fetch"
-
 export default function initTelegram(bot, ao) {
-  console.log("[AO][TELEGRAM] router actief")
+  console.log("[AO][TELEGRAM] SterkBouw SaaS router actief")
 
   bot.on("text", async (ctx) => {
     const text = (ctx.message.text || "").trim()
@@ -10,65 +8,53 @@ export default function initTelegram(bot, ao) {
     console.log("[AO][TELEGRAM] ontvangen:", cmd)
 
     const reply = (msg) => ctx.reply(msg)
-
     const is = (...list) => list.includes(cmd)
 
-    // SCAN
-    if (is("scan bron", "scan", "scan source")) {
+    // ====== HOOFDCOMMANDO ======
+    if (
+      is(
+        "bouw sterkbouw",
+        "start sterkbouw",
+        "build",
+        "alles bouwen",
+        "sterkbouw"
+      )
+    ) {
+      reply("SterkBouw SaaS bouw gestart")
+      console.log("[AO][PIPELINE] START STERKBOUW SAAS")
+
+      // Volledige pipeline, vaste volgorde
+      ao.emit("SCAN_SOURCE")
+      ao.emit("CLASSIFY_SOURCE")
+      ao.emit("BUILD_SAAS_STRUCTURE")
+      ao.emit("GENERATE_MISSING_CODE")
+      ao.emit("APPLY_CODE")
+      ao.emit("FINAL_HEALTH_CHECK")
+
+      return
+    }
+
+    // ====== LOSSE COMMANDO’S (optioneel) ======
+    if (is("scan bron")) {
       reply("Scan gestart")
-      console.log("[AO][CMD] scan bron")
       ao.emit("SCAN_SOURCE")
       return
     }
 
-    // CLASSIFY
-    if (is("classificeer bron", "classificeer", "classify source", "classify")) {
-      reply("Classificatie gestart")
-      console.log("[AO][CMD] classificeer bron")
-      ao.emit("CLASSIFY_SOURCE")
-      return
-    }
-
-    // BUILD STRUCTURE
-    if (is("bouw doelstructuur", "bouw structuur", "build structure")) {
-      reply("Doelstructuur wordt opgebouwd")
-      console.log("[AO][CMD] bouw doelstructuur")
-      ao.emit("BUILD_STRUCTURE")
-      return
-    }
-
-    // WRITE CODE
-    if (is("schrijf ontbrekende code", "write code", "generate code")) {
-      reply("Ontbrekende code wordt geschreven")
-      console.log("[AO][CMD] schrijf ontbrekende code")
-      ao.emit("WRITE_CODE")
-      return
-    }
-
-    // HEALTH
-    if (is("health", "health check", "status")) {
-      reply("Health check gestart")
-      console.log("[AO][CMD] health")
-      ao.emit("HEALTH_CHECK")
-      return
-    }
-
-    // HELP
+    // ====== HELP ======
     if (is("help")) {
       reply(
-        "Beschikbare commando’s:\n" +
-        "- scan bron\n" +
-        "- classificeer bron\n" +
-        "- bouw doelstructuur\n" +
-        "- schrijf ontbrekende code\n" +
-        "- health"
+        "SterkBouw SaaS commando’s:\n" +
+        "- bouw sterkbouw\n" +
+        "- start sterkbouw\n" +
+        "- build\n\n" +
+        "Dit start automatisch:\n" +
+        "scan → classificatie → structuur → code → health"
       )
-      console.log("[AO][CMD] help")
       return
     }
 
-    // DEFAULT
+    // ====== DEFAULT ======
     reply("Onbekend commando. Typ: help")
-    console.log("[AO][CMD] onbekend commando")
   })
 }
