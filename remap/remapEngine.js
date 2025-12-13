@@ -13,7 +13,7 @@ export function enableWriteMode() {
 
 export function initRemapConfig() {
   const repoFull = process.env.GITHUB_REPO
-  const token = process.env.GITHUB_PAT
+  const token = process.env.GITHUB_PAT || process.env.GITHUB_TOKEN
 
   if (!repoFull || !token) {
     console.error("[AO][REMAP][ENV FOUT] GITHUB_REPO of GITHUB_PAT ontbreekt")
@@ -33,8 +33,9 @@ export function initRemapConfig() {
   github = axios.create({
     baseURL: "https://api.github.com",
     headers: {
-      Authorization: "Bearer " + token,
-      Accept: "application/vnd.github+json"
+      Authorization: "token " + token,
+      Accept: "application/vnd.github+json",
+      "User-Agent": "AO-Executor"
     }
   })
 
@@ -46,7 +47,9 @@ export async function runRemap(target, files = []) {
     throw new Error("GitHub niet geïnitialiseerd")
   }
 
-  /* SCAN MODE */
+  /* =======================
+     SCAN MODE
+  ======================= */
   if (target === "scan") {
     const all = []
 
@@ -57,8 +60,11 @@ export async function runRemap(target, files = []) {
       )
 
       for (const item of res.data) {
-        if (item.type === "dir") await walk(item.path)
-        else if (item.type === "file") all.push(item.path)
+        if (item.type === "dir") {
+          await walk(item.path)
+        } else if (item.type === "file") {
+          all.push(item.path)
+        }
       }
     }
 
@@ -66,6 +72,9 @@ export async function runRemap(target, files = []) {
     return all
   }
 
+  /* =======================
+     WRITE MODE CHECK
+  ======================= */
   if (!WRITE_MODE) {
     console.log("[AO][REMAP] WRITE MODE UIT")
     return
@@ -81,7 +90,8 @@ export async function runRemap(target, files = []) {
         { params: { ref: BRANCH } }
       )
 
-      const newPath = target + "/" + file.replace(/^(backend|frontend|executor)\//, "")
+      const newPath =
+        target + "/" + file.replace(/^(backend|frontend|executor)\//, "")
 
       await github.put(
         `/repos/${OWNER}/${REPO}/contents/${newPath}`,
@@ -95,6 +105,7 @@ export async function runRemap(target, files = []) {
       ok++
     } catch (e) {
       fail++
+      console.error("[AO][REMAP][FOUT]", file)
     }
   }
 
