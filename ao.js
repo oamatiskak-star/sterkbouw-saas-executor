@@ -5,52 +5,64 @@ import express from "express"
 import { createClient } from "@supabase/supabase-js"
 
 const app = express()
-app.use(express.json())
-
 const PORT = process.env.PORT || 10000
-const POLL = Number(process.env.AO_POLL_INTERVAL || 5000)
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
 )
 
-const ROUTING = {
-  run_calculation: "calculation",
-  generate_planning: "engineering",
-  generate_cashflow: "engineering",
-  generate_bim_quantities: "bim",
-  upload_documents: "documents",
-  create_project: "projects"
-}
-
 app.get("/ping", (_, res) => {
-  res.send("AO_EXECUTOR DISPATCHER LIVE")
+  res.send("AO_ENGINEERING LIVE")
 })
 
-async function dispatch() {
+async function work() {
   const { data: tasks } = await supabase
     .from("tasks")
     .select("*")
     .eq("status", "open")
-    .is("assigned_to", null)
-    .limit(5)
+    .eq("assigned_to", "engineering")
+    .limit(1)
 
   if (!tasks || tasks.length === 0) return
+  const task = tasks[0]
 
-  for (const task of tasks) {
-    const target = ROUTING[task.type]
-    if (!target) continue
+  await supabase
+    .from("tasks")
+    .update({ status: "running" })
+    .eq("id", task.id)
 
-    await supabase
-      .from("tasks")
-      .update({ assigned_to: target })
-      .eq("id", task.id)
-  }
+  const result =
+    task.type === "generate_planning"
+      ? {
+          fases: [
+            { naam: "Fundering", weken: 4 },
+            { naam: "Casco", weken: 10 },
+            { naam: "Afbouw", weken: 6 }
+          ]
+        }
+      : {
+          termijnen: [
+            { fase: "Fundering", pct: 30 },
+            { fase: "Casco", pct: 40 },
+            { fase: "Afbouw", pct: 30 }
+          ]
+        }
+
+  await supabase.from("results").insert({
+    project_id: task.project_id,
+    type: task.type,
+    data: result
+  })
+
+  await supabase
+    .from("tasks")
+    .update({ status: "done" })
+    .eq("id", task.id)
 }
 
-setInterval(dispatch, POLL)
+setInterval(work, 5000)
 
 app.listen(PORT, () => {
-  console.log("AO_EXECUTOR dispatcher gestart")
+  console.log("AO_ENGINEERING gestart")
 })
