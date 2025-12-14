@@ -28,7 +28,6 @@ async function work() {
     .limit(1)
 
   if (!tasks || tasks.length === 0) return
-
   const task = tasks[0]
 
   await supabase
@@ -39,29 +38,74 @@ async function work() {
   try {
     let result = null
 
-    if (task.type === "create_project") {
-      result = { ok: true }
-    }
-
+    /* =======================
+       RUN CALCULATION
+    ======================= */
     if (task.type === "run_calculation") {
       const { data: calc } = await supabase
         .from("calculations")
         .insert({
           project_id: task.project_id,
           type: "fixed_price",
-          status: "klaar",
-          totaal: 1250000
+          status: "in_uitvoering"
         })
         .select()
         .single()
 
-      result = calc
+      const items = [
+        { categorie: "Fundering", omschrijving: "Betonwerk", hoeveelheid: 120, eenheid: "m3", prijs: 210 },
+        { categorie: "Casco", omschrijving: "Kalkzandsteen", hoeveelheid: 900, eenheid: "m2", prijs: 85 },
+        { categorie: "Afbouw", omschrijving: "Stucwerk", hoeveelheid: 1100, eenheid: "m2", prijs: 22 }
+      ]
+
+      let totaal = 0
+
+      for (const i of items) {
+        const t = i.hoeveelheid * i.prijs
+        totaal += t
+
+        await supabase.from("calculation_items").insert({
+          calculation_id: calc.id,
+          categorie: i.categorie,
+          omschrijving: i.omschrijving,
+          hoeveelheid: i.hoeveelheid,
+          eenheid: i.eenheid,
+          prijs: i.prijs,
+          totaal: t
+        })
+      }
+
+      await supabase
+        .from("calculations")
+        .update({ totaal, status: "klaar" })
+        .eq("id", calc.id)
+
+      result = { calculation_id: calc.id, totaal }
     }
 
+    /* =======================
+       GENERATE PLANNING
+    ======================= */
     if (task.type === "generate_planning") {
       result = {
-        fases: ["fundering", "casco", "afbouw"],
-        weken: [4, 10, 6]
+        fases: [
+          { naam: "Fundering", weken: 4 },
+          { naam: "Casco", weken: 10 },
+          { naam: "Afbouw", weken: 6 }
+        ]
+      }
+    }
+
+    /* =======================
+       GENERATE CASHFLOW
+    ======================= */
+    if (task.type === "generate_cashflow") {
+      result = {
+        termijnen: [
+          { fase: "Fundering", percentage: 30 },
+          { fase: "Casco", percentage: 40 },
+          { fase: "Afbouw", percentage: 30 }
+        ]
       }
     }
 
