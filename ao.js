@@ -18,22 +18,6 @@ const app = express()
 app.use(express.json())
 
 /* =======================
-ENV VALIDATIE
-======================= */
-const REQUIRED_ENVS = [
-  "SUPABASE_URL",
-  "SUPABASE_SERVICE_ROLE_KEY",
-  "TELEGRAM_BOT_TOKEN",
-  "TELEGRAM_CHAT_ID"
-]
-
-for (const key of REQUIRED_ENVS) {
-  if (!process.env[key]) {
-    console.error("[AO][ENV FOUT] ontbreekt:", key)
-  }
-}
-
-/* =======================
 CONFIG
 ======================= */
 const PORT = process.env.PORT || 10000
@@ -46,7 +30,23 @@ const EXECUTORS = {
   bim: process.env.AO_BIM_URL
 }
 
-initRemapConfig()
+/* =======================
+OPTIONELE REMAP INIT
+======================= */
+const REMAP_ENABLED =
+  process.env.GITHUB_REPO &&
+  process.env.GITHUB_PAT
+
+if (REMAP_ENABLED) {
+  try {
+    initRemapConfig()
+    console.log("[AO] Remap ingeschakeld")
+  } catch (e) {
+    console.warn("[AO] Remap uitgeschakeld:", e.message)
+  }
+} else {
+  console.log("[AO] Remap niet actief (geen GitHub envs)")
+}
 
 /* =======================
 STATE
@@ -60,7 +60,7 @@ let pipelineRunning = false
 ROUTES
 ======================= */
 app.get("/ping", (_, res) => {
-  res.status(200).send("AO CORE OK")
+  res.status(200).send("AO OK")
 })
 
 /* ===== BUSINESS ACTION ROUTER ===== */
@@ -111,9 +111,14 @@ app.post("/telegram/webhook", async (req, res) => {
 })
 
 /* =======================
-COMMAND ROUTER (REMAP / BUILD)
+COMMAND ROUTER (REMAP)
 ======================= */
 async function handleCommand(cmd) {
+  if (!REMAP_ENABLED) {
+    await sendTelegram("⛔ Remap niet actief op deze service")
+    return
+  }
+
   if (pipelineRunning) {
     await sendTelegram("⛔ Pipeline draait al")
     return
@@ -159,8 +164,8 @@ async function scanSource() {
   sourceScan = await runRemap("scan")
 
   await supabase.from("ao_repo_scan").insert({
-    repo: "executor",
-    branch: "main",
+    repo: process.env.GITHUB_REPO || "n/a",
+    branch: process.env.GITHUB_BRANCH || "main",
     files: sourceScan
   })
 
@@ -227,6 +232,8 @@ async function executeRemap(target) {
 START
 ======================= */
 app.listen(PORT, async () => {
-  console.log("AO CORE draait op poort " + PORT)
-  await sendTelegram("✅ AO CORE live")
+  console.log("AO draait op poort " + PORT)
+  if (process.env.TELEGRAM_BOT_TOKEN) {
+    await sendTelegram("✅ AO live")
+  }
 })
