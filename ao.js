@@ -4,12 +4,6 @@ dotenv.config()
 import express from "express"
 import fetch from "node-fetch"
 import { sendTelegram } from "./telegram/telegram.js"
-import {
-  runRemap,
-  enableWriteMode,
-  initRemapConfig
-} from "./remap/remapEngine.js"
-import { supabase } from "./lib/supabase.js"
 
 /* =======================
 APP
@@ -31,36 +25,10 @@ const EXECUTORS = {
 }
 
 /* =======================
-OPTIONELE REMAP INIT
-======================= */
-const REMAP_ENABLED =
-  process.env.GITHUB_REPO &&
-  process.env.GITHUB_PAT
-
-if (REMAP_ENABLED) {
-  try {
-    initRemapConfig()
-    console.log("[AO] Remap ingeschakeld")
-  } catch (e) {
-    console.warn("[AO] Remap uitgeschakeld:", e.message)
-  }
-} else {
-  console.log("[AO] Remap niet actief (geen GitHub envs)")
-}
-
-/* =======================
-STATE
-======================= */
-let sourceScan = []
-let classifiedFiles = null
-let remapPlan = null
-let pipelineRunning = false
-
-/* =======================
 ROUTES
 ======================= */
 app.get("/ping", (_, res) => {
-  res.status(200).send("AO OK")
+  res.status(200).send("AO CORE OK")
 })
 
 /* ===== BUSINESS ACTION ROUTER ===== */
@@ -91,149 +59,31 @@ app.post("/action", async (req, res) => {
   }
 })
 
-/* ===== TELEGRAM CONTROL ===== */
+/* ===== TELEGRAM COMMANDS ===== */
 app.post("/telegram/webhook", async (req, res) => {
   const message = req.body?.message?.text
   if (!message) return res.sendStatus(200)
 
-  const cmd = message.toLowerCase().trim().replace(/\s+/g, " ")
+  const cmd = message.toLowerCase().trim()
   console.log("[AO][TELEGRAM]", cmd)
 
-  try {
-    await sendTelegram("📥 Command: " + cmd)
-    await handleCommand(cmd)
-  } catch (err) {
-    await sendTelegram("❌ Fout: " + err.message)
-    pipelineRunning = false
+  await sendTelegram("📥 Ontvangen: " + cmd)
+
+  if (cmd === "status") {
+    await sendTelegram("✅ AO CORE actief")
+  } else {
+    await sendTelegram("ℹ️ Commando ontvangen maar geen actie gekoppeld")
   }
 
   res.sendStatus(200)
 })
 
 /* =======================
-COMMAND ROUTER (REMAP)
-======================= */
-async function handleCommand(cmd) {
-  if (!REMAP_ENABLED) {
-    await sendTelegram("⛔ Remap niet actief op deze service")
-    return
-  }
-
-  if (pipelineRunning) {
-    await sendTelegram("⛔ Pipeline draait al")
-    return
-  }
-
-  if (cmd === "scan bron") return scanSource()
-  if (cmd === "classificeer bron") return classifySource()
-  if (cmd === "bouw remap plan") return buildRemapPlan()
-
-  if (cmd === "remap backend") {
-    enableWriteMode()
-    return executeRemap("backend")
-  }
-
-  if (cmd === "remap frontend") {
-    enableWriteMode()
-    return executeRemap("frontend")
-  }
-
-  if (cmd === "remap executor") {
-    enableWriteMode()
-    return executeRemap("executor")
-  }
-
-  if (cmd === "remap alles") {
-    pipelineRunning = true
-    enableWriteMode()
-    await buildRemapPlan()
-    await executeRemap("backend")
-    await executeRemap("frontend")
-    await executeRemap("executor")
-    pipelineRunning = false
-    return
-  }
-
-  await sendTelegram("⚠️ Onbekend commando")
-}
-
-/* =======================
-SCAN
-======================= */
-async function scanSource() {
-  sourceScan = await runRemap("scan")
-
-  await supabase.from("ao_repo_scan").insert({
-    repo: process.env.GITHUB_REPO || "n/a",
-    branch: process.env.GITHUB_BRANCH || "main",
-    files: sourceScan
-  })
-
-  await sendTelegram("📂 Scan klaar: " + sourceScan.length)
-}
-
-/* =======================
-CLASSIFICATIE
-======================= */
-async function classifySource() {
-  if (!sourceScan.length) {
-    await sendTelegram("⛔ Geen scan beschikbaar")
-    return
-  }
-
-  classifiedFiles = {
-    backend: [],
-    frontend: [],
-    executor: [],
-    unknown: []
-  }
-
-  for (const f of sourceScan) {
-    const l = f.toLowerCase()
-    if (l.includes("/api/")) classifiedFiles.backend.push(f)
-    else if (l.includes("/pages/")) classifiedFiles.frontend.push(f)
-    else if (l.includes("ao.js")) classifiedFiles.executor.push(f)
-    else classifiedFiles.unknown.push(f)
-  }
-
-  await sendTelegram(
-    "🧠 Classificatie\n" +
-    "Backend: " + classifiedFiles.backend.length + "\n" +
-    "Frontend: " + classifiedFiles.frontend.length + "\n" +
-    "Executor: " + classifiedFiles.executor.length
-  )
-}
-
-/* =======================
-REMAP
-======================= */
-async function buildRemapPlan() {
-  if (!classifiedFiles) {
-    await sendTelegram("⛔ Eerst classificeren")
-    return
-  }
-  remapPlan = classifiedFiles
-  await sendTelegram("🗺️ Remap plan klaar")
-}
-
-async function executeRemap(target) {
-  const files = remapPlan?.[target] || []
-  if (!files.length) {
-    await sendTelegram("⚠️ Geen bestanden voor " + target)
-    return
-  }
-
-  await sendTelegram("🚧 REMAP " + target)
-  await runRemap(target, files)
-  await sendTelegram("✅ REMAP " + target + " afgerond")
-}
-
-/* =======================
 START
 ======================= */
 app.listen(PORT, async () => {
-  console.log("AO draait op poort " + PORT)
+  console.log("AO CORE draait op poort " + PORT)
   if (process.env.TELEGRAM_BOT_TOKEN) {
-    await sendTelegram("✅ AO live")
+    await sendTelegram("✅ AO CORE live")
   }
 })
