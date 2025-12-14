@@ -1,14 +1,25 @@
-import { actions } from "../lib/actions.js"
+const state = {}
 
 export async function runAction(actionId, payload) {
-  const cfg = actions[actionId]
-  if (!cfg) return { ok:false, error:"ACTIE_ONBEKEND" }
-
-  return {
-    ok:true,
-    action: actionId,
-    task: cfg.task,
-    status:"GESTART",
+  state[actionId] = {
+    state: "BEZIG",
     startedAt: Date.now()
   }
+
+  setTimeout(() => {
+    state[actionId] = {
+      state: "KLAAR",
+      finishedAt: Date.now(),
+      result: {
+        message: "Actie afgerond",
+        action: actionId
+      }
+    }
+  }, 4000)
+
+  return { ok: true, action: actionId, state: "GESTART" }
+}
+
+export async function getStatus(actionId) {
+  return state[actionId] || { state: "ONBEKEND" }
 }
