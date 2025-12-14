@@ -3,18 +3,19 @@ dotenv.config()
 
 import express from "express"
 import fetch from "node-fetch"
+import { createClient } from "@supabase/supabase-js"
+import { v4 as uuid } from "uuid"
 import { sendTelegram } from "./telegram/telegram.js"
 
-/* =======================
-APP
-======================= */
 const app = express()
 app.use(express.json())
 
-/* =======================
-CONFIG
-======================= */
 const PORT = process.env.PORT || 10000
+const AO_ROLE = process.env.AO_ROLE || "core"
+
+const supabase = process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY
+  ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
+  : null
 
 const EXECUTORS = {
   calculation: process.env.AO_CALCULATION_URL,
@@ -25,65 +26,162 @@ const EXECUTORS = {
 }
 
 /* =======================
-ROUTES
+PING
 ======================= */
 app.get("/ping", (_, res) => {
-  res.status(200).send("AO CORE OK")
+  res.send(`AO OK (${AO_ROLE})`)
 })
 
-/* ===== BUSINESS ACTION ROUTER ===== */
-app.post("/action", async (req, res) => {
-  const { target, payload } = req.body
+/* =======================
+CORE ROUTER
+======================= */
+if (AO_ROLE === "core") {
+  app.post("/action", async (req, res) => {
+    const { target, payload } = req.body
+    if (!EXECUTORS[target]) {
+      return res.status(400).json({ ok: false, error: "Onbekende executor" })
+    }
+    try {
+      const r = await fetch(EXECUTORS[target] + "/execute", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      })
+      const data = await r.json()
+      res.json(data)
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message })
+    }
+  })
 
-  if (!EXECUTORS[target]) {
-    return res.status(400).json({
-      ok: false,
-      error: "Onbekende executor: " + target
-    })
-  }
+  app.post("/telegram/webhook", async (req, res) => {
+    const text = req.body?.message?.text
+    if (text) await sendTelegram("📥 " + text)
+    res.sendStatus(200)
+  })
+}
 
-  try {
-    const r = await fetch(EXECUTORS[target] + "/execute", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    })
+/* =======================
+CALCULATION
+======================= */
+if (AO_ROLE === "calculation") {
+  app.post("/execute", async (req, res) => {
+    try {
+      const { projectId, type, input } = req.body
+      if (!projectId) return res.status(400).json({ ok: false, error: "projectId ontbreekt" })
 
-    const data = await r.json()
-    res.json(data)
-  } catch (err) {
-    res.status(500).json({
-      ok: false,
-      error: err.message
-    })
-  }
-})
+      if (type === "start") {
+        const calculationId = uuid()
+        await supabase.from("calculations").insert({
+          id: calculationId,
+          project_id: projectId,
+          status: "running",
+          result: null
+        })
+        return res.json({ ok: true, calculationId })
+      }
 
-/* ===== TELEGRAM COMMANDS ===== */
-app.post("/telegram/webhook", async (req, res) => {
-  const message = req.body?.message?.text
-  if (!message) return res.sendStatus(200)
+      if (type === "run") {
+        const { calculationId, m2, prijs_per_m2 } = input
+        const bouwsom = Number(m2) * Number(prijs_per_m2)
+        const result = { m2, prijs_per_m2, bouwsom }
+        await supabase.from("calculations")
+          .update({ status: "completed", result })
+          .eq("id", calculationId)
+        return res.json({ ok: true, result })
+      }
 
-  const cmd = message.toLowerCase().trim()
-  console.log("[AO][TELEGRAM]", cmd)
+      res.status(400).json({ ok: false, error: "Onbekend type" })
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message })
+    }
+  })
+}
 
-  await sendTelegram("📥 Ontvangen: " + cmd)
+/* =======================
+PROJECTS
+======================= */
+if (AO_ROLE === "projects") {
+  app.post("/execute", async (req, res) => {
+    try {
+      const { action, data } = req.body
+      if (action === "create") {
+        const id = uuid()
+        await supabase.from("projects").insert({ id, ...data })
+        return res.json({ ok: true, id })
+      }
+      res.status(400).json({ ok: false, error: "Onbekende actie" })
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message })
+    }
+  })
+}
 
-  if (cmd === "status") {
-    await sendTelegram("✅ AO CORE actief")
-  } else {
-    await sendTelegram("ℹ️ Commando ontvangen maar geen actie gekoppeld")
-  }
+/* =======================
+DOCUMENTS
+======================= */
+if (AO_ROLE === "documents") {
+  app.post("/execute", async (req, res) => {
+    try {
+      const { projectId, calculationId, file } = req.body
+      const id = uuid()
+      await supabase.from("uploads").insert({
+        id,
+        project_id: projectId,
+        calculation_id: calculationId,
+        file_name: file.name,
+        file_url: file.url
+      })
+      res.json({ ok: true, id })
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message })
+    }
+  })
+}
 
-  res.sendStatus(200)
-})
+/* =======================
+ENGINEERING
+======================= */
+if (AO_ROLE === "engineering") {
+  app.post("/execute", async (req, res) => {
+    try {
+      const { projectId, fases } = req.body
+      const planning = fases.map((f, i) => ({
+        fase: f,
+        week_start: i * 2,
+        week_einde: i * 2 + 2
+      }))
+      res.json({ ok: true, planning })
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message })
+    }
+  })
+}
+
+/* =======================
+BIM
+======================= */
+if (AO_ROLE === "bim") {
+  app.post("/execute", async (req, res) => {
+    try {
+      const { ifcUrl } = req.body
+      const hoeveelheden = [
+        { type: "wand", m2: 320 },
+        { type: "vloer", m2: 180 }
+      ]
+      res.json({ ok: true, hoeveelheden, bron: ifcUrl })
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message })
+    }
+  })
+}
 
 /* =======================
 START
 ======================= */
 app.listen(PORT, async () => {
-  console.log("AO CORE draait op poort " + PORT)
+  console.log(`AO gestart (${AO_ROLE}) op poort ${PORT}`)
   if (process.env.TELEGRAM_BOT_TOKEN) {
-    await sendTelegram("✅ AO CORE live")
+    await sendTelegram(`✅ AO live (${AO_ROLE})`)
   }
 })
