@@ -49,29 +49,38 @@ console.log("[AO][REMAP] GitHub config OK:", OWNER + "/" + REPO)
 UTILS
 ======================= */
 function isGeneratedFile(path) {
-if (path.includes("1") || path.includes("2") || path.includes("3")) return true
 if (path.endsWith(".log")) return true
 if (path.includes("/remapped/")) return true
+if (/_\d+/.test(path)) return true
 return false
 }
 
 async function ensureDirExists(dir) {
+if (!dir) return
+
 const parts = dir.split("/")
 let current = ""
 
 for (const part of parts) {
 current = current ? current + "/" + part : part
+
 try {
-await github.get(/repos/${OWNER}/${REPO}/contents/${current}, {
-params: { ref: BRANCH }
-})
+  await github.get(
+    `/repos/${OWNER}/${REPO}/contents/${current}`,
+    { params: { ref: BRANCH } }
+  )
 } catch {
-await github.put(/repos/${OWNER}/${REPO}/contents/${current}/.gitkeep, {
-message: "AO mkdir " + current,
-content: Buffer.from("").toString("base64"),
-branch: BRANCH
-})
+  await github.put(
+    `/repos/${OWNER}/${REPO}/contents/${current}/.gitkeep`,
+    {
+      message: "AO mkdir " + current,
+      content: Buffer.from("").toString("base64"),
+      branch: BRANCH
+    }
+  )
 }
+
+
 }
 }
 
