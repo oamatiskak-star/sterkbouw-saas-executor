@@ -33,10 +33,8 @@ async function work() {
 
   await supabase.from("results").insert({
     project_id: task.project_id,
-    type: "documents_ready",
-    data: {
-      message: "Documenten gekoppeld aan project"
-    }
+    type: "documents_processed",
+    data: { ok: true }
   })
 
   await supabase.from("tasks")
