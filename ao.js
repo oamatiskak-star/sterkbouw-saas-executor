@@ -13,7 +13,7 @@ const supabase = createClient(
 )
 
 app.get("/ping", (_, res) => {
-  res.send("AO_ENGINEERING LIVE")
+  res.send("AO_DOCUMENTS LIVE")
 })
 
 async function work() {
@@ -21,42 +21,25 @@ async function work() {
     .from("tasks")
     .select("*")
     .eq("status", "open")
-    .eq("assigned_to", "engineering")
+    .eq("assigned_to", "documents")
     .limit(1)
 
   if (!tasks || tasks.length === 0) return
   const task = tasks[0]
 
-  await supabase
-    .from("tasks")
+  await supabase.from("tasks")
     .update({ status: "running" })
     .eq("id", task.id)
 
-  const result =
-    task.type === "generate_planning"
-      ? {
-          fases: [
-            { naam: "Fundering", weken: 4 },
-            { naam: "Casco", weken: 10 },
-            { naam: "Afbouw", weken: 6 }
-          ]
-        }
-      : {
-          termijnen: [
-            { fase: "Fundering", pct: 30 },
-            { fase: "Casco", pct: 40 },
-            { fase: "Afbouw", pct: 30 }
-          ]
-        }
-
   await supabase.from("results").insert({
     project_id: task.project_id,
-    type: task.type,
-    data: result
+    type: "documents_ready",
+    data: {
+      message: "Documenten gekoppeld aan project"
+    }
   })
 
-  await supabase
-    .from("tasks")
+  await supabase.from("tasks")
     .update({ status: "done" })
     .eq("id", task.id)
 }
@@ -64,5 +47,5 @@ async function work() {
 setInterval(work, 5000)
 
 app.listen(PORT, () => {
-  console.log("AO_ENGINEERING gestart")
+  console.log("AO_DOCUMENTS gestart")
 })
