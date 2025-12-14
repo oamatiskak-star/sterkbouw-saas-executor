@@ -81,7 +81,6 @@ CORE
 export async function runRemap(target, files = []) {
 if (!github) throw new Error("GitHub niet geïnitialiseerd")
 
-/* SCAN */
 if (target === "scan") {
 console.log("[AO][SCAN] git tree scan gestart")
 
