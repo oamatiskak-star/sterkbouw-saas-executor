@@ -3,13 +3,11 @@ dotenv.config()
 
 import express from "express"
 import { createClient } from "@supabase/supabase-js"
-import { randomUUID } from "crypto"
 
 const app = express()
 app.use(express.json())
 
 const PORT = process.env.PORT || 10000
-const AO_ROLE = process.env.AO_ROLE
 const POLL = Number(process.env.AO_POLL_INTERVAL || 5000)
 
 const supabase = createClient(
@@ -18,15 +16,14 @@ const supabase = createClient(
 )
 
 app.get("/ping", (_, res) => {
-  res.send("AO WORKER OK: " + AO_ROLE)
+  res.send("AO_EXECUTOR LIVE")
 })
 
-async function pollTasks() {
+async function work() {
   const { data: tasks } = await supabase
-    .from("ao_tasks")
+    .from("tasks")
     .select("*")
-    .eq("executor", AO_ROLE)
-    .eq("status", "pending")
+    .eq("status", "open")
     .order("created_at", { ascending: true })
     .limit(1)
 
@@ -35,67 +32,60 @@ async function pollTasks() {
   const task = tasks[0]
 
   await supabase
-    .from("ao_tasks")
-    .update({ status: "running" })
+    .from("tasks")
+    .update({ status: "running", assigned_to: "executor" })
     .eq("id", task.id)
 
   try {
     let result = null
 
-    if (AO_ROLE === "projects" && task.action === "init") {
-      const { data } = await supabase
-        .rpc("get_or_create_project", { p_projectnaam: task.project_name })
-
-      result = { project_id: data }
+    if (task.type === "create_project") {
+      result = { ok: true }
     }
 
-    if (AO_ROLE === "calculation" && task.action === "start") {
-      result = {
-        calculation_id: randomUUID(),
-        status: "started"
-      }
+    if (task.type === "run_calculation") {
+      const { data: calc } = await supabase
+        .from("calculations")
+        .insert({
+          project_id: task.project_id,
+          type: "fixed_price",
+          status: "klaar",
+          totaal: 1250000
+        })
+        .select()
+        .single()
+
+      result = calc
     }
 
-    if (AO_ROLE === "engineering") {
+    if (task.type === "generate_planning") {
       result = {
-        planning: ["fundering", "casco", "afbouw"],
+        fases: ["fundering", "casco", "afbouw"],
         weken: [4, 10, 6]
       }
     }
 
-    if (AO_ROLE === "bim") {
-      result = {
-        status: "wachten op model"
-      }
-    }
-
     await supabase.from("results").insert({
-      project_id: (
-        await supabase
-          .from("projects")
-          .select("id")
-          .eq("projectnaam", task.project_name)
-          .single()
-      ).data.id,
-      executor: AO_ROLE,
-      result
+      calculation_id: task.calculation_id,
+      type: task.type,
+      data: result
     })
 
     await supabase
-      .from("ao_tasks")
-      .update({ status: "done", result })
+      .from("tasks")
+      .update({ status: "done" })
       .eq("id", task.id)
 
   } catch (err) {
     await supabase
-      .from("ao_tasks")
-      .update({ status: "error", result: { error: err.message } })
+      .from("tasks")
+      .update({ status: "error" })
       .eq("id", task.id)
   }
 }
 
-setInterval(pollTasks, POLL)
+setInterval(work, POLL)
 
 app.listen(PORT, () => {
-  console.log("AO WORKER gestart:", AO_ROLE)
+  console.log("AO_EXECUTOR draait")
 })
