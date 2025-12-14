@@ -15,121 +15,42 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 )
 
+const ROUTING = {
+  run_calculation: "calculation",
+  generate_planning: "engineering",
+  generate_cashflow: "engineering",
+  generate_bim_quantities: "bim",
+  upload_documents: "documents",
+  create_project: "projects"
+}
+
 app.get("/ping", (_, res) => {
-  res.send("AO_EXECUTOR LIVE")
+  res.send("AO_EXECUTOR DISPATCHER LIVE")
 })
 
-async function work() {
+async function dispatch() {
   const { data: tasks } = await supabase
     .from("tasks")
     .select("*")
     .eq("status", "open")
-    .order("created_at", { ascending: true })
-    .limit(1)
+    .is("assigned_to", null)
+    .limit(5)
 
   if (!tasks || tasks.length === 0) return
-  const task = tasks[0]
 
-  await supabase
-    .from("tasks")
-    .update({ status: "running", assigned_to: "executor" })
-    .eq("id", task.id)
-
-  try {
-    let result = null
-
-    /* =======================
-       RUN CALCULATION
-    ======================= */
-    if (task.type === "run_calculation") {
-      const { data: calc } = await supabase
-        .from("calculations")
-        .insert({
-          project_id: task.project_id,
-          type: "fixed_price",
-          status: "in_uitvoering"
-        })
-        .select()
-        .single()
-
-      const items = [
-        { categorie: "Fundering", omschrijving: "Betonwerk", hoeveelheid: 120, eenheid: "m3", prijs: 210 },
-        { categorie: "Casco", omschrijving: "Kalkzandsteen", hoeveelheid: 900, eenheid: "m2", prijs: 85 },
-        { categorie: "Afbouw", omschrijving: "Stucwerk", hoeveelheid: 1100, eenheid: "m2", prijs: 22 }
-      ]
-
-      let totaal = 0
-
-      for (const i of items) {
-        const t = i.hoeveelheid * i.prijs
-        totaal += t
-
-        await supabase.from("calculation_items").insert({
-          calculation_id: calc.id,
-          categorie: i.categorie,
-          omschrijving: i.omschrijving,
-          hoeveelheid: i.hoeveelheid,
-          eenheid: i.eenheid,
-          prijs: i.prijs,
-          totaal: t
-        })
-      }
-
-      await supabase
-        .from("calculations")
-        .update({ totaal, status: "klaar" })
-        .eq("id", calc.id)
-
-      result = { calculation_id: calc.id, totaal }
-    }
-
-    /* =======================
-       GENERATE PLANNING
-    ======================= */
-    if (task.type === "generate_planning") {
-      result = {
-        fases: [
-          { naam: "Fundering", weken: 4 },
-          { naam: "Casco", weken: 10 },
-          { naam: "Afbouw", weken: 6 }
-        ]
-      }
-    }
-
-    /* =======================
-       GENERATE CASHFLOW
-    ======================= */
-    if (task.type === "generate_cashflow") {
-      result = {
-        termijnen: [
-          { fase: "Fundering", percentage: 30 },
-          { fase: "Casco", percentage: 40 },
-          { fase: "Afbouw", percentage: 30 }
-        ]
-      }
-    }
-
-    await supabase.from("results").insert({
-      calculation_id: task.calculation_id,
-      type: task.type,
-      data: result
-    })
+  for (const task of tasks) {
+    const target = ROUTING[task.type]
+    if (!target) continue
 
     await supabase
       .from("tasks")
-      .update({ status: "done" })
-      .eq("id", task.id)
-
-  } catch (err) {
-    await supabase
-      .from("tasks")
-      .update({ status: "error" })
+      .update({ assigned_to: target })
       .eq("id", task.id)
   }
 }
 
-setInterval(work, POLL)
+setInterval(dispatch, POLL)
 
 app.listen(PORT, () => {
-  console.log("AO_EXECUTOR draait")
+  console.log("AO_EXECUTOR dispatcher gestart")
 })
