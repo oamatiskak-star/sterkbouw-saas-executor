@@ -25,7 +25,7 @@ app.get("/ping", (_, res) => {
 AO ARCHITECT
 ========================
 – LEEST ALLEEN
-– GEEN TASKS
+– GEEN TASK MUTATIES
 – GEEN LOOPS
 – GEEN EXECUTIE
 */
@@ -39,7 +39,8 @@ if (AO_ROLE === "ARCHITECT") {
 AO EXECUTOR
 ========================
 – ENIGE DIE UITVOERT
-– DOCUMENTS + BUILDER
+– VERWERKT TASKS
+– START BUILDER
 */
 if (AO_ROLE === "EXECUTOR") {
   console.log("AO EXECUTOR gestart")
@@ -69,6 +70,10 @@ if (AO_ROLE === "EXECUTOR") {
 
     if (!BUILDER_PATH) {
       console.error("AO_BUILDER_PATH ontbreekt")
+      await supabase
+        .from("tasks")
+        .update({ status: "failed" })
+        .eq("id", task.id)
       return
     }
 
@@ -77,17 +82,23 @@ if (AO_ROLE === "EXECUTOR") {
       .update({ status: "running" })
       .eq("id", task.id)
 
-    const child = spawn("node", [BUILDER_PATH], {
-      stdio: "inherit",
-      env: process.env
-    })
+    const child = spawn(
+      "node",
+      [BUILDER_PATH],
+      {
+        stdio: "inherit",
+        env: process.env
+      }
+    )
 
     child.on("exit", async (code) => {
       console.log("Builder exit code", code)
 
       await supabase
         .from("tasks")
-        .update({ status: code === 0 ? "done" : "failed" })
+        .update({
+          status: code === 0 ? "done" : "failed"
+        })
         .eq("id", task.id)
     })
   }
@@ -98,6 +109,7 @@ if (AO_ROLE === "EXECUTOR") {
       .select("*")
       .eq("status", "open")
       .eq("assigned_to", "executor")
+      .order("created_at", { ascending: true })
       .limit(1)
 
     if (!tasks || tasks.length === 0) return
