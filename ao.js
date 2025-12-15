@@ -3,86 +3,129 @@ dotenv.config()
 
 import express from "express"
 import { createClient } from "@supabase/supabase-js"
+import { spawn } from "child_process"
 
 const AO_ROLE = process.env.AO_ROLE
 const PORT = process.env.PORT || 10000
+const BUILDER_PATH = process.env.AO_BUILDER_PATH
 
 const app = express()
 
 const supabase = createClient(
-process.env.SUPABASE_URL,
-process.env.SUPABASE_SERVICE_ROLE_KEY
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
 )
 
 app.get("/ping", (_, res) => {
-res.send("AO LIVE : " + AO_ROLE)
+  res.send("AO LIVE : " + AO_ROLE)
 })
 
 /*
+========================
 AO ARCHITECT
-
+========================
 – LEEST ALLEEN
 – GEEN TASKS
 – GEEN LOOPS
 – GEEN EXECUTIE
 */
 if (AO_ROLE === "ARCHITECT") {
-console.log("AO ARCHITECT gestart")
-console.log("Modus: analyse en ontwerp")
+  console.log("AO ARCHITECT gestart")
+  console.log("Modus: analyse en ontwerp")
 }
 
 /*
-AO EXECUTOR – DOCUMENTS
-
+========================
+AO EXECUTOR
+========================
 – ENIGE DIE UITVOERT
+– DOCUMENTS + BUILDER
 */
 if (AO_ROLE === "EXECUTOR") {
-console.log("AO EXECUTOR gestart")
-console.log("Subrol: DOCUMENTS")
+  console.log("AO EXECUTOR gestart")
 
-async function work() {
-const { data: tasks } = await supabase
-.from("tasks")
-.select("*")
-.eq("status", "open")
-.eq("assigned_to", "documents")
-.limit(1)
+  async function handleDocuments(task) {
+    console.log("DOCUMENTS task", task.id)
 
-if (!tasks || tasks.length === 0) return
+    await supabase
+      .from("tasks")
+      .update({ status: "running" })
+      .eq("id", task.id)
 
-const task = tasks[0]
+    await supabase.from("results").insert({
+      project_id: task.project_id,
+      type: "documents_processed",
+      data: { ok: true }
+    })
 
-await supabase
-  .from("tasks")
-  .update({ status: "running" })
-  .eq("id", task.id)
+    await supabase
+      .from("tasks")
+      .update({ status: "done" })
+      .eq("id", task.id)
+  }
 
-await supabase.from("results").insert({
-  project_id: task.project_id,
-  type: "documents_processed",
-  data: { ok: true }
-})
+  async function handleBuilder(task) {
+    console.log("RUN_BUILDER task", task.id)
 
-await supabase
-  .from("tasks")
-  .update({ status: "done" })
-  .eq("id", task.id)
+    if (!BUILDER_PATH) {
+      console.error("AO_BUILDER_PATH ontbreekt")
+      return
+    }
 
+    await supabase
+      .from("tasks")
+      .update({ status: "running" })
+      .eq("id", task.id)
 
-}
+    const child = spawn("node", [BUILDER_PATH], {
+      stdio: "inherit",
+      env: process.env
+    })
 
-setInterval(work, 5000)
+    child.on("exit", async (code) => {
+      console.log("Builder exit code", code)
+
+      await supabase
+        .from("tasks")
+        .update({ status: code === 0 ? "done" : "failed" })
+        .eq("id", task.id)
+    })
+  }
+
+  async function pollTasks() {
+    const { data: tasks } = await supabase
+      .from("tasks")
+      .select("*")
+      .eq("status", "open")
+      .eq("assigned_to", "executor")
+      .limit(1)
+
+    if (!tasks || tasks.length === 0) return
+
+    const task = tasks[0]
+
+    if (task.type === "DOCUMENTS") {
+      await handleDocuments(task)
+    }
+
+    if (task.type === "RUN_BUILDER") {
+      await handleBuilder(task)
+    }
+  }
+
+  setInterval(pollTasks, 5000)
 }
 
 /*
+========================
 SAFETY NET
-
+========================
 */
 if (!AO_ROLE) {
-console.error("AO_ROLE ontbreekt. Service stopt.")
-process.exit(1)
+  console.error("AO_ROLE ontbreekt. Service stopt.")
+  process.exit(1)
 }
 
 app.listen(PORT, () => {
-console.log("AO service live op poort", PORT)
+  console.log("AO service live op poort", PORT)
 })
