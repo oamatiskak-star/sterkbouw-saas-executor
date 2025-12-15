@@ -57,7 +57,7 @@ AO EXECUTOR
 – VERWERKT TASKS
 – START BUILDER
 */
-if (AO_ROLE === "EXECUTOR") {
+if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
   console.log("AO EXECUTOR gestart")
 
   async function handleDocuments(task) {
