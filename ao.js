@@ -5,9 +5,19 @@ import express from "express"
 import { createClient } from "@supabase/supabase-js"
 import { spawn } from "child_process"
 
+/*
+========================
+BASIS CONFIG
+========================
+*/
 const AO_ROLE = process.env.AO_ROLE
 const PORT = process.env.PORT || 10000
 const BUILDER_PATH = process.env.AO_BUILDER_PATH
+
+if (!AO_ROLE) {
+  console.error("AO_ROLE ontbreekt. Service stopt.")
+  process.exit(1)
+}
 
 const app = express()
 
@@ -16,6 +26,11 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 )
 
+/*
+========================
+PING
+========================
+*/
 app.get("/ping", (_, res) => {
   res.send("AO LIVE : " + AO_ROLE)
 })
@@ -70,10 +85,12 @@ if (AO_ROLE === "EXECUTOR") {
 
     if (!BUILDER_PATH) {
       console.error("AO_BUILDER_PATH ontbreekt")
+
       await supabase
         .from("tasks")
         .update({ status: "failed" })
         .eq("id", task.id)
+
       return
     }
 
@@ -104,7 +121,7 @@ if (AO_ROLE === "EXECUTOR") {
   }
 
   async function pollTasks() {
-    const { data: tasks } = await supabase
+    const { data: tasks, error } = await supabase
       .from("tasks")
       .select("*")
       .eq("status", "open")
@@ -112,17 +129,26 @@ if (AO_ROLE === "EXECUTOR") {
       .order("created_at", { ascending: true })
       .limit(1)
 
+    if (error) {
+      console.error("Task poll error", error.message)
+      return
+    }
+
     if (!tasks || tasks.length === 0) return
 
     const task = tasks[0]
 
     if (task.type === "DOCUMENTS") {
       await handleDocuments(task)
+      return
     }
 
     if (task.type === "RUN_BUILDER") {
       await handleBuilder(task)
+      return
     }
+
+    console.log("Onbekend task type:", task.type)
   }
 
   setInterval(pollTasks, 5000)
@@ -130,14 +156,9 @@ if (AO_ROLE === "EXECUTOR") {
 
 /*
 ========================
-SAFETY NET
+SERVER START
 ========================
 */
-if (!AO_ROLE) {
-  console.error("AO_ROLE ontbreekt. Service stopt.")
-  process.exit(1)
-}
-
 app.listen(PORT, () => {
   console.log("AO service live op poort", PORT)
 })
