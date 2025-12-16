@@ -1,6 +1,15 @@
 import { createClient } from "@supabase/supabase-js"
+
 import * as calculatiesBouw from "./actions/calculaties_bouw.js"
 import * as calculatiesEW from "./actions/calculaties_ew.js"
+
+import * as documentenBestek from "./actions/documenten_bestek.js"
+import * as documentenOffertes from "./actions/documenten_offertes.js"
+import * as documentenContracten from "./actions/documenten_contracten.js"
+
+import * as planningFasering from "./actions/planning_fasering.js"
+import * as planningDoorlooptijd from "./actions/planning_doorlooptijd.js"
+import * as planningKritischPad from "./actions/planning_kritisch_pad.js"
 
 /*
 ========================
@@ -16,12 +25,20 @@ const supabase = createClient(
 ========================
 BUILDER ACTION MAP
 ========================
-– Elke actie moet hier bestaan
-– Anders faalt hij gecontroleerd
+– Elke actie bestaat
+– Geen stille skips meer
 */
 const ACTIONS = {
   "calculaties:bouw": calculatiesBouw,
-  "calculaties:ew": calculatiesEW
+  "calculaties:ew": calculatiesEW,
+
+  "documenten:bestek": documentenBestek,
+  "documenten:offertes": documentenOffertes,
+  "documenten:contracten": documentenContracten,
+
+  "planning:fasering": planningFasering,
+  "planning:doorlooptijd": planningDoorlooptijd,
+  "planning:kritisch_pad": planningKritischPad
 }
 
 /*
@@ -50,8 +67,8 @@ export async function runBuilder(payload = {}) {
     return logResult({
       projectId,
       actionId,
-      status: "SKIP",
-      message: "Geen builder-actie voor deze taak"
+      status: "FAILED",
+      message: "Builder actie niet geïmplementeerd"
     })
   }
 
@@ -94,7 +111,9 @@ async function logResult({ projectId, actionId, status, data, message }) {
 
   console.log("BUILDER RESULT", status, actionId)
 
-  await supabase.from("builder_results").insert(record)
+  await supabase
+    .from("builder_results")
+    .insert(record)
 
   return record
 }
