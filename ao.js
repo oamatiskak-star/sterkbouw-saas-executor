@@ -3,7 +3,7 @@ dotenv.config()
 
 import express from "express"
 import { createClient } from "@supabase/supabase-js"
-import { spawn } from "child_process"
+import { runAction } from "./executor/actionRouter.js"
 
 /*
 ========================
@@ -11,8 +11,7 @@ BASIS CONFIG
 ========================
 */
 const AO_ROLE = process.env.AO_ROLE
-const PORT = process.env.PORT || 10000
-const BUILDER_PATH = process.env.AO_BUILDER_PATH
+const PORT = process.env.PORT || 8080
 
 if (!AO_ROLE) {
   console.error("AO_ROLE ontbreekt. Service stopt.")
@@ -20,6 +19,7 @@ if (!AO_ROLE) {
 }
 
 const app = express()
+app.use(express.json())
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -40,8 +40,7 @@ app.get("/ping", (_, res) => {
 AO ARCHITECT
 ========================
 – LEEST ALLEEN
-– GEEN TASK MUTATIES
-– GEEN LOOPS
+– GEEN MUTATIES
 – GEEN EXECUTIE
 */
 if (AO_ROLE === "ARCHITECT") {
@@ -54,71 +53,10 @@ if (AO_ROLE === "ARCHITECT") {
 AO EXECUTOR
 ========================
 – ENIGE DIE UITVOERT
-– VERWERKT TASKS
-– START BUILDER
+– ARCHITECT + BUILDER INTERN
 */
 if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
   console.log("AO EXECUTOR gestart")
-
-  async function handleDocuments(task) {
-    console.log("DOCUMENTS task", task.id)
-
-    await supabase
-      .from("tasks")
-      .update({ status: "running" })
-      .eq("id", task.id)
-
-    await supabase.from("results").insert({
-      project_id: task.project_id,
-      type: "documents_processed",
-      data: { ok: true }
-    })
-
-    await supabase
-      .from("tasks")
-      .update({ status: "done" })
-      .eq("id", task.id)
-  }
-
-  async function handleBuilder(task) {
-    console.log("RUN_BUILDER task", task.id)
-
-    if (!BUILDER_PATH) {
-      console.error("AO_BUILDER_PATH ontbreekt")
-
-      await supabase
-        .from("tasks")
-        .update({ status: "failed" })
-        .eq("id", task.id)
-
-      return
-    }
-
-    await supabase
-      .from("tasks")
-      .update({ status: "running" })
-      .eq("id", task.id)
-
-    const child = spawn(
-      "node",
-      [BUILDER_PATH],
-      {
-        stdio: "inherit",
-        env: process.env
-      }
-    )
-
-    child.on("exit", async (code) => {
-      console.log("Builder exit code", code)
-
-      await supabase
-        .from("tasks")
-        .update({
-          status: code === 0 ? "done" : "failed"
-        })
-        .eq("id", task.id)
-    })
-  }
 
   async function pollTasks() {
     const { data: tasks, error } = await supabase
@@ -138,17 +76,29 @@ if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
 
     const task = tasks[0]
 
-    if (task.type === "DOCUMENTS") {
-      await handleDocuments(task)
-      return
-    }
+    await supabase
+      .from("tasks")
+      .update({ status: "running" })
+      .eq("id", task.id)
 
-    if (task.type === "RUN_BUILDER") {
-      await handleBuilder(task)
-      return
-    }
+    try {
+      await runAction(task.type, task)
 
-    console.log("Onbekend task type:", task.type)
+      await supabase
+        .from("tasks")
+        .update({ status: "done" })
+        .eq("id", task.id)
+    } catch (err) {
+      console.error("Task fout", err.message)
+
+      await supabase
+        .from("tasks")
+        .update({
+          status: "failed",
+          error: err.message || "ONBEKENDE_FOUT"
+        })
+        .eq("id", task.id)
+    }
   }
 
   setInterval(pollTasks, 5000)
@@ -160,5 +110,6 @@ SERVER START
 ========================
 */
 app.listen(PORT, () => {
+  console.log("AO EXECUTOR gestart")
   console.log("AO service live op poort", PORT)
 })
