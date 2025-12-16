@@ -1,21 +1,12 @@
+import fs from "fs"
+import path from "path"
+import { fileURLToPath } from "url"
 import { createClient } from "@supabase/supabase-js"
 
-import * as calculatiesBouw from "./actions/calculaties_bouw.js"
-import * as calculatiesEW from "./actions/calculaties_ew.js"
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
+const ACTIONS_DIR = path.join(__dirname, "actions")
 
-import * as documentenBestek from "./actions/documenten_bestek.js"
-import * as documentenOffertes from "./actions/documenten_offertes.js"
-import * as documentenContracten from "./actions/documenten_contracten.js"
-
-import * as planningFasering from "./actions/planning_fasering.js"
-import * as planningDoorlooptijd from "./actions/planning_doorlooptijd.js"
-import * as planningKritischPad from "./actions/planning_kritisch_pad.js"
-
-/*
-========================
-SUPABASE
-========================
-*/
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
@@ -23,22 +14,71 @@ const supabase = createClient(
 
 /*
 ========================
-BUILDER ACTION MAP
+DYNAMIC ACTION LOADER
 ========================
-– Elke actie bestaat
-– Geen stille skips meer
 */
-const ACTIONS = {
-  "calculaties:bouw": calculatiesBouw,
-  "calculaties:ew": calculatiesEW,
+function loadActions() {
+  const actions = {}
 
-  "documenten:bestek": documentenBestek,
-  "documenten:offertes": documentenOffertes,
-  "documenten:contracten": documentenContracten,
+  if (!fs.existsSync(ACTIONS_DIR)) {
+    fs.mkdirSync(ACTIONS_DIR, { recursive: true })
+  }
 
-  "planning:fasering": planningFasering,
-  "planning:doorlooptijd": planningDoorlooptijd,
-  "planning:kritisch_pad": planningKritischPad
+  const files = fs.readdirSync(ACTIONS_DIR)
+
+  for (const file of files) {
+    if (!file.endsWith(".js")) continue
+    const actionId = file.replace(".js", "").replace("__", ":")
+    actions[actionId] = import(`./actions/${file}`)
+  }
+
+  return actions
+}
+
+/*
+========================
+AUTO ACTION GENERATOR
+========================
+*/
+function generateActionFile(actionId) {
+  const fileName = actionId.replace(":", "__") + ".js"
+  const filePath = path.join(ACTIONS_DIR, fileName)
+
+  if (fs.existsSync(filePath)) return
+
+  const [module, action] = actionId.split(":")
+
+  const template = `
+import { createClient } from "@supabase/supabase-js"
+
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+)
+
+export async function run({ project_id, payload }) {
+  console.log("AUTO BUILDER START ${actionId}", project_id)
+
+  const result = {
+    module: "${module}",
+    action: "${action}",
+    status: "auto-generated",
+    payload
+  }
+
+  await supabase.from("builder_results").insert({
+    project_id,
+    action: "${actionId}",
+    status: "DONE",
+    data: result,
+    created_at: new Date().toISOString()
+  })
+
+  console.log("AUTO BUILDER DONE ${actionId}")
+  return result
+}
+`
+  fs.writeFileSync(filePath, template.trim())
 }
 
 /*
@@ -50,70 +90,47 @@ export async function runBuilder(payload = {}) {
   const actionId = payload.action
   const projectId = payload.project_id || null
 
-  console.log("BUILDER START", actionId || "geen-id")
+  console.log("BUILDER START", actionId)
 
   if (!actionId) {
-    return logResult({
-      projectId,
-      actionId: "onbekend",
-      status: "SKIP",
-      message: "Geen action opgegeven"
-    })
+    return
   }
 
-  const handler = ACTIONS[actionId]
+  generateActionFile(actionId)
 
-  if (!handler || typeof handler.run !== "function") {
-    return logResult({
-      projectId,
-      actionId,
-      status: "FAILED",
-      message: "Builder actie niet geïmplementeerd"
-    })
+  const actions = loadActions()
+
+  const actionModulePromise = actions[actionId]
+
+  if (!actionModulePromise) {
+    console.log("BUILDER KON ACTIE NIET LADEN", actionId)
+    return
+  }
+
+  const actionModule = await actionModulePromise
+
+  if (typeof actionModule.run !== "function") {
+    console.log("BUILDER RUN FUNCTIE ONTBREEKT", actionId)
+    return
   }
 
   try {
-    const result = await handler.run({
+    const result = await actionModule.run({
       project_id: projectId,
       payload
     })
 
-    return logResult({
-      projectId,
-      actionId,
-      status: "DONE",
-      data: result
-    })
+    console.log("BUILDER RESULT DONE", actionId)
+    return result
   } catch (err) {
-    return logResult({
-      projectId,
-      actionId,
+    console.error("BUILDER ERROR", actionId, err.message)
+
+    await supabase.from("builder_results").insert({
+      project_id: projectId,
+      action: actionId,
       status: "FAILED",
-      message: err.message || "BUILDER_FOUT"
+      message: err.message,
+      created_at: new Date().toISOString()
     })
   }
-}
-
-/*
-========================
-RESULT LOGGING
-========================
-*/
-async function logResult({ projectId, actionId, status, data, message }) {
-  const record = {
-    project_id: projectId,
-    action: actionId,
-    status,
-    data: data || null,
-    message: message || null,
-    created_at: new Date().toISOString()
-  }
-
-  console.log("BUILDER RESULT", status, actionId)
-
-  await supabase
-    .from("builder_results")
-    .insert(record)
-
-  return record
 }
