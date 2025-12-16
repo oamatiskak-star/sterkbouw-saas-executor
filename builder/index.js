@@ -1,55 +1,81 @@
+// builder/index.js
 import fs from "fs"
 import path from "path"
+import { fileURLToPath } from "url"
 
-export async function runBuilder(task) {
-  const { project_id, payload } = task
-  const route = payload?.route || "/onbekend"
-  const moduleName = payload?.module_name || "onbekend"
-  const content = payload?.content || null
-  const layout = payload?.layout || "default"
-  const fullPath = path.join("pages", route.replace("/", "") + ".js")
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
 
-  console.log("BUILDER START builder:generate_module PROJECT:", project_id)
+export async function runBuilder(payload) {
+  const action = payload?.action || ""
+  const moduleKey = payload?.moduleKey || "frontend:default"
+  const design = payload?.design || {}
 
-  try {
-    const code = generatePageCode({
-      route,
-      moduleName,
-      layout,
-      content
-    })
+  if (action === "write_file") {
+    const filePath = payload.path
+    const content = payload.content || ""
 
-    fs.writeFileSync(fullPath, code)
+    if (!filePath) throw new Error("Bestandspad ontbreekt in payload")
 
-    console.log("BUILDER RESULT SUCCESS builder:generate_module")
-    return { status: "success" }
+    const fullPath = path.join(process.cwd(), filePath)
+    const dir = path.dirname(fullPath)
 
-  } catch (err) {
-    console.error("BUILDER RESULT FAILED builder:generate_module", err.message)
-    return { status: "failed", error: err.message }
+    fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(fullPath, content.trim())
+
+    console.log(`✅ Bestand geschreven: ${filePath}`)
+    return { status: "ok", file: filePath }
   }
+
+  if (action === "generate_module") {
+    const [domain, name] = moduleKey.split(":")
+    const base = process.cwd()
+    const apiPath = path.join(base, "backend/api", domain)
+    const pagePath = path.join(base, "frontend/pages", domain)
+    const tableName = design.tables?.[0] || `${name}_data`
+
+    fs.mkdirSync(apiPath, { recursive: true })
+    fs.mkdirSync(pagePath, { recursive: true })
+    fs.mkdirSync(path.join(base, "supabase"), { recursive: true })
+
+    fs.writeFileSync(
+      path.join(apiPath, `${name}.js`),
+      `
+export default function handler(req, res) {
+  res.json({ module: "${moduleKey}", status: "ok" })
 }
+`.trim()
+    )
 
-function generatePageCode({ route, moduleName, layout, content }) {
-  const layoutImport = layout === "none" ? "" : "import Layout from '../layout'"
-  const openLayout = layout === "none" ? "" : `<Layout active=\"${route.replace("/", "")}\">`
-  const closeLayout = layout === "none" ? "" : "</Layout>"
+    fs.writeFileSync(
+      path.join(pagePath, `${name}.js`),
+      `
+export default function Page() {
+  return (
+    <div style={{ padding: "24px" }}>
+      <h1 style={{ fontSize: "24px", marginBottom: "16px" }}>${name}</h1>
+      <p>Module gegenereerd en klaar voor gebruik.</p>
+    </div>
+  )
+}
+`.trim()
+    )
 
-  const inner = content || `<h1>${moduleName}</h1>\n<p>Deze pagina is automatisch gegenereerd via builder.</p>`
+    fs.writeFileSync(
+      path.join(base, "supabase", `${tableName}.sql`),
+      `
+create table if not exists ${tableName} (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid,
+  data jsonb,
+  created_at timestamptz default now()
+);
+`.trim()
+    )
 
-  return `
-    ${layoutImport}
+    console.log(`✅ Module "${moduleKey}" gegenereerd met tabel "${tableName}"`)
+    return { status: "ok", module: moduleKey }
+  }
 
-    export default function ${capitalize(moduleName)}() {
-      return (
-        ${openLayout}
-          ${inner}
-        ${closeLayout}
-      )
-    }
-
-    function capitalize(text) {
-      return text.charAt(0).toUpperCase() + text.slice(1)
-    }
-  `
+  throw new Error("Onbekende builder actie")
 }
