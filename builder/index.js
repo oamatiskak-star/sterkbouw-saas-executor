@@ -1,134 +1,55 @@
-import { createClient } from "@supabase/supabase-js"
-import * as calculatiesBouw from "./actions/calculaties_bouw.js"
-import * as calculatiesEW from "./actions/calculaties_ew.js"
-import { generateModule } from "./moduleGenerator.js"
+import fs from "fs"
+import path from "path"
 
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY
-)
+export async function runBuilder(task) {
+  const { project_id, payload } = task
+  const route = payload?.route || "/onbekend"
+  const moduleName = payload?.module_name || "onbekend"
+  const content = payload?.content || null
+  const layout = payload?.layout || "default"
+  const fullPath = path.join("pages", route.replace("/", "") + ".js")
 
-/*
-========================
-BUILDER ACTION MAP
-========================
-– Bestaande acties blijven werken
-– Nieuwe generatieve actie toegevoegd
-*/
-const ACTIONS = {
-  "calculaties:bouw": calculatiesBouw,
-  "calculaties:ew": calculatiesEW
-}
-
-/*
-========================
-BUILDER ENTRYPOINT
-========================
-*/
-export async function runBuilder(task = {}) {
-  const actionId =
-    task.type ||
-    task.action ||
-    task.payload?.action
-
-  const projectId = task.project_id || null
-
-  console.log("BUILDER START", actionId || "GEEN_ACTION", "PROJECT:", projectId)
-
-  /*
-  ========================
-  GENERATIEVE MODULE BUILD
-  ========================
-  */
-  if (actionId === "builder:generate_module") {
-    const { module, design } = task.payload || {}
-
-    if (!module || !design) {
-      return logResult({
-        projectId,
-        actionId,
-        status: "FAILED",
-        message: "MODULE_OF_DESIGN_ONTBREEKT"
-      })
-    }
-
-    try {
-      await generateModule(module, design)
-
-      return logResult({
-        projectId,
-        actionId,
-        status: "DONE",
-        data: { module }
-      })
-    } catch (err) {
-      return logResult({
-        projectId,
-        actionId,
-        status: "FAILED",
-        message: err.message || "GENERATOR_FOUT"
-      })
-    }
-  }
-
-  /*
-  ========================
-  BESTAANDE BUILDER ACTIONS
-  ========================
-  */
-  const handler = ACTIONS[actionId]
-
-  if (!handler || typeof handler.run !== "function") {
-    return logResult({
-      projectId,
-      actionId,
-      status: "SKIP",
-      message: "Geen builder-actie voor deze taak"
-    })
-  }
+  console.log("BUILDER START builder:generate_module PROJECT:", project_id)
 
   try {
-    const result = await handler.run({
-      project_id: projectId,
-      task
+    const code = generatePageCode({
+      route,
+      moduleName,
+      layout,
+      content
     })
 
-    return logResult({
-      projectId,
-      actionId,
-      status: "DONE",
-      data: result
-    })
+    fs.writeFileSync(fullPath, code)
+
+    console.log("BUILDER RESULT SUCCESS builder:generate_module")
+    return { status: "success" }
+
   } catch (err) {
-    return logResult({
-      projectId,
-      actionId,
-      status: "FAILED",
-      message: err.message || "BUILDER_FOUT"
-    })
+    console.error("BUILDER RESULT FAILED builder:generate_module", err.message)
+    return { status: "failed", error: err.message }
   }
 }
 
-/*
-========================
-RESULT LOGGING
-========================
-*/
-async function logResult({ projectId, actionId, status, data, message }) {
-  const record = {
-    project_id: projectId,
-    action: actionId,
-    status,
-    data: data || null,
-    message: message || null,
-    created_at: new Date().toISOString()
-  }
+function generatePageCode({ route, moduleName, layout, content }) {
+  const layoutImport = layout === "none" ? "" : "import Layout from '../layout'"
+  const openLayout = layout === "none" ? "" : `<Layout active=\"${route.replace("/", "")}\">`
+  const closeLayout = layout === "none" ? "" : "</Layout>"
 
-  console.log("BUILDER RESULT", status, actionId)
+  const inner = content || `<h1>${moduleName}</h1>\n<p>Deze pagina is automatisch gegenereerd via builder.</p>`
 
-  await supabase
-    .from("builder_results")
-    .insert(record)
+  return `
+    ${layoutImport}
 
-  return record
+    export default function ${capitalize(moduleName)}() {
+      return (
+        ${openLayout}
+          ${inner}
+        ${closeLayout}
+      )
+    }
+
+    function capitalize(text) {
+      return text.charAt(0).toUpperCase() + text.slice(1)
+    }
+  `
 }
