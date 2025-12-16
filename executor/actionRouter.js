@@ -8,21 +8,34 @@ const supabase = createClient(
 
 export async function runAction(task) {
   try {
-    const payload = task && task.payload ? task.payload : {}
-    const type = task && task.type ? task.type : "unknown"
-    const actionId = payload.action_id
+    if (!task) {
+      return {
+        status: "ignored",
+        reason: "GEEN_TASK_OBJECT"
+      }
+    }
+
+    const type = task.type || "unknown"
+    const actionId = task.action_id
+    const payload = task.payload || {}
 
     console.log("EXECUTOR TASK ONTVANGEN")
     console.log("TYPE:", type)
     console.log("ACTION_ID:", actionId)
+    console.log("PAYLOAD:", payload)
 
     if (!actionId) {
       return {
         status: "ignored",
-        reason: "GEEN_ACTION_ID_IN_PAYLOAD"
+        reason: "GEEN_ACTION_ID_OP_TASK"
       }
     }
 
+    /*
+    ========================
+    FRONTEND / BUILDER
+    ========================
+    */
     if (type === "frontend" || type === "builder") {
       const result = await runBuilder({
         actionId,
@@ -37,8 +50,14 @@ export async function runAction(task) {
       }
     }
 
+    /*
+    ========================
+    SQL
+    ========================
+    */
     if (type === "sql") {
       const sql = payload.sql
+
       if (!sql) {
         return {
           status: "error",
@@ -64,6 +83,11 @@ export async function runAction(task) {
       }
     }
 
+    /*
+    ========================
+    ONBEKEND
+    ========================
+    */
     return {
       status: "ignored",
       reason: "ONBEKEND_TASK_TYPE",
