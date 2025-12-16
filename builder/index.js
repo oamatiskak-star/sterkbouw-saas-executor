@@ -36,6 +36,16 @@ export async function runBuilder(payload = {}) {
 
       /*
       ========================
+      TABLER NAV / ROUTE VALIDATIE
+      ========================
+      */
+      case "frontend:sync_navigation": {
+        const m = await import("./frontend/syncNavigation.js")
+        return await m.syncNavigation(payload)
+      }
+
+      /*
+      ========================
       GLOBALE FRONTEND LAYOUT
       ========================
       */
