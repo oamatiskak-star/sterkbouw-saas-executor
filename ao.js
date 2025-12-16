@@ -4,6 +4,7 @@ dotenv.config()
 import express from "express"
 import { createClient } from "@supabase/supabase-js"
 import { runAction } from "./executor/actionRouter.js"
+import { startArchitectLoop } from "./architect/index.js"
 
 /*
 ========================
@@ -39,24 +40,28 @@ app.get("/ping", (_, res) => {
 ========================
 AO ARCHITECT
 ========================
-– LEEST ALLEEN
-– GEEN MUTATIES
-– GEEN EXECUTIE
+– ANALYSEERT PROJECTEN
+– GENEREERT TAKEN
+– GEEN LOSSE SERVICE
 */
 if (AO_ROLE === "ARCHITECT") {
   console.log("AO ARCHITECT gestart")
   console.log("Modus: analyse en ontwerp")
+
+  startArchitectLoop()
 }
 
 /*
 ========================
 AO EXECUTOR
 ========================
-– ENIGE DIE UITVOERT
-– ARCHITECT + BUILDER INTERN
+– ENIGE UITVOERENDE ENGINE
+– ARCHITECT + BUILDER ACTIEF
 */
 if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
   console.log("AO EXECUTOR gestart")
+
+  startArchitectLoop()
 
   async function pollTasks() {
     const { data: tasks, error } = await supabase
@@ -64,6 +69,7 @@ if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
       .select("*")
       .eq("status", "open")
       .eq("assigned_to", "executor")
+      .order("priority", { ascending: true })
       .order("created_at", { ascending: true })
       .limit(1)
 
@@ -110,6 +116,7 @@ SERVER START
 ========================
 */
 app.listen(PORT, () => {
-  console.log("AO EXECUTOR gestart")
-  console.log("AO service live op poort", PORT)
+  console.log("AO SERVICE LIVE")
+  console.log("ROLE:", AO_ROLE)
+  console.log("POORT:", PORT)
 })
