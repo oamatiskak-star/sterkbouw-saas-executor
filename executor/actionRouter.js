@@ -9,7 +9,7 @@ const supabase = createClient(
 /*
 ACTION ROUTER – DEFINITIEF
 - SQL is enige input
-- action_id komt uit kolom action_id
+- action_id komt UIT KOLOM action_id
 - deploy gates verplicht
 - geen crashes
 */
@@ -20,20 +20,18 @@ export async function runAction(task) {
       return { status: "ignored", reason: "NO_TASK" }
     }
 
-    const {
-      id,
-      type = "unknown",
-      payload = {},
-      action_id
-    } = task
+    const id = task.id
+    const type = task.type || "unknown"
+    const payload = task.payload || {}
+    const actionId = task.action_id
 
     console.log("EXECUTOR TASK ONTVANGEN")
     console.log("TASK ID:", id)
     console.log("TYPE:", type)
-    console.log("ACTION_ID:", action_id)
+    console.log("ACTION_ID:", actionId)
     console.log("PAYLOAD:", payload)
 
-    if (!action_id) {
+    if (!actionId) {
       return {
         status: "ignored",
         reason: "GEEN_ACTION_ID"
@@ -46,12 +44,19 @@ export async function runAction(task) {
     ========================
     */
     if (type === "frontend") {
-      const { data: gates } = await supabase
+      const { data: gates, error } = await supabase
         .from("deploy_gates")
         .select("approved")
         .eq("scope", "frontend")
         .eq("phase", "analysis_complete")
         .limit(1)
+
+      if (error) {
+        return {
+          status: "error",
+          error: error.message
+        }
+      }
 
       if (!gates || gates.length === 0 || gates[0].approved !== true) {
         return {
@@ -68,14 +73,14 @@ export async function runAction(task) {
     */
     if (type === "frontend" || type === "builder") {
       const result = await runBuilder({
-        actionId: action_id,
+        actionId,
         ...payload
       })
 
       return {
         status: "ok",
         runner: "builder",
-        action_id,
+        actionId,
         result
       }
     }
@@ -109,3 +114,24 @@ export async function runAction(task) {
         runner: "sql"
       }
     }
+
+    /*
+    ========================
+    FALLBACK
+    ========================
+    */
+    return {
+      status: "ignored",
+      reason: "ONBEKEND_TYPE",
+      type
+    }
+
+  } catch (err) {
+    console.error("ACTION ROUTER FOUT:", err.message)
+
+    return {
+      status: "error",
+      error: err.message
+    }
+  }
+}
