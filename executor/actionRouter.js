@@ -1,12 +1,3 @@
-/*
-ACTION ROUTER – DEFINITIEF
-- LEEST TAKEN UIT SUPABASE
-- GEBRUIKT UITSLUITEND payload.action_id
-- ONGEVOELIG VOOR RLS / PARTIAL ROWS
-- ROUTET NAAR BUILDER OF SQL
-- MAG NOOIT CRASHEN
-*/
-
 import { runBuilder } from "../builder/index.js"
 import { createClient } from "@supabase/supabase-js"
 
@@ -17,28 +8,21 @@ const supabase = createClient(
 
 export async function runAction(task) {
   try {
-    const payload = task?.payload || {}
-    const type = task?.type || "unknown"
+    const payload = task && task.payload ? task.payload : {}
+    const type = task && task.type ? task.type : "unknown"
     const actionId = payload.action_id
 
     console.log("EXECUTOR TASK ONTVANGEN")
     console.log("TYPE:", type)
     console.log("ACTION_ID:", actionId)
 
-    // HARD STOP ALS GEEN ACTIE
     if (!actionId) {
       return {
         status: "ignored",
-        reason: "GEEN_ACTION_ID_IN_PAYLOAD",
-        task
+        reason: "GEEN_ACTION_ID_IN_PAYLOAD"
       }
     }
 
-    /*
-    ========================
-    FRONTEND / BUILDER
-    ========================
-    */
     if (type === "frontend" || type === "builder") {
       const result = await runBuilder({
         actionId,
@@ -53,14 +37,8 @@ export async function runAction(task) {
       }
     }
 
-    /*
-    ========================
-    SQL EXECUTIE
-    ========================
-    */
     if (type === "sql") {
-      const { sql } = payload
-
+      const sql = payload.sql
       if (!sql) {
         return {
           status: "error",
@@ -86,6 +64,16 @@ export async function runAction(task) {
       }
     }
 
-    /*
-    ========================
-    ONBEKEND TYPE
+    return {
+      status: "ignored",
+      reason: "ONBEKEND_TASK_TYPE",
+      type
+    }
+
+  } catch (err) {
+    return {
+      status: "error",
+      error: err.message
+    }
+  }
+}
