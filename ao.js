@@ -5,7 +5,7 @@ import express from "express"
 import { createClient } from "@supabase/supabase-js"
 import { runAction } from "./executor/actionRouter.js"
 import { startArchitectLoop } from "./architect/index.js"
-import { startArchitectSystemScan } from "./architect/systemScan.js"
+import { startArchitectSystemScan } from "./architect/systemScanner.js"
 
 /*
 ========================
@@ -57,7 +57,7 @@ AO EXECUTOR (CENTRAAL)
 if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
   console.log("AO EXECUTOR gestart")
 
-  // architect-loop draait ook in executor
+  // architect draait altijd mee in executor
   startArchitectLoop()
 
   async function pollTasks() {
@@ -86,14 +86,10 @@ if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
       .eq("id", task.id)
 
     try {
-      // ARCHITECT SYSTEM SCAN TRIGGER
       if (task.type === "architect:system_full_scan") {
         console.log("ARCHITECT SYSTEM FULL SCAN START")
         await startArchitectSystemScan()
-      }
-
-      // NORMALE BUILDER / ACTION ROUTING
-      else {
+      } else {
         await runAction(task.type, task)
       }
 
