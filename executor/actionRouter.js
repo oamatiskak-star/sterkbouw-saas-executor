@@ -1,7 +1,7 @@
 import { runBuilder } from "../builder/index.js"
 import { buildFullUiLayout } from "../builder/fullUiLayout.js"
 import { generateLoginForm } from "../builder/loginForm.js"
-import { generateModule } from "../builder/moduleGenerator.js"
+import { generateGenericModule } from "../builder/moduleGenerator.js" // <-- dit is de juiste naam
 
 export async function runAction(actionId, payload) {
   if (actionId === "builder:generate_module") {
@@ -13,7 +13,7 @@ export async function runAction(actionId, payload) {
   }
 
   if (actionId === "builder:generate_generic") {
-    return await generateModule(payload)
+    return await generateGenericModule(payload) // <-- ook naam aangepast
   }
 
   if (actionId === "frontend:full_ui_layout") {
