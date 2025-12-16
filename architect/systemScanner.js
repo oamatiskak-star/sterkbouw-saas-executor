@@ -1,32 +1,53 @@
 import { createClient } from "@supabase/supabase-js"
-import fs from "fs"
-import path from "path"
-import { SYSTEM_REGISTRY } from "../system/systemRegistry.js"
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
 )
 
-export async function scanSystem() {
-  const snapshot = {
-    timestamp: Date.now(),
-    supabase: {},
-    backend: {},
-    frontend: {}
+/*
+========================
+ARCHITECT SYSTEM SCAN
+– Scant Supabase + MAIN
+– Maakt ontbrekende taken aan
+========================
+*/
+export async function startArchitectSystemScan() {
+  console.log("ARCHITECT SYSTEM SCAN GESTART")
+
+  const tasks = [
+    "calculaties:bouw",
+    "calculaties:ew",
+    "documenten:bestek",
+    "documenten:offertes",
+    "documenten:contracten",
+    "planning:fasering",
+    "planning:kritisch_pad",
+    "inkoop:prijzen",
+    "risico:analyse",
+    "output:dashboard",
+    "output:frontend",
+    "output:status"
+  ]
+
+  for (const type of tasks) {
+    const { data } = await supabase
+      .from("tasks")
+      .select("id")
+      .eq("type", type)
+      .eq("status", "open")
+      .limit(1)
+
+    if (!data || data.length === 0) {
+      await supabase.from("tasks").insert({
+        type,
+        status: "open",
+        assigned_to: "executor"
+      })
+
+      console.log("ARCHITECT TASK AANGEMAAKT:", type)
+    }
   }
 
-  // Supabase tables
-  const { data: tables } = await supabase.rpc("list_tables")
-  snapshot.supabase.tables = tables?.map(t => t.name) || []
-
-  // Backend files
-  snapshot.backend.files = fs.readdirSync("./backend", { recursive: true })
-
-  // Frontend pages
-  snapshot.frontend.pages = fs.readdirSync("./frontend/pages", { recursive: true })
-
-  await supabase.from("system_snapshots").insert(snapshot)
-
-  return snapshot
+  console.log("ARCHITECT SYSTEM SCAN KLAAR")
 }
