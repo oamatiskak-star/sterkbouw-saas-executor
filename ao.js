@@ -40,19 +40,18 @@ app.get("/ping", (_, res) => {
 
 /*
 ========================
-ARCHITECT ONLY
+ARCHITECT LOOP
 ========================
 */
 if (AO_ROLE === "ARCHITECT") {
   console.log("AO ARCHITECT gestart")
   console.log("Modus: autonoom ontwerpen")
-
   startArchitectLoop()
 }
 
 /*
 ========================
-EXECUTOR (ARCHITECT + BUILDER)
+EXECUTOR LOOP
 ========================
 */
 if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
@@ -62,73 +61,79 @@ if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
   startArchitectLoop()
 
   async function pollTasks() {
-    const { data: tasks, error } = await supabase
-      .from("tasks")
-      .select("*")
-      .eq("status", "open")
-      .eq("assigned_to", "executor")
-      .order("created_at", { ascending: true })
-      .limit(1)
-
-    if (error) {
-      console.error("Task poll error", error.message)
-      return
-    }
-
-    if (!tasks || tasks.length === 0) return
-
-    const task = tasks[0]
-    console.log("EXECUTOR TASK OPGEPIKT:", task.type)
-
-    await supabase
-      .from("tasks")
-      .update({ status: "running" })
-      .eq("id", task.id)
-
     try {
-      /*
-      ========================
-      ARCHITECT TAKEN
-      ========================
-      */
-      if (task.type === "architect:system_full_scan") {
-        console.log("ARCHITECT SYSTEM FULL SCAN START")
-        await startArchitectSystemScan()
+      const { data: tasks, error } = await supabase
+        .from("tasks")
+        .select("id, type, action_id, payload, status, assigned_to, project_id")
+        .eq("status", "open")
+        .eq("assigned_to", "executor")
+        .order("created_at", { ascending: true })
+        .limit(1)
+
+      if (error) {
+        console.error("Task poll error:", error.message)
+        return
       }
 
-      else if (task.type === "architect:force_build") {
-        console.log("ARCHITECT FORCE BUILD START")
-        await startForceBuild(task.project_id)
-      }
+      if (!tasks || tasks.length === 0) return
 
-      /*
-      ========================
-      BUILDER TAKEN
-      ========================
-      */
-      else {
-        await runAction(task.type, task)
-      }
+      const task = tasks[0]
+      console.log("EXECUTOR TASK OPGEPIKT:", task.type, task.action_id)
 
       await supabase
         .from("tasks")
-        .update({ status: "done" })
+        .update({ status: "running" })
         .eq("id", task.id)
 
-    } catch (err) {
-      console.error("TASK FOUT:", err.message)
+      try {
+        /*
+        ========================
+        ARCHITECT TAKEN
+        ========================
+        */
+        if (task.type === "architect:system_full_scan") {
+          console.log("ARCHITECT SYSTEM FULL SCAN START")
+          await startArchitectSystemScan()
+        }
 
-      await supabase
-        .from("tasks")
-        .update({
-          status: "failed",
-          error: err.message || "ONBEKENDE_FOUT"
-        })
-        .eq("id", task.id)
+        else if (task.type === "architect:force_build") {
+          console.log("ARCHITECT FORCE BUILD START")
+          await startForceBuild(task.project_id)
+        }
+
+        /*
+        ========================
+        BUILDER / FRONTEND / SQL
+        ========================
+        */
+        else {
+          await runAction(task)
+        }
+
+        await supabase
+          .from("tasks")
+          .update({ status: "done" })
+          .eq("id", task.id)
+
+      } catch (err) {
+        console.error("TASK FOUT:", err.message)
+
+        await supabase
+          .from("tasks")
+          .update({
+            status: "failed",
+            error: err.message || "ONBEKENDE_FOUT"
+          })
+          .eq("id", task.id)
+      }
+
+    } catch (outerErr) {
+      console.error("POLL LOOP FOUT:", outerErr.message)
     }
   }
 
-  setInterval(pollTasks, 5000)
+  // Harde keep-alive poll
+  setInterval(pollTasks, 3000)
 }
 
 /*
