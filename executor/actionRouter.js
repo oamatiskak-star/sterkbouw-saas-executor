@@ -3,9 +3,8 @@ import { runBuilder } from "../builder/index.js"
 
 /*
 CENTRALE ACTION REGISTRY
-– Alleen acties die echt bestaan
-– Geen dode imports
-– Builder intern
+– Alleen bestaande acties
+– Architect en Builder geïntegreerd
 */
 
 const handlers = {
@@ -14,7 +13,7 @@ const handlers = {
 
 /*
 IN-MEMORY STATUS
-– Later vervangen door Supabase / Redis
+– Later te vervangen
 */
 
 const state = {}
@@ -23,6 +22,63 @@ const state = {}
 START ACTIE
 */
 export async function runAction(actionId, payload = {}) {
+
+  /*
+  ========================
+  ARCHITECT – FULL BUILD
+  ========================
+  */
+  if (actionId === "architect:full_production_build") {
+    console.log("ARCHITECT FULL PRODUCTION BUILD START")
+
+    const modules = payload.payload?.modules || []
+
+    state[actionId] = {
+      state: "BEZIG",
+      actionId,
+      startedAt: Date.now()
+    }
+
+    try {
+      for (const module of modules) {
+        console.log("ARCHITECT MODULE", module.name)
+
+        for (const action of module.actions) {
+          console.log("ARCHITECT SUBTASK", module.name, action)
+
+          await runBuilder({
+            action: `${module.name}:${action}`,
+            project_id: payload.project_id || null
+          })
+        }
+      }
+
+      state[actionId] = {
+        state: "KLAAR",
+        actionId,
+        finishedAt: Date.now()
+      }
+
+      console.log("ARCHITECT FULL PRODUCTION BUILD DONE")
+      return state[actionId]
+
+    } catch (err) {
+      state[actionId] = {
+        state: "FOUT",
+        actionId,
+        error: err.message || "ARCHITECT_FOUT",
+        at: Date.now()
+      }
+
+      return state[actionId]
+    }
+  }
+
+  /*
+  ========================
+  DIRECT BUILDER CALL
+  ========================
+  */
   if (actionId === "RUN_BUILDER") {
     state[actionId] = {
       state: "BEZIG",
@@ -53,6 +109,11 @@ export async function runAction(actionId, payload = {}) {
     }
   }
 
+  /*
+  ========================
+  STANDAARD ACTIONS
+  ========================
+  */
   const handler = handlers[actionId]
 
   if (!handler || typeof handler.run !== "function") {
