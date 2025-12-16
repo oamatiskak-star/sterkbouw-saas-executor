@@ -1,5 +1,3 @@
-// builder/index.js
-
 /*
 BUILDER
 - WORDT AANGEROEPEN DOOR EXECUTOR VIA runAction
@@ -11,11 +9,26 @@ BUILDER
 import { registerUnknownCommand } from "../utils/registerUnknownCommand.js"
 
 export async function runBuilder(payload) {
-  const { actionId } = payload
+  const { actionId } = payload || {}
 
   try {
     switch (actionId) {
-      // BUILDER MODULES
+
+      /*
+      ========================
+      GLOBALE FRONTEND LAYOUT
+      ========================
+      */
+      case "frontend:force_dashboard_layout": {
+        const m = await import("./frontend/applyGlobalLayout.js")
+        return await m.applyGlobalLayout(payload)
+      }
+
+      /*
+      ========================
+      BUILDER MODULES
+      ========================
+      */
       case "builder:generate_module": {
         const m = await import("./moduleGenerator.js")
         return await m.generateModule(payload)
@@ -31,7 +44,11 @@ export async function runBuilder(payload) {
         return await m.generateLoginForm(payload)
       }
 
-      // CODE GENERATORS
+      /*
+      ========================
+      CODE GENERATORS
+      ========================
+      */
       case "code:generate_api_route": {
         const m = await import("./tasks/codeGenerateApiRoute.js")
         return await m.generateApiRoute(payload)
@@ -52,7 +69,11 @@ export async function runBuilder(payload) {
         return await m.generateStylesheet(payload)
       }
 
-      // ENV MANAGEMENT
+      /*
+      ========================
+      ENV MANAGEMENT
+      ========================
+      */
       case "env:generate_file": {
         const m = await import("./tasks/envGenerateFile.js")
         return await m.generateEnvFile(payload)
@@ -68,7 +89,11 @@ export async function runBuilder(payload) {
         return await m.validateEnvSetup(payload)
       }
 
-      // SYSTEM OPERATIONS
+      /*
+      ========================
+      SYSTEM OPERATIONS
+      ========================
+      */
       case "system:full_scan": {
         const m = await import("./tasks/systemFullScan.js")
         return await m.fullSystemScan(payload)
@@ -84,7 +109,11 @@ export async function runBuilder(payload) {
         return await m.generateDashboardTemplate(payload)
       }
 
-      // SQL / SUPABASE
+      /*
+      ========================
+      SQL / SUPABASE
+      ========================
+      */
       case "sql:generate_table": {
         const m = await import("./tasks/sqlGenerateTable.js")
         return await m.generateSqlTable(payload)
@@ -105,7 +134,11 @@ export async function runBuilder(payload) {
         return await m.scanSchema(payload)
       }
 
-      // MAPPINGS
+      /*
+      ========================
+      MAPPINGS
+      ========================
+      */
       case "map:table_to_ui": {
         const m = await import("./tasks/mapTableToUi.js")
         return await m.mapTableToUi(payload)
@@ -121,7 +154,11 @@ export async function runBuilder(payload) {
         return await m.mapModuleToNav(payload)
       }
 
-      // TEST / DEBUG
+      /*
+      ========================
+      TEST / DEBUG
+      ========================
+      */
       case "builder:test_task":
         return {
           status: "ok",
@@ -136,7 +173,11 @@ export async function runBuilder(payload) {
           message: "Payload gelogd"
         }
 
-      // FALLBACK
+      /*
+      ========================
+      FALLBACK
+      ========================
+      */
       default:
         await registerUnknownCommand("builder", actionId)
         return {
@@ -145,6 +186,7 @@ export async function runBuilder(payload) {
           actionId
         }
     }
+
   } catch (err) {
     return {
       status: "error",
@@ -153,3 +195,4 @@ export async function runBuilder(payload) {
     }
   }
 }
+``
