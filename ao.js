@@ -40,9 +40,6 @@ app.get("/ping", (_, res) => {
 ========================
 AO ARCHITECT
 ========================
-– ANALYSEERT PROJECTEN
-– GENEREERT TAKEN
-– GEEN LOSSE SERVICE
 */
 if (AO_ROLE === "ARCHITECT") {
   console.log("AO ARCHITECT gestart")
@@ -55,8 +52,6 @@ if (AO_ROLE === "ARCHITECT") {
 ========================
 AO EXECUTOR
 ========================
-– ENIGE UITVOERENDE ENGINE
-– ARCHITECT + BUILDER ACTIEF
 */
 if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
   console.log("AO EXECUTOR gestart")
@@ -69,7 +64,6 @@ if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
       .select("*")
       .eq("status", "open")
       .eq("assigned_to", "executor")
-      .order("priority", { ascending: true })
       .order("created_at", { ascending: true })
       .limit(1)
 
