@@ -7,39 +7,26 @@ const supabase = createClient(
 )
 
 export async function runAction(task) {
-  try {
-    const payload = task?.payload || {}
-    const type = task?.type || "unknown"
-    const actionId = payload.action_id
+  const payload = task.payload || {}
+  const actionId = payload.actionId
 
-    console.log("EXECUTOR TASK ONTVANGEN")
-    console.log("TYPE:", type)
-    console.log("ACTION_ID:", actionId)
-    console.log("PAYLOAD:", payload)
-
-    if (!actionId) {
-      return { status: "ignored", reason: "GEEN_ACTION_ID" }
-    }
-
-    if (type === "frontend" || type === "builder") {
-      return await runBuilder({ actionId, ...payload })
-    }
-
-    if (type === "sql") {
-      const { sql } = payload
-      if (!sql) return { status: "error", error: "GEEN_SQL" }
-
-      const { error } = await supabase.rpc("execute_sql", {
-        sql_statement: sql
-      })
-
-      if (error) return { status: "error", error: error.message }
-      return { status: "ok", runner: "sql" }
-    }
-
-    return { status: "ignored", reason: "ONBEKEND_TYPE" }
-
-  } catch (err) {
-    return { status: "error", error: err.message }
+  if (!actionId) {
+    return { status: "ignored", reason: "NO_ACTION_ID" }
   }
+
+  const { data: gate } = await supabase
+    .from("deploy_gate")
+    .select("*")
+    .eq("id", 1)
+    .single()
+
+  if (actionId.startsWith("frontend:") && !gate.allow_frontend) {
+    return { status: "blocked", reason: "FRONTEND_GATE_CLOSED" }
+  }
+
+  if (actionId.startsWith("builder:") && !gate.allow_build) {
+    return { status: "blocked", reason: "BUILD_GATE_CLOSED" }
+  }
+
+  return await runBuilder({ actionId, ...payload })
 }
