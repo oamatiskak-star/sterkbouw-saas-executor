@@ -4,8 +4,7 @@ dotenv.config()
 import express from "express"
 import { createClient } from "@supabase/supabase-js"
 import { runAction } from "./executor/actionRouter.js"
-import { startArchitectLoop } from "./architect/index.js"
-import { startArchitectSystemScan } from "./architect/systemScanner.js"
+import { startForceBuild } from "./architect/forceBuild.js"
 
 /*
 ========================
@@ -39,26 +38,11 @@ app.get("/ping", (_, res) => {
 
 /*
 ========================
-AO ARCHITECT (LOOP)
-========================
-*/
-if (AO_ROLE === "ARCHITECT") {
-  console.log("AO ARCHITECT gestart")
-  console.log("Modus: autonoom scannen en ontwerpen")
-
-  startArchitectLoop()
-}
-
-/*
-========================
-AO EXECUTOR (CENTRAAL)
+AO EXECUTOR – PRODUCTIE ORKESTRATIE
 ========================
 */
 if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
   console.log("AO EXECUTOR gestart")
-
-  // architect draait altijd mee in executor
-  startArchitectLoop()
 
   async function pollTasks() {
     const { data: tasks, error } = await supabase
@@ -77,7 +61,6 @@ if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
     if (!tasks || tasks.length === 0) return
 
     const task = tasks[0]
-
     console.log("EXECUTOR TASK OPGEPIKT:", task.type)
 
     await supabase
@@ -86,10 +69,23 @@ if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
       .eq("id", task.id)
 
     try {
-      if (task.type === "architect:system_full_scan") {
-        console.log("ARCHITECT SYSTEM FULL SCAN START")
-        await startArchitectSystemScan()
-      } else {
+      /*
+      ========================
+      ARCHITECT FORCE BUILD
+      ========================
+      */
+      if (task.type === "architect:force_build") {
+        console.log("ARCHITECT FORCE BUILD START")
+        await startForceBuild(task.project_id)
+        console.log("ARCHITECT FORCE BUILD TASKS AANGEMAAKT")
+      }
+
+      /*
+      ========================
+      ALLE ANDERE TASKS → BUILDER
+      ========================
+      */
+      else {
         await runAction(task.type, task)
       }
 
@@ -99,7 +95,7 @@ if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
         .eq("id", task.id)
 
     } catch (err) {
-      console.error("Task fout", err.message)
+      console.error("TASK FOUT:", err.message)
 
       await supabase
         .from("tasks")
