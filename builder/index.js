@@ -1,16 +1,18 @@
+import { runRemap } from "../remap/remapEngine.js"
+import { buildDocuments } from "../agent/documents.js"
+
 export async function runBuilder(task) {
-console.log("BUILDER START", task.id)
+  console.log("BUILDER START", task.id)
 
-if (task.action === "REMAP") {
-const { runRemap } = await import("../remap/remapEngine.js")
-return runRemap(task)
-}
+  if (task.action === "REMAP") {
+    await runRemap(task)
+    return
+  }
 
-if (task.action === "DOCUMENTS") {
-const { buildDocuments } = await import("../agent/documents.js")
-return buildDocuments(task)
-}
+  if (task.action === "DOCUMENTS") {
+    await buildDocuments(task)
+    return
+  }
 
-console.log("BUILDER DONE", task.id)
-return { ok: true }
+  console.log("BUILDER GEEN ACTIE", task.action)
 }
