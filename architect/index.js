@@ -2,7 +2,7 @@ import { createClient } from "@supabase/supabase-js"
 
 /*
 ========================
-ARCHITECT CONFIG
+SUPABASE
 ========================
 */
 const supabase = createClient(
@@ -12,113 +12,89 @@ const supabase = createClient(
 
 /*
 ========================
-HOOFDFUNCTIE
+FULL PRODUCTION BUILD
 ========================
-– Leest projecten
-– Bepaalt volledige scope
-– Genereert ALLE taken
+– Maakt concrete builder-taken aan
+– Zet de band aan
 */
-export async function runArchitect() {
-  const { data: projects, error } = await supabase
-    .from("projects")
-    .select("*")
-    .eq("status", "nieuw")
+export async function runFullProductionBuild() {
+  console.log("ARCHITECT FULL PRODUCTION BUILD START")
 
-  if (error || !projects || projects.length === 0) return
+  const actions = [
+    "calculaties:bouw",
+    "calculaties:ew",
 
-  for (const project of projects) {
-    await generateProjectTasks(project)
+    "documenten:bestek",
+    "documenten:offertes",
+    "documenten:contracten",
 
-    await supabase
-      .from("projects")
-      .update({ status: "geanalyseerd" })
-      .eq("id", project.id)
-  }
-}
+    "planning:fasering",
+    "planning:kritisch_pad",
 
-/*
-========================
-TASK GENERATOR
-========================
-*/
-async function generateProjectTasks(project) {
-  const tasks = [
-    {
-      project_id: project.id,
-      type: "project:haalbaarheid",
-      priority: 1
-    },
-    {
-      project_id: project.id,
-      type: "calculaties:bouw",
-      priority: 2
-    },
-    {
-      project_id: project.id,
-      type: "calculaties:ew",
-      priority: 3
-    },
-    {
-      project_id: project.id,
-      type: "architectuur:bim",
-      priority: 4
-    },
-    {
-      project_id: project.id,
-      type: "constructie:opzet",
-      priority: 5
-    },
-    {
-      project_id: project.id,
-      type: "installaties:ontwerp",
-      priority: 6
-    },
-    {
-      project_id: project.id,
-      type: "planning:genereer",
-      priority: 7
-    },
-    {
-      project_id: project.id,
-      type: "inkoop:materiaal",
-      priority: 8
-    },
-    {
-      project_id: project.id,
-      type: "documenten:contracten",
-      priority: 9
-    },
-    {
-      project_id: project.id,
-      type: "risico:compliance",
-      priority: 10
-    },
-    {
-      project_id: project.id,
-      type: "output:dashboard",
-      priority: 11
-    }
+    "inkoop:prijzen",
+    "risico:analyse",
+
+    "output:dashboard",
+    "output:frontend",
+    "output:status"
   ]
 
-  for (const task of tasks) {
+  for (const action of actions) {
     await supabase.from("tasks").insert({
-      project_id: task.project_id,
-      type: task.type,
+      type: "RUN_BUILDER",
       status: "open",
       assigned_to: "executor",
-      priority: task.priority,
+      payload: {
+        action
+      },
       created_at: new Date().toISOString()
     })
+
+    console.log("ARCHITECT TASK AANGEMAAKT", action)
   }
+
+  console.log("ARCHITECT FULL PRODUCTION BUILD TASKS AANGEMAAKT")
 }
 
 /*
 ========================
-AUTO LOOP
+ARCHITECT LOOP
 ========================
-– Draait continu
-– Architect blijft actief
+– Reageert op architect-taken
 */
-export function startArchitectLoop() {
-  setInterval(runArchitect, 10000)
+export async function startArchitectLoop() {
+  setInterval(async () => {
+    const { data: tasks, error } = await supabase
+      .from("tasks")
+      .select("*")
+      .eq("type", "architect:full_production_build")
+      .eq("status", "open")
+      .limit(1)
+
+    if (error || !tasks || tasks.length === 0) return
+
+    const task = tasks[0]
+
+    await supabase
+      .from("tasks")
+      .update({ status: "running" })
+      .eq("id", task.id)
+
+    try {
+      await runFullProductionBuild()
+
+      await supabase
+        .from("tasks")
+        .update({ status: "done" })
+        .eq("id", task.id)
+    } catch (err) {
+      await supabase
+        .from("tasks")
+        .update({
+          status: "failed",
+          error: err.message || "ARCHITECT_FOUT"
+        })
+        .eq("id", task.id)
+    }
+  }, 5000)
 }
