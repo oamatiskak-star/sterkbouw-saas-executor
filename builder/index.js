@@ -8,8 +8,8 @@ BUILDER
 
 import { registerUnknownCommand } from "../utils/registerUnknownCommand.js"
 
-export async function runBuilder(payload) {
-  const { actionId } = payload || {}
+export async function runBuilder(payload = {}) {
+  const actionId = payload.actionId
 
   try {
     switch (actionId) {
@@ -96,4 +96,112 @@ export async function runBuilder(payload) {
 
       case "env:validate_setup": {
         const m = await import("./tasks/envValidateSetup.js")
-        return await m.
+        return await m.validateEnvSetup(payload)
+      }
+
+      /*
+      ========================
+      SYSTEM OPERATIONS
+      ========================
+      */
+      case "system:full_scan": {
+        const m = await import("./tasks/systemFullScan.js")
+        return await m.fullSystemScan(payload)
+      }
+
+      case "system:generate_all_routes": {
+        const m = await import("./tasks/systemGenerateRoutes.js")
+        return await m.generateAllRoutes(payload)
+      }
+
+      case "system:generate_dashboard_template": {
+        const m = await import("./tasks/systemGenerateDashboardTemplate.js")
+        return await m.generateDashboardTemplate(payload)
+      }
+
+      /*
+      ========================
+      SQL / SUPABASE
+      ========================
+      */
+      case "sql:generate_table": {
+        const m = await import("./tasks/sqlGenerateTable.js")
+        return await m.generateSqlTable(payload)
+      }
+
+      case "sql:generate_rls": {
+        const m = await import("./tasks/sqlGenerateRls.js")
+        return await m.generateRlsPolicy(payload)
+      }
+
+      case "sql:generate_relationships": {
+        const m = await import("./tasks/sqlGenerateRelationships.js")
+        return await m.generateRelationships(payload)
+      }
+
+      case "sql:scan_schema": {
+        const m = await import("./tasks/sqlScanSchema.js")
+        return await m.scanSchema(payload)
+      }
+
+      /*
+      ========================
+      MAPPINGS
+      ========================
+      */
+      case "map:table_to_ui": {
+        const m = await import("./tasks/mapTableToUi.js")
+        return await m.mapTableToUi(payload)
+      }
+
+      case "map:route_to_page": {
+        const m = await import("./tasks/mapRouteToPage.js")
+        return await m.mapRouteToPage(payload)
+      }
+
+      case "map:module_to_nav": {
+        const m = await import("./tasks/mapModuleToNav.js")
+        return await m.mapModuleToNav(payload)
+      }
+
+      /*
+      ========================
+      TEST / DEBUG
+      ========================
+      */
+      case "builder:test_task":
+        return {
+          status: "ok",
+          message: "Builder test uitgevoerd",
+          payload
+        }
+
+      case "builder:log_payload":
+        console.log("BUILDER PAYLOAD:", payload)
+        return {
+          status: "ok",
+          message: "Payload gelogd"
+        }
+
+      /*
+      ========================
+      FALLBACK
+      ========================
+      */
+      default:
+        await registerUnknownCommand("builder", actionId)
+        return {
+          status: "ignored",
+          message: "Onbekende builder action",
+          actionId
+        }
+    }
+
+  } catch (err) {
+    return {
+      status: "error",
+      actionId,
+      error: err.message
+    }
+  }
+}
