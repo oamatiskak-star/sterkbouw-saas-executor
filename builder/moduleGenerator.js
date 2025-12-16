@@ -1,11 +1,16 @@
 import fs from "fs"
 import path from "path"
 
-export async function generateGenericModule(payload) {
+/*
+================================================
+INTERNE IMPLEMENTATIE
+================================================
+*/
+async function _generateModule(payload) {
   const base = process.cwd()
 
-  const moduleKey = payload.moduleKey || "frontend:default"
-  const design = payload.design || {}
+  const moduleKey = payload?.moduleKey || "frontend:default"
+  const design = payload?.design || {}
   const [domain, name] = moduleKey.split(":")
 
   const apiPath = path.join(base, "backend/api", domain)
@@ -14,8 +19,9 @@ export async function generateGenericModule(payload) {
 
   fs.mkdirSync(apiPath, { recursive: true })
   fs.mkdirSync(pagePath, { recursive: true })
+  fs.mkdirSync(path.join(base, "supabase"), { recursive: true })
 
-  // API route genereren
+  // API route
   fs.writeFileSync(
     path.join(apiPath, `${name}.js`),
     `
@@ -25,7 +31,7 @@ export default function handler(req, res) {
 `.trim()
   )
 
-  // Frontend pagina genereren
+  // Frontend page
   fs.writeFileSync(
     path.join(pagePath, `${name}.js`),
     `
@@ -40,9 +46,7 @@ export default function Page() {
 `.trim()
   )
 
-  // SQL schema voor Supabase
-  fs.mkdirSync(path.join(base, "supabase"), { recursive: true })
-
+  // Supabase SQL
   fs.writeFileSync(
     path.join(base, "supabase", `${tableName}.sql`),
     `
@@ -55,5 +59,15 @@ create table if not exists ${tableName} (
 `.trim()
   )
 
-  console.log(`✅ Module "${moduleKey}" gegenereerd met tabel "${tableName}"`)
+  console.log(`MODULE GEGENEREERD: ${moduleKey}`)
+  return { ok: true, moduleKey, table: tableName }
 }
+
+/*
+================================================
+EXPORTS – ALTIJD COMPATIBEL
+================================================
+*/
+export const generateModule = _generateModule
+export const generateGenericModule = _generateModule
+export default _generateModule
