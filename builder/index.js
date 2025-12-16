@@ -16,26 +16,16 @@ export async function runBuilder(payload = {}) {
         return await m.applyTablerLayout(payload)
       }
 
-      case "frontend:deploy_gate_check": {
-        const m = await import("./frontend/deployGateCheck.js")
-        return await m.deployGateCheck(payload)
+      case "frontend:generate_navigation": {
+        const m = await import("./frontend/generateTablerNav.js")
+        return await m.generateTablerNav(payload)
       }
-
-      case "map:module_to_nav": {
-        const m = await import("./tasks/mapModuleToNav.js")
-        return await m.mapModuleToNav(payload)
-      }
-
-      case "builder:log_payload":
-        console.log("BUILDER PAYLOAD:", payload)
-        return { status: "ok" }
 
       default:
         await registerUnknownCommand("builder", actionId)
         return { status: "ignored", actionId }
     }
-
   } catch (err) {
-    return { status: "error", actionId, error: err.message }
+    return { status: "error", error: err.message }
   }
 }
