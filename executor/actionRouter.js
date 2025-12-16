@@ -1,3 +1,12 @@
+/*
+ACTION ROUTER – DEFINITIEF
+- LEEST TAKEN UIT SUPABASE
+- GEBRUIKT UITSLUITEND payload.action_id
+- ONGEVOELIG VOOR RLS / PARTIAL ROWS
+- ROUTET NAAR BUILDER OF SQL
+- MAG NOOIT CRASHEN
+*/
+
 import { runBuilder } from "../builder/index.js"
 import { createClient } from "@supabase/supabase-js"
 
@@ -7,19 +16,29 @@ const supabase = createClient(
 )
 
 export async function runAction(task) {
-  const type = task?.type
-  const payload = task?.payload || {}
-  const metadata = task?.metadata || {}
-
-  const actionId =
-    task?.action_id ||
-    metadata?.action_id ||
-    payload?.action_id ||
-    `${type}:default`
-
-  console.log("EXECUTOR TASK OPGEPIKT:", actionId)
-
   try {
+    const payload = task?.payload || {}
+    const type = task?.type || "unknown"
+    const actionId = payload.action_id
+
+    console.log("EXECUTOR TASK ONTVANGEN")
+    console.log("TYPE:", type)
+    console.log("ACTION_ID:", actionId)
+
+    // HARD STOP ALS GEEN ACTIE
+    if (!actionId) {
+      return {
+        status: "ignored",
+        reason: "GEEN_ACTION_ID_IN_PAYLOAD",
+        task
+      }
+    }
+
+    /*
+    ========================
+    FRONTEND / BUILDER
+    ========================
+    */
     if (type === "frontend" || type === "builder") {
       const result = await runBuilder({
         actionId,
@@ -34,34 +53,39 @@ export async function runAction(task) {
       }
     }
 
+    /*
+    ========================
+    SQL EXECUTIE
+    ========================
+    */
     if (type === "sql") {
       const { sql } = payload
-      if (!sql) throw new Error("GEEN_SQL_MEEGEGEVEN")
+
+      if (!sql) {
+        return {
+          status: "error",
+          error: "GEEN_SQL_IN_PAYLOAD"
+        }
+      }
 
       const { error } = await supabase.rpc("execute_sql", {
         sql_statement: sql
       })
 
-      if (error) throw error
+      if (error) {
+        return {
+          status: "error",
+          error: error.message
+        }
+      }
 
       return {
         status: "ok",
-        runner: "sql"
+        runner: "sql",
+        executed: true
       }
     }
 
-    return {
-      status: "ignored",
-      reason: "onbekend type",
-      type,
-      actionId
-    }
-
-  } catch (err) {
-    return {
-      status: "error",
-      actionId,
-      error: err.message
-    }
-  }
-}
+    /*
+    ========================
+    ONBEKEND TYPE
