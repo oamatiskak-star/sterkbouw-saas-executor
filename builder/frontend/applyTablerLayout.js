@@ -2,35 +2,55 @@ import fs from "fs"
 import path from "path"
 
 export async function applyTablerLayout() {
-  try {
-    const root = process.cwd()
-    const appPath = path.join(root, "pages", "_app.js")
+  const root = process.cwd()
 
-    const CONTENT = `
-import "../styles/globals.css"
-import TablerLayout from "../components/TablerLayout"
+  const files = [
+    {
+      target: "components/TablerLayout.js",
+      content: `
+import TablerNav from "./TablerNav"
 
-export default function App({ Component, pageProps }) {
+export default function TablerLayout({ children }) {
   return (
-    <TablerLayout>
-      <Component {...pageProps} />
-    </TablerLayout>
+    <div className="page">
+      <aside className="navbar navbar-vertical navbar-expand-lg">
+        <div className="container-fluid">
+          <TablerNav />
+        </div>
+      </aside>
+
+      <div className="page-wrapper">
+        <div className="page-body">
+          <div className="container-xl">
+            {children}
+          </div>
+        </div>
+      </div>
+    </div>
   )
 }
-`.trim()
+`
+    },
+    {
+      target: "components/Layout.js",
+      content: `
+import TablerLayout from "./TablerLayout"
 
-    fs.writeFileSync(appPath, CONTENT, "utf8")
-
-    return {
-      status: "ok",
-      applied: true,
-      file: "pages/_app.js"
+export default function Layout({ children }) {
+  return <TablerLayout>{children}</TablerLayout>
+}
+`
     }
+  ]
 
-  } catch (err) {
-    return {
-      status: "error",
-      error: err.message
-    }
+  for (const file of files) {
+    const fullPath = path.join(root, file.target)
+    fs.mkdirSync(path.dirname(fullPath), { recursive: true })
+    fs.writeFileSync(fullPath, file.content, "utf8")
+  }
+
+  return {
+    status: "ok",
+    applied: files.map(f => f.target)
   }
 }
