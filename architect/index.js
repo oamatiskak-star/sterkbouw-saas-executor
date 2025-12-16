@@ -1,100 +1,70 @@
-import { createClient } from "@supabase/supabase-js"
+// architect/index.js
 
-/*
-========================
-SUPABASE
-========================
-*/
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY
-)
+import { generateFullUiLayout } from "./tasks/generateFullUiLayout.js"
+import { generateSection } from "./tasks/generateSection.js"
+import { generateForm } from "./tasks/generateForm.js"
+import { generateTable } from "./tasks/generateTable.js"
 
-/*
-========================
-FULL PRODUCTION BUILD
-========================
-– Maakt concrete builder-taken aan
-– Zet de band aan
-*/
-export async function runFullProductionBuild() {
-  console.log("ARCHITECT FULL PRODUCTION BUILD START")
+import { generateModule } from "../builder/moduleGenerator.js"
+import { generateGenericModule } from "../builder/moduleGenerator.js"
+import { generateLoginForm } from "../builder/loginForm.js"
 
-  const actions = [
-    "calculaties:bouw",
-    "calculaties:ew",
+import { generateSqlTable } from "./tasks/sqlGenerateTable.js"
+import { generateRlsPolicy } from "./tasks/sqlGenerateRls.js"
+import { generateRelationships } from "./tasks/sqlGenerateRelationships.js"
+import { scanSchema } from "./tasks/sqlScanSchema.js"
 
-    "documenten:bestek",
-    "documenten:offertes",
-    "documenten:contracten",
+import { generateApiRoute } from "./tasks/codeGenerateApiRoute.js"
+import { generatePage } from "./tasks/codeGeneratePage.js"
+import { generateComponent } from "./tasks/codeGenerateComponent.js"
+import { generateStylesheet } from "./tasks/codeGenerateStylesheet.js"
 
-    "planning:fasering",
-    "planning:kritisch_pad",
+import { generateEnvFile } from "./tasks/envGenerateFile.js"
+import { syncEnvKeys } from "./tasks/envSyncKeys.js"
+import { validateEnvSetup } from "./tasks/envValidateSetup.js"
 
-    "inkoop:prijzen",
-    "risico:analyse",
+import { fullSystemScan } from "./tasks/systemFullScan.js"
+import { generateAllRoutes } from "./tasks/systemGenerateRoutes.js"
+import { generateDashboardTemplate } from "./tasks/systemGenerateDashboardTemplate.js"
 
-    "output:dashboard",
-    "output:frontend",
-    "output:status"
-  ]
+import { mapTableToUi } from "./tasks/mapTableToUi.js"
+import { mapRouteToPage } from "./tasks/mapRouteToPage.js"
+import { mapModuleToNav } from "./tasks/mapModuleToNav.js"
 
-  for (const action of actions) {
-    await supabase.from("tasks").insert({
-      type: "RUN_BUILDER",
-      status: "open",
-      assigned_to: "executor",
-      payload: {
-        action
-      },
-      created_at: new Date().toISOString()
-    })
+export async function handleArchitectTask(taskId, payload) {
+  switch (taskId) {
+    case "frontend:full_ui_layout": return await generateFullUiLayout(payload)
+    case "frontend:generate_section": return await generateSection(payload)
+    case "frontend:generate_form": return await generateForm(payload)
+    case "frontend:generate_table": return await generateTable(payload)
 
-    console.log("ARCHITECT TASK AANGEMAAKT", action)
+    case "builder:generate_module": return await generateModule(payload)
+    case "builder:generate_generic": return await generateGenericModule(payload)
+    case "builder:generate_login_form": return await generateLoginForm(payload)
+
+    case "sql:generate_table": return await generateSqlTable(payload)
+    case "sql:generate_rls": return await generateRlsPolicy(payload)
+    case "sql:generate_relationships": return await generateRelationships(payload)
+    case "sql:scan_schema": return await scanSchema(payload)
+
+    case "code:generate_api_route": return await generateApiRoute(payload)
+    case "code:generate_page": return await generatePage(payload)
+    case "code:generate_component": return await generateComponent(payload)
+    case "code:generate_stylesheet": return await generateStylesheet(payload)
+
+    case "env:generate_file": return await generateEnvFile(payload)
+    case "env:sync_keys": return await syncEnvKeys(payload)
+    case "env:validate_setup": return await validateEnvSetup(payload)
+
+    case "system:full_scan": return await fullSystemScan(payload)
+    case "system:generate_all_routes": return await generateAllRoutes(payload)
+    case "system:generate_dashboard_template": return await generateDashboardTemplate(payload)
+
+    case "map:table_to_ui": return await mapTableToUi(payload)
+    case "map:route_to_page": return await mapRouteToPage(payload)
+    case "map:module_to_nav": return await mapModuleToNav(payload)
+
+    default:
+      throw new Error("❌ ONBEKENDE_TAKEN_TYPE VOOR AO ARCHITECT: " + taskId)
   }
-
-  console.log("ARCHITECT FULL PRODUCTION BUILD TASKS AANGEMAAKT")
-}
-
-/*
-========================
-ARCHITECT LOOP
-========================
-– Reageert op architect-taken
-*/
-export async function startArchitectLoop() {
-  setInterval(async () => {
-    const { data: tasks, error } = await supabase
-      .from("tasks")
-      .select("*")
-      .eq("type", "architect:full_production_build")
-      .eq("status", "open")
-      .limit(1)
-
-    if (error || !tasks || tasks.length === 0) return
-
-    const task = tasks[0]
-
-    await supabase
-      .from("tasks")
-      .update({ status: "running" })
-      .eq("id", task.id)
-
-    try {
-      await runFullProductionBuild()
-
-      await supabase
-        .from("tasks")
-        .update({ status: "done" })
-        .eq("id", task.id)
-    } catch (err) {
-      await supabase
-        .from("tasks")
-        .update({
-          status: "failed",
-          error: err.message || "ARCHITECT_FOUT"
-        })
-        .eq("id", task.id)
-    }
-  }, 5000)
 }
