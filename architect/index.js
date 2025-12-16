@@ -1,4 +1,5 @@
 // architect/index.js
+
 import { createClient } from "@supabase/supabase-js"
 
 const supabase = createClient(
@@ -8,17 +9,14 @@ const supabase = createClient(
 
 /*
 ARCHITECT
-- LEEST ALLEEN UIT SUPABASE
+- PASSIEF
 - GEEN FILE IMPORTS
 - GEEN TASK LOGICA
 - GEEN BUILD
-- KAN NOOIT CRASHEN OP FILES
+- VOLDOET AAN ao.js CONTRACT
 */
 
 export async function handleArchitectTask(taskId, payload) {
-  // Architect registreert alleen dat de taak bestaat
-  // Uitvoering gebeurt door executor/builder via SQL
-
   const { error } = await supabase
     .from("architect_logs")
     .insert({
@@ -37,4 +35,16 @@ export async function handleArchitectTask(taskId, payload) {
     handled_by: "architect",
     mode: "sql-driven"
   }
+}
+
+/*
+DIT IS DE CRUCIALE FIX
+ao.js verwacht deze export.
+Architect hoeft niets te loopen,
+maar de functie moet bestaan.
+*/
+
+export async function startArchitectLoop() {
+  console.log("ARCHITECT LOOP STARTED (PASSIVE MODE)")
+  return true
 }
