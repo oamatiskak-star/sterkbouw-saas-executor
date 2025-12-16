@@ -3,11 +3,12 @@ import path from "path"
 import { execSync } from "child_process"
 
 /*
-FRONTEND: INSTALL TABLER (NEXT.JS)
+FRONTEND: INSTALL TABLER (NEXT.JS – PAGES ROUTER)
 - SQL-first aangestuurd
 - alleen uitvoeren na deploy gate
 - geen partials
 - geen interactie
+- veilig overschrijven
 */
 
 export async function installTabler(payload = {}) {
@@ -20,14 +21,13 @@ export async function installTabler(payload = {}) {
       root
 
     const packageJsonPath = path.join(frontendRoot, "package.json")
-
     if (!fs.existsSync(packageJsonPath)) {
       throw new Error("package.json niet gevonden in frontend root")
     }
 
     /*
     ========================
-    DEPENDENCIES INSTALLEREN
+    DEPENDENCIES
     ========================
     */
     execSync(
@@ -67,24 +67,7 @@ body {
 
     /*
     ========================
-    _app.js OVERSCHRIJVEN
-    ========================
-    */
-    const appJsPath = path.join(frontendRoot, "pages", "_app.js")
-
-    const APP_JS = `
-import "../styles/globals.css"
-
-export default function App({ Component, pageProps }) {
-  return <Component {...pageProps} />
-}
-`
-
-    fs.writeFileSync(appJsPath, APP_JS.trim(), "utf8")
-
-    /*
-    ========================
-    TABLER DASHBOARD LAYOUT
+    TABLER LAYOUT COMPONENT
     ========================
     */
     const componentsDir = path.join(frontendRoot, "components")
@@ -128,14 +111,39 @@ export default function TablerLayout({ children }) {
 
     fs.writeFileSync(layoutPath, LAYOUT.trim(), "utf8")
 
+    /*
+    ========================
+    _app.js (WRAP MET LAYOUT)
+    ========================
+    */
+    const pagesDir = path.join(frontendRoot, "pages")
+    fs.mkdirSync(pagesDir, { recursive: true })
+
+    const appJsPath = path.join(pagesDir, "_app.js")
+
+    const APP_JS = `
+import "../styles/globals.css"
+import TablerLayout from "../components/TablerLayout"
+
+export default function App({ Component, pageProps }) {
+  return (
+    <TablerLayout>
+      <Component {...pageProps} />
+    </TablerLayout>
+  )
+}
+`
+
+    fs.writeFileSync(appJsPath, APP_JS.trim(), "utf8")
+
     return {
       status: "ok",
       framework: "tabler",
       applied: true,
       files: [
         "styles/globals.css",
-        "pages/_app.js",
-        "components/TablerLayout.js"
+        "components/TablerLayout.js",
+        "pages/_app.js"
       ]
     }
 
