@@ -26,6 +26,16 @@ export async function runBuilder(payload = {}) {
 
       /*
       ========================
+      TABLER LAYOUT TOEPASSEN
+      ========================
+      */
+      case "frontend:apply_tabler_layout": {
+        const m = await import("./frontend/applyTablerLayout.js")
+        return await m.applyTablerLayout(payload)
+      }
+
+      /*
+      ========================
       GLOBALE FRONTEND LAYOUT
       ========================
       */
