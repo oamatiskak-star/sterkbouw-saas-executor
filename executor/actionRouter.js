@@ -1,11 +1,9 @@
-// executor/actionRouter.js
-
 /*
 ACTION ROUTER
 - CENTRALE DISPATCHER VOOR EXECUTOR
-- ONTVANGT TAKEN UIT SUPABASE
+- LEEST TAKEN UIT SUPABASE
+- GEBRUIKT type + action_id (NIET action)
 - ROUTET NAAR BUILDER OF SQL
-- GEEN STATISCHE IMPORTS
 - MAG NOOIT CRASHEN
 */
 
@@ -18,27 +16,51 @@ const supabase = createClient(
 )
 
 export async function runAction(task) {
-  const { action, payload } = task
+  const { type, action_id, payload } = task
 
   try {
-    // BUILDER ACTIONS
-    if (action.startsWith("builder:") || action.startsWith("frontend:")) {
+    /*
+    ========================
+    FRONTEND + BUILDER
+    ========================
+    */
+    if (type === "frontend") {
       const result = await runBuilder({
-        actionId: action,
+        actionId: action_id || "frontend:apply_global_layout",
         ...payload
       })
 
       return {
         status: "ok",
         runner: "builder",
-        action,
+        type,
+        action_id,
         result
       }
     }
 
-    // SQL ACTIONS
-    if (action === "sql:execute") {
-      const { sql } = payload
+    if (type === "builder") {
+      const result = await runBuilder({
+        actionId: action_id,
+        ...payload
+      })
+
+      return {
+        status: "ok",
+        runner: "builder",
+        type,
+        action_id,
+        result
+      }
+    }
+
+    /*
+    ========================
+    SQL EXECUTIE
+    ========================
+    */
+    if (type === "sql") {
+      const { sql } = payload || {}
 
       if (!sql) {
         return {
@@ -65,9 +87,20 @@ export async function runAction(task) {
       }
     }
 
-    // UI STATE ACTIONS
-    if (action === "ui:update_state") {
-      const { table, data } = payload
+    /*
+    ========================
+    UI STATE
+    ========================
+    */
+    if (type === "ui") {
+      const { table, data } = payload || {}
+
+      if (!table || !data) {
+        return {
+          status: "error",
+          error: "UI_PAYLOAD_ONGELDIG"
+        }
+      }
 
       const { error } = await supabase
         .from(table)
@@ -87,17 +120,23 @@ export async function runAction(task) {
       }
     }
 
-    // ONBEKEND
+    /*
+    ========================
+    ONBEKEND
+    ========================
+    */
     return {
       status: "ignored",
-      message: "Onbekende action",
-      action
+      message: "Onbekend task type",
+      type,
+      action_id
     }
 
   } catch (err) {
     return {
       status: "error",
-      action,
+      type,
+      action_id,
       error: err.message
     }
   }
