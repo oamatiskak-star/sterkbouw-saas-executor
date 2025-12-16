@@ -8,12 +8,11 @@ const supabase = createClient(
 /*
 ========================
 FORCE BUILD DEFINITIE
-– Elke module MOET bestaan
-– Elke module krijgt frontend + backend + data
-– Geen SKIP
+– Elke module wordt gegenereerd
+– Frontend + backend + database
+– Geen SKIP, altijd builder:generate_module
 ========================
 */
-
 const FORCE_MODULES = [
   // Calculaties
   "calculaties:bouw",
@@ -32,18 +31,18 @@ const FORCE_MODULES = [
   "inkoop:prijzen",
   "risico:analyse",
 
-  // Output / UI
+  // Output
   "output:dashboard",
   "output:frontend",
   "output:status",
 
-  // Basis SaaS
+  // Project basis
   "project:overzicht",
   "project:instellingen",
   "project:gebruikers",
   "project:rechten",
 
-  // Frontend pagina’s
+  // UI
   "ui:dashboard",
   "ui:calculaties",
   "ui:documenten",
@@ -58,22 +57,31 @@ FORCE BUILD START
 ========================
 */
 export async function startForceBuild(projectId) {
-  console.log("ARCHITECT FORCE BUILD START")
+  console.log("ARCHITECT FORCE BUILD START", projectId)
 
-  for (const type of FORCE_MODULES) {
+  for (const moduleKey of FORCE_MODULES) {
+    const tableName = `${moduleKey.replace(":", "_")}_data`
+
     await supabase.from("tasks").insert({
-      type,
+      type: "builder:generate_module",
       status: "open",
       assigned_to: "executor",
       project_id: projectId,
       payload: {
-        force: true,
-        mode: "production"
+        module: moduleKey,
+        design: {
+          tables: [tableName],
+          api: true,
+          page: true,
+          permissions: ["read", "write", "admin"],
+          mode: "production",
+          force: true
+        }
       },
       created_at: new Date().toISOString()
     })
 
-    console.log("FORCE TASK AANGEMAAKT:", type)
+    console.log("FORCE TASK AANGEMAAKT:", moduleKey)
   }
 
   console.log("ARCHITECT FORCE BUILD TASKS VOLTOOID")
