@@ -6,13 +6,16 @@ APPLY GLOBAL DASHBOARD LAYOUT
 - WORDT AANGEROEPEN VIA frontend:force_dashboard_layout
 - OVERSCHRIJFT FRONTEND LAYOUT-BESTANDEN
 - GELDT VOOR ALLE PAGINA’S
-- GEEN CONDITIES
-- GEEN PARTIALS
+- SCHRIJFT EXPLICIET NAAR FRONTEND ROOT
 */
 
 export async function applyGlobalLayout(payload = {}) {
   try {
-    const root = process.cwd()
+    const root = process.env.FRONTEND_ROOT
+
+    if (!root) {
+      throw new Error("FRONTEND_ROOT environment variable ontbreekt")
+    }
 
     const files = [
       {
@@ -42,6 +45,7 @@ export async function applyGlobalLayout(payload = {}) {
     return {
       status: "ok",
       action: "frontend:force_dashboard_layout",
+      frontend_root: root,
       written_files: files.map(f => f.target)
     }
 
