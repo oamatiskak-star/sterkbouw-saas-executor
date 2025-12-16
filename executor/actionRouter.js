@@ -1,7 +1,7 @@
 import { runBuilder } from "../builder/index.js"
 import { buildFullUiLayout } from "../builder/fullUiLayout.js"
 import { generateLoginForm } from "../builder/loginForm.js"
-import { generateModule } from "../builder/genericModule.js"
+import { generateGenericModule } from "../builder/moduleGenerator.js"
 
 export async function runAction(actionId, payload) {
   /*
@@ -18,7 +18,7 @@ export async function runAction(actionId, payload) {
   }
 
   if (actionId === "builder:generate_generic") {
-    return await generateModule(payload)
+    return await generateGenericModule(payload)
   }
 
   /*
