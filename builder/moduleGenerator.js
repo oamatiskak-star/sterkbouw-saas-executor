@@ -1,27 +1,19 @@
+// builder/moduleGenerator.js
 import fs from "fs"
 import path from "path"
 
-/*
-================================================
-INTERNE IMPLEMENTATIE
-================================================
-*/
-async function _generateModule(payload) {
+export async function generateGenericModule(payload) {
   const base = process.cwd()
-
-  const moduleKey = payload?.moduleKey || "frontend:default"
-  const design = payload?.design || {}
+  const moduleKey = payload.moduleKey || "frontend:default"
+  const design = payload.design || {}
   const [domain, name] = moduleKey.split(":")
-
   const apiPath = path.join(base, "backend/api", domain)
   const pagePath = path.join(base, "frontend/pages", domain)
   const tableName = design.tables?.[0] || `${name}_data`
 
   fs.mkdirSync(apiPath, { recursive: true })
   fs.mkdirSync(pagePath, { recursive: true })
-  fs.mkdirSync(path.join(base, "supabase"), { recursive: true })
 
-  // API route
   fs.writeFileSync(
     path.join(apiPath, `${name}.js`),
     `
@@ -31,7 +23,6 @@ export default function handler(req, res) {
 `.trim()
   )
 
-  // Frontend page
   fs.writeFileSync(
     path.join(pagePath, `${name}.js`),
     `
@@ -46,7 +37,8 @@ export default function Page() {
 `.trim()
   )
 
-  // Supabase SQL
+  fs.mkdirSync(path.join(base, "supabase"), { recursive: true })
+
   fs.writeFileSync(
     path.join(base, "supabase", `${tableName}.sql`),
     `
@@ -59,15 +51,5 @@ create table if not exists ${tableName} (
 `.trim()
   )
 
-  console.log(`MODULE GEGENEREERD: ${moduleKey}`)
-  return { ok: true, moduleKey, table: tableName }
+  console.log(`✅ Module "${moduleKey}" gegenereerd met tabel "${tableName}"`)
 }
-
-/*
-================================================
-EXPORTS – ALTIJD COMPATIBEL
-================================================
-*/
-export const generateModule = _generateModule
-export const generateGenericModule = _generateModule
-export default _generateModule
