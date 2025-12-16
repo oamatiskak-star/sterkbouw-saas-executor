@@ -1,12 +1,9 @@
-import { runForceBuilder } from "../builder/forceBuilder.js"
+import { runBuilder } from "../builder/index.js"
 
-export async function runAction(actionId, task) {
-  const force = task?.payload?.force === true
-
-  if (force) {
-    return runForceBuilder(task)
+export async function runAction(actionId, payload) {
+  if (actionId === "builder:generate_module") {
+    return await runBuilder(payload)
   }
 
-  console.log("NIET-FORCE TASK GENEGEERD:", actionId)
-  return null
+  throw new Error("ONBEKENDE_ACTION")
 }
