@@ -5,6 +5,7 @@ import express from "express"
 import { createClient } from "@supabase/supabase-js"
 import { runAction } from "./executor/actionRouter.js"
 import { startArchitectLoop } from "./architect/index.js"
+import { startArchitectSystemScan } from "./architect/systemScan.js"
 
 /*
 ========================
@@ -38,24 +39,25 @@ app.get("/ping", (_, res) => {
 
 /*
 ========================
-AO ARCHITECT
+AO ARCHITECT (LOOP)
 ========================
 */
 if (AO_ROLE === "ARCHITECT") {
   console.log("AO ARCHITECT gestart")
-  console.log("Modus: analyse en ontwerp")
+  console.log("Modus: autonoom scannen en ontwerpen")
 
   startArchitectLoop()
 }
 
 /*
 ========================
-AO EXECUTOR
+AO EXECUTOR (CENTRAAL)
 ========================
 */
 if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
   console.log("AO EXECUTOR gestart")
 
+  // architect-loop draait ook in executor
   startArchitectLoop()
 
   async function pollTasks() {
@@ -76,18 +78,30 @@ if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
 
     const task = tasks[0]
 
+    console.log("EXECUTOR TASK OPGEPIKT:", task.type)
+
     await supabase
       .from("tasks")
       .update({ status: "running" })
       .eq("id", task.id)
 
     try {
-      await runAction(task.type, task)
+      // ARCHITECT SYSTEM SCAN TRIGGER
+      if (task.type === "architect:system_full_scan") {
+        console.log("ARCHITECT SYSTEM FULL SCAN START")
+        await startArchitectSystemScan()
+      }
+
+      // NORMALE BUILDER / ACTION ROUTING
+      else {
+        await runAction(task.type, task)
+      }
 
       await supabase
         .from("tasks")
         .update({ status: "done" })
         .eq("id", task.id)
+
     } catch (err) {
       console.error("Task fout", err.message)
 
