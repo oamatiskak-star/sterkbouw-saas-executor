@@ -20,8 +20,8 @@ export async function runBuilder(payload) {
       ========================
       */
       case "frontend:force_dashboard_layout": {
-        const m = await import("./frontend/applyGlobalLayout.js")
-        return await m.applyGlobalLayout(payload)
+        const m = await import("./frontend/applyGlobalLayoutGitHub.js")
+        return await m.applyGlobalLayoutGitHub(payload)
       }
 
       /*
@@ -195,4 +195,3 @@ export async function runBuilder(payload) {
     }
   }
 }
-``
