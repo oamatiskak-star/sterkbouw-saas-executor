@@ -1,8 +1,3 @@
-if (process.env.NODE_ENV !== "production") {
-  const dotenv = await import("dotenv")
-  dotenv.config()
-}
-
 import express from "express"
 import { createClient } from "@supabase/supabase-js"
 
@@ -24,8 +19,17 @@ if (!AO_ROLE) {
   process.exit(1)
 }
 
+/*
+========================
+FRONTEND WRITE FLAG
+ENIGE WAARHEID
+========================
+*/
 const ENABLE_FRONTEND_WRITE =
   process.env.ENABLE_FRONTEND_WRITE === "true"
+
+console.log("ENABLE_FRONTEND_WRITE (env):", process.env.ENABLE_FRONTEND_WRITE)
+console.log("FRONTEND WRITE ENABLED:", ENABLE_FRONTEND_WRITE)
 
 const app = express()
 app.use(express.json())
@@ -63,13 +67,7 @@ EXECUTOR LOOP
 if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
   console.log("AO EXECUTOR gestart")
   console.log("WRITE MODE: ACTIEF")
-  console.log("FRONTEND WRITE ENABLED:", ENABLE_FRONTEND_WRITE)
 
-  /*
-  ========================
-  TASK POLLER
-  ========================
-  */
   async function pollTasks() {
     try {
       const { data: tasks, error } = await supabase
@@ -96,11 +94,6 @@ if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
         .eq("id", task.id)
 
       try {
-        /*
-        ========================
-        ARCHITECT TAKEN
-        ========================
-        */
         if (task.type === "architect:system_full_scan") {
           console.log("ARCHITECT SYSTEM FULL SCAN START")
           await startArchitectSystemScan()
@@ -109,12 +102,16 @@ if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
           console.log("ARCHITECT FORCE BUILD START")
           await startForceBuild(task.project_id)
         } 
-        /*
-        ========================
-        OVERIGE ACTIES
-        ========================
-        */
         else {
+          if (
+            task.type.startsWith("generate_") ||
+            task.type.startsWith("builder_")
+          ) {
+            if (!ENABLE_FRONTEND_WRITE) {
+              throw new Error("FRONTEND_WRITE_DISABLED")
+            }
+          }
+
           console.log("RUN ACTION:", task.type)
           const result = await runAction(task)
           console.log("ACTION RESULT:", result)
