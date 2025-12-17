@@ -6,7 +6,7 @@ ACTION ROUTER
 - ENIGE EXECUTOR INGANG
 - SQL-FIRST
 - DEPLOY GATE AFDWINGING
-- STABIEL, GEEN SYNTAX RISICO
+- STABIEL
 */
 
 const supabase = createClient(
@@ -14,13 +14,23 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 )
 
+/*
+========================
+ACTION ALIAS MAP
+Hier lossen we alles op
+========================
+*/
+const ACTION_ALIAS = {
+  generate_page: "frontend_write_file",
+  generate_dashboard: "frontend_write_file",
+  builder_run: "frontend_build",
+  builder_execute: "frontend_build"
+}
+
 export async function runAction(task) {
   try {
     if (!task) {
-      return {
-        status: "ignored",
-        reason: "GEEN_TASK"
-      }
+      return { status: "ignored", reason: "GEEN_TASK" }
     }
 
     const payload = task.payload || {}
@@ -29,10 +39,8 @@ export async function runAction(task) {
     ========================
     ACTION ID AFLEIDING
     ========================
-    - Eerst expliciet uit payload
-    - Anders automatisch uit task.type
     */
-    const actionId =
+    let actionId =
       payload.actionId ||
       (task.type
         ? task.type
@@ -44,16 +52,19 @@ export async function runAction(task) {
     if (!actionId) {
       await supabase
         .from("tasks")
-        .update({
-          status: "done",
-          updated_at: new Date().toISOString()
-        })
+        .update({ status: "done" })
         .eq("id", task.id)
 
-      return {
-        status: "done",
-        reason: "GEEN_ACTION_ID_MAAR_AFGEROND"
-      }
+      return { status: "done", reason: "GEEN_ACTION_ID" }
+    }
+
+    /*
+    ========================
+    ALIAS TOE PASSEN
+    ========================
+    */
+    if (ACTION_ALIAS[actionId]) {
+      actionId = ACTION_ALIAS[actionId]
     }
 
     /*
@@ -61,31 +72,22 @@ export async function runAction(task) {
     DEPLOY GATE
     ========================
     */
-    const { data: gate, error: gateError } = await supabase
+    const { data: gate } = await supabase
       .from("deploy_gate")
       .select("allow_frontend, allow_build")
       .eq("id", 1)
       .single()
 
-    if (gateError || !gate) {
-      return {
-        status: "blocked",
-        reason: "DEPLOY_GATE_ONBESCHIKBAAR"
-      }
+    if (!gate) {
+      return { status: "blocked", reason: "DEPLOY_GATE_MIST" }
     }
 
     if (actionId.startsWith("frontend_") && gate.allow_frontend !== true) {
-      return {
-        status: "blocked",
-        reason: "FRONTEND_GATE_GESLOTEN"
-      }
+      return { status: "blocked", reason: "FRONTEND_GATE_GESLOTEN" }
     }
 
     if (actionId.startsWith("builder_") && gate.allow_build !== true) {
-      return {
-        status: "blocked",
-        reason: "BUILD_GATE_GESLOTEN"
-      }
+      return { status: "blocked", reason: "BUILD_GATE_GESLOTEN" }
     }
 
     /*
@@ -96,35 +98,23 @@ export async function runAction(task) {
     const result = await runBuilder({
       actionId,
       taskId: task.id,
+      originalType: task.type,
       ...payload
     })
 
     await supabase
       .from("tasks")
-      .update({
-        status: "done",
-        updated_at: new Date().toISOString()
-      })
+      .update({ status: "done" })
       .eq("id", task.id)
 
-    return {
-      status: "ok",
-      actionId,
-      result
-    }
+    return { status: "ok", actionId, result }
 
   } catch (err) {
     await supabase
       .from("tasks")
-      .update({
-        status: "error",
-        updated_at: new Date().toISOString()
-      })
+      .update({ status: "error" })
       .eq("id", task?.id)
 
-    return {
-      status: "error",
-      error: err.message
-    }
+    return { status: "error", error: err.message }
   }
 }
