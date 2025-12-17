@@ -92,13 +92,11 @@ if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
         if (task.type === "architect:system_full_scan") {
           console.log("ARCHITECT SYSTEM FULL SCAN START")
           await startArchitectSystemScan()
-        }
-
+        } 
         else if (task.type === "architect:force_build") {
           console.log("ARCHITECT FORCE BUILD START")
           await startForceBuild(task.project_id)
-        }
-
+        } 
         /*
         ========================
         BUILDER / FRONTEND / SQL
@@ -140,4 +138,7 @@ SERVER START
 ========================
 */
 app.listen(PORT, () => {
-  console.log("AO SERVICE
+  console.log("AO SERVICE LIVE")
+  console.log("ROLE:", AO_ROLE)
+  console.log("POORT:", PORT)
+})
