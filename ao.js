@@ -56,9 +56,7 @@ EXECUTOR LOOP
 */
 if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
   console.log("AO EXECUTOR gestart")
-
-  // Architect draait altijd mee
-  startArchitectLoop()
+  console.log("WRITE MODE: ACTIEF")
 
   async function pollTasks() {
     try {
@@ -78,7 +76,7 @@ if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
       if (!tasks || tasks.length === 0) return
 
       const task = tasks[0]
-      console.log("EXECUTOR TASK OPGEPIKT:", task.type, task.action_id)
+      console.log("EXECUTOR TASK OPGEPIKT:", task.type)
 
       await supabase
         .from("tasks")
@@ -88,7 +86,7 @@ if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
       try {
         /*
         ========================
-        ARCHITECT TAKEN
+        ARCHITECT TAKEN VIA TASK
         ========================
         */
         if (task.type === "architect:system_full_scan") {
@@ -107,6 +105,7 @@ if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
         ========================
         */
         else {
+          console.log("RUN ACTION:", task.type)
           await runAction(task)
         }
 
@@ -116,7 +115,7 @@ if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
           .eq("id", task.id)
 
       } catch (err) {
-        console.error("TASK FOUT:", err.message)
+        console.error("TASK FOUT:", err)
 
         await supabase
           .from("tasks")
@@ -128,11 +127,10 @@ if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
       }
 
     } catch (outerErr) {
-      console.error("POLL LOOP FOUT:", outerErr.message)
+      console.error("POLL LOOP FOUT:", outerErr)
     }
   }
 
-  // Harde keep-alive poll
   setInterval(pollTasks, 3000)
 }
 
@@ -142,7 +140,4 @@ SERVER START
 ========================
 */
 app.listen(PORT, () => {
-  console.log("AO SERVICE LIVE")
-  console.log("ROLE:", AO_ROLE)
-  console.log("POORT:", PORT)
-})
+  console.log("AO SERVICE
