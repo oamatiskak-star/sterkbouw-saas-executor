@@ -4,41 +4,34 @@ import path from "path"
 export async function applyTablerLayout() {
   const root = process.cwd()
 
-  fs.mkdirSync(path.join(root, "components"), { recursive: true })
-
-  fs.writeFileSync(
-    path.join(root, "components/TablerLayout.js"),
-    `
+  const content = `
 import TablerNav from "./TablerNav"
 
 export default function TablerLayout({ children }) {
   return (
     <div className="page">
-      <TablerNav />
+      <aside className="navbar navbar-vertical">
+        <div className="container-fluid">
+          <h1 className="navbar-brand">SterkBouw</h1>
+          <TablerNav />
+        </div>
+      </aside>
+
       <div className="page-wrapper">
-        {children}
+        <div className="page-body">
+          <div className="container-xl">
+            {children}
+          </div>
+        </div>
       </div>
     </div>
   )
 }
 `
-  )
-
   fs.writeFileSync(
-    path.join(root, "components/TablerNav.js"),
-    `
-import Link from "next/link"
-
-export default function TablerNav() {
-  return (
-    <aside className="navbar">
-      <Link href="/dashboard">Dashboard</Link>
-      <Link href="/calculaties">Calculaties</Link>
-      <Link href="/projecten">Projecten</Link>
-    </aside>
-  )
-}
-`
+    path.join(root, "components", "TablerLayout.js"),
+    content.trim(),
+    "utf8"
   )
 
   return { status: "ok" }
