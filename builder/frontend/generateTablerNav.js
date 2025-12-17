@@ -8,9 +8,9 @@ const supabase = createClient(
 )
 
 export async function generateTablerNav() {
-  const { data: nav } = await supabase.from("navigation").select("*")
+  const { data } = await supabase.from("navigation").select("*")
 
-  const items = nav.map(
+  const links = data.map(
     m => `<a className="nav-link" href="${m.route}">${m.label}</a>`
   ).join("\n")
 
@@ -18,17 +18,17 @@ export async function generateTablerNav() {
 export default function TablerNav() {
   return (
     <div className="navbar-nav">
-      ${items}
+      ${links}
     </div>
   )
 }
 `
 
   fs.writeFileSync(
-    path.join(process.cwd(), "components/TablerNav.js"),
+    path.join(process.cwd(), "components", "TablerNav.js"),
     content.trim(),
     "utf8"
   )
 
-  return { status: "ok", items: nav.length }
+  return { status: "ok", count: data.length }
 }
