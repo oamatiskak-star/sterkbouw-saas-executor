@@ -1,32 +1,41 @@
 import { runBuilder } from "../builder/index.js"
 import { createClient } from "@supabase/supabase-js"
 
+/*
+ACTION ROUTER
+- ENIGE ingang voor EXECUTOR
+- SQL is leidend
+- DEPLOY GATE wordt altijd gecontroleerd
+- Builder voert alleen goedgekeurde acties uit
+*/
+
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
 )
 
 export async function runAction(task) {
-  const payload = task.payload || {}
-  const actionId = payload.actionId
+  try {
+    if (!task || !task.payload) {
+      return { status: "ignored", reason: "GEEN_PAYLOAD" }
+    }
 
-  if (!actionId) {
-    return { status: "ignored", reason: "NO_ACTION_ID" }
-  }
+    const payload = task.payload
+    const actionId = payload.actionId
 
-  const { data: gate } = await supabase
-    .from("deploy_gate")
-    .select("*")
-    .eq("id", 1)
-    .single()
+    if (!actionId) {
+      return { status: "ignored", reason: "GEEN_ACTION_ID" }
+    }
 
-  if (actionId.startsWith("frontend:") && !gate.allow_frontend) {
-    return { status: "blocked", reason: "FRONTEND_GATE_CLOSED" }
-  }
+    /*
+    ========================
+    DEPLOY GATE CHECK
+    ========================
+    */
+    const { data: gate, error: gateError } = await supabase
+      .from("deploy_gate")
+      .select("*")
+      .eq("id", 1)
+      .single()
 
-  if (actionId.startsWith("builder:") && !gate.allow_build) {
-    return { status: "blocked", reason: "BUILD_GATE_CLOSED" }
-  }
-
-  return await runBuilder({ actionId, ...payload })
-}
+    if (gateError || !gate) {
