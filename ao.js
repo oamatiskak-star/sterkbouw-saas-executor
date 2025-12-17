@@ -3,9 +3,6 @@ dotenv.config()
 
 import express from "express"
 import { createClient } from "@supabase/supabase-js"
-import fs from "fs"
-import path from "path"
-import { execSync } from "child_process"
 
 import { runAction } from "./executor/actionRouter.js"
 import { startArchitectLoop } from "./architect/index.js"
@@ -24,6 +21,9 @@ if (!AO_ROLE) {
   console.error("AO_ROLE ontbreekt. Service stopt.")
   process.exit(1)
 }
+
+const ENABLE_FRONTEND_WRITE =
+  process.env.ENABLE_FRONTEND_WRITE === "true"
 
 const app = express()
 app.use(express.json())
@@ -61,37 +61,7 @@ EXECUTOR LOOP
 if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
   console.log("AO EXECUTOR gestart")
   console.log("WRITE MODE: ACTIEF")
-
-  /*
-  ========================
-  FRONTEND REPO CLONE
-  ========================
-  */
-  const FRONTEND_ROOT =
-    process.env.FRONTEND_ROOT || "./tmp/sterkbouw-saas-front"
-
-  console.log("▶ FRONTEND_ROOT =", FRONTEND_ROOT)
-
-  if (!process.env.GITHUB_TOKEN) {
-    console.error("GITHUB_TOKEN ontbreekt. Executor stopt.")
-    process.exit(1)
-  }
-
-  if (!fs.existsSync(FRONTEND_ROOT)) {
-    console.log("▶ Frontend repo niet gevonden, clonen gestart")
-
-    fs.mkdirSync(path.dirname(FRONTEND_ROOT), { recursive: true })
-
-    execSync(
-      `git clone https://x-access-token:${process.env.GITHUB_TOKEN}@github.com/oamatiskak-star/sterkbouw-saas-front.git ${FRONTEND_ROOT}`,
-      { stdio: "inherit" }
-    )
-
-    console.log("▶ Frontend repo succesvol gekloond")
-  } else {
-    console.log("▶ Frontend repo al aanwezig")
-    console.log("▶ Inhoud:", fs.readdirSync(FRONTEND_ROOT))
-  }
+  console.log("FRONTEND WRITE ENABLED:", ENABLE_FRONTEND_WRITE)
 
   /*
   ========================
@@ -124,13 +94,25 @@ if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
         .eq("id", task.id)
 
       try {
+        /*
+        ========================
+        ARCHITECT TAKEN
+        ========================
+        */
         if (task.type === "architect:system_full_scan") {
           console.log("ARCHITECT SYSTEM FULL SCAN START")
           await startArchitectSystemScan()
-        } else if (task.type === "architect:force_build") {
+        } 
+        else if (task.type === "architect:force_build") {
           console.log("ARCHITECT FORCE BUILD START")
           await startForceBuild(task.project_id)
-        } else {
+        } 
+        /*
+        ========================
+        OVERIGE ACTIES
+        ========================
+        */
+        else {
           console.log("RUN ACTION:", task.type)
           const result = await runAction(task)
           console.log("ACTION RESULT:", result)
