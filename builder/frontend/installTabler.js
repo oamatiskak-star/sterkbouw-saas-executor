@@ -1,3 +1,7 @@
+console.log("▶ FRONTEND_ROOT =", frontendRoot)
+console.log("▶ bestaat =", fs.existsSync(frontendRoot))
+console.log("▶ inhoud =", fs.existsSync(frontendRoot) ? fs.readdirSync(frontendRoot) : "N/A")
+
 import fs from "fs"
 import path from "path"
 import { execSync } from "child_process"
