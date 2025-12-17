@@ -3,6 +3,10 @@ dotenv.config()
 
 import express from "express"
 import { createClient } from "@supabase/supabase-js"
+import fs from "fs"
+import path from "path"
+import { execSync } from "child_process"
+
 import { runAction } from "./executor/actionRouter.js"
 import { startArchitectLoop } from "./architect/index.js"
 import { startArchitectSystemScan } from "./architect/systemScanner.js"
@@ -58,6 +62,41 @@ if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
   console.log("AO EXECUTOR gestart")
   console.log("WRITE MODE: ACTIEF")
 
+  /*
+  ========================
+  FRONTEND REPO CLONE
+  ========================
+  */
+  const FRONTEND_ROOT =
+    process.env.FRONTEND_ROOT || "./tmp/sterkbouw-saas-front"
+
+  console.log("▶ FRONTEND_ROOT =", FRONTEND_ROOT)
+
+  if (!process.env.GITHUB_TOKEN) {
+    console.error("GITHUB_TOKEN ontbreekt. Kan frontend niet clonen.")
+    process.exit(1)
+  }
+
+  if (!fs.existsSync(FRONTEND_ROOT)) {
+    console.log("▶ Frontend repo niet gevonden, clonen gestart")
+
+    fs.mkdirSync(path.dirname(FRONTEND_ROOT), { recursive: true })
+
+    execSync(
+      `git clone https://x-access-token:${process.env.GITHUB_TOKEN}@github.com/oamatiskak-star/sterkbouw-saas-front.git ${FRONTEND_ROOT}`,
+      { stdio: "inherit" }
+    )
+
+    console.log("▶ Frontend repo succesvol gekloond")
+  } else {
+    console.log("▶ Frontend repo al aanwezig")
+  }
+
+  /*
+  ========================
+  TASK POLLER
+  ========================
+  */
   async function pollTasks() {
     try {
       const { data: tasks, error } = await supabase
@@ -84,11 +123,6 @@ if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
         .eq("id", task.id)
 
       try {
-        /*
-        ========================
-        ARCHITECT TAKEN VIA TASK
-        ========================
-        */
         if (task.type === "architect:system_full_scan") {
           console.log("ARCHITECT SYSTEM FULL SCAN START")
           await startArchitectSystemScan()
@@ -97,48 +131,7 @@ if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
           console.log("ARCHITECT FORCE BUILD START")
           await startForceBuild(task.project_id)
         } 
-        /*
-        ========================
-        BUILDER / FRONTEND / SQL
-        ========================
-        */
         else {
           console.log("RUN ACTION:", task.type)
-          await runAction(task)
-        }
-
-        await supabase
-          .from("tasks")
-          .update({ status: "done" })
-          .eq("id", task.id)
-
-      } catch (err) {
-        console.error("TASK FOUT:", err)
-
-        await supabase
-          .from("tasks")
-          .update({
-            status: "failed",
-            error: err.message || "ONBEKENDE_FOUT"
-          })
-          .eq("id", task.id)
-      }
-
-    } catch (outerErr) {
-      console.error("POLL LOOP FOUT:", outerErr)
-    }
-  }
-
-  setInterval(pollTasks, 3000)
-}
-
-/*
-========================
-SERVER START
-========================
-*/
-app.listen(PORT, () => {
-  console.log("AO SERVICE LIVE")
-  console.log("ROLE:", AO_ROLE)
-  console.log("POORT:", PORT)
-})
+          const result = await runAction(task)
+          console.log("ACTION RESULT:", result)
