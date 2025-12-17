@@ -1,0 +1,7 @@
+{
+  "phases": {
+    "install": {
+      "apt": ["git"]
+    }
+  }
+}
