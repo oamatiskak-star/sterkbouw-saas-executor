@@ -21,6 +21,11 @@ export async function runBuilder(payload = {}) {
         return await m.generateTablerNav(payload)
       }
 
+      case "frontend:generate_login": {
+        const m = await import("./frontend/generateTablerLogin.js")
+        return await m.generateTablerLogin(payload)
+      }
+
       default:
         await registerUnknownCommand("builder", actionId)
         return { status: "ignored", actionId }
