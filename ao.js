@@ -73,7 +73,7 @@ if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
   console.log("▶ FRONTEND_ROOT =", FRONTEND_ROOT)
 
   if (!process.env.GITHUB_TOKEN) {
-    console.error("GITHUB_TOKEN ontbreekt. Kan frontend niet clonen.")
+    console.error("GITHUB_TOKEN ontbreekt. Executor stopt.")
     process.exit(1)
   }
 
@@ -90,6 +90,7 @@ if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
     console.log("▶ Frontend repo succesvol gekloond")
   } else {
     console.log("▶ Frontend repo al aanwezig")
+    console.log("▶ Inhoud:", fs.readdirSync(FRONTEND_ROOT))
   }
 
   /*
@@ -101,7 +102,7 @@ if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
     try {
       const { data: tasks, error } = await supabase
         .from("tasks")
-        .select("id, type, action_id, payload, status, assigned_to, project_id")
+        .select("id, type, payload, status, assigned_to, project_id")
         .eq("status", "open")
         .eq("assigned_to", "executor")
         .order("created_at", { ascending: true })
@@ -126,12 +127,47 @@ if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
         if (task.type === "architect:system_full_scan") {
           console.log("ARCHITECT SYSTEM FULL SCAN START")
           await startArchitectSystemScan()
-        } 
-        else if (task.type === "architect:force_build") {
+        } else if (task.type === "architect:force_build") {
           console.log("ARCHITECT FORCE BUILD START")
           await startForceBuild(task.project_id)
-        } 
-        else {
+        } else {
           console.log("RUN ACTION:", task.type)
           const result = await runAction(task)
           console.log("ACTION RESULT:", result)
+        }
+
+        await supabase
+          .from("tasks")
+          .update({ status: "done" })
+          .eq("id", task.id)
+
+      } catch (err) {
+        console.error("TASK FOUT:", err)
+
+        await supabase
+          .from("tasks")
+          .update({
+            status: "failed",
+            error: err.message || "ONBEKENDE_FOUT"
+          })
+          .eq("id", task.id)
+      }
+
+    } catch (outerErr) {
+      console.error("POLL LOOP FOUT:", outerErr)
+    }
+  }
+
+  setInterval(pollTasks, 3000)
+}
+
+/*
+========================
+SERVER START
+========================
+*/
+app.listen(PORT, () => {
+  console.log("AO SERVICE LIVE")
+  console.log("ROLE:", AO_ROLE)
+  console.log("POORT:", PORT)
+})
