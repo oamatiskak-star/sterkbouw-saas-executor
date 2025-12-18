@@ -1,5 +1,6 @@
 import fs from "fs"
 import path from "path"
+import Link from "next/link"
 
 const FRONTEND_ROOT = "/tmp/frontend"
 
@@ -12,7 +13,7 @@ function ensureDir(dir) {
 export async function generateStandardPage(payload = {}) {
   const {
     route,
-    title,
+    title = "Pagina",
     kpis = [],
     actions = []
   } = payload
@@ -34,27 +35,33 @@ export async function generateStandardPage(payload = {}) {
 
   ensureDir(path.dirname(filePath))
 
-  const kpiBlocks = kpis.map(kpi => `
+  const kpiBlocks = kpis.length
+    ? kpis.map(kpi => `
+      <div className="col-md-3">
         <div className="card">
           <div className="card-body">
             <div className="subheader">${kpi.label}</div>
             <div className="h1">${kpi.value}</div>
           </div>
         </div>
-  `).join("")
+      </div>
+    `).join("")
+    : `<div className="col-12"><p>Geen KPI’s</p></div>`
 
-  const actionBlocks = actions.map(action => `
-        <div className="col-md-3">
-          <div className="card card-link">
-            <div className="card-body">
-              <h3 className="card-title">${action.label}</h3>
-              <a href="${action.route}" className="btn btn-primary w-100">
-                Open
-              </a>
+  const actionBlocks = actions.length
+    ? actions.map(action => `
+      <div className="col-md-3">
+        <a href="${action.route}" className="card card-link">
+          <div className="card-body text-center">
+            <h3 className="card-title">${action.label}</h3>
+            <div className="btn btn-primary mt-2 w-100">
+              Open
             </div>
           </div>
-        </div>
-  `).join("")
+        </a>
+      </div>
+    `).join("")
+    : `<div className="col-12"><p>Geen acties</p></div>`
 
   const content = `
 import Head from "next/head"
@@ -66,21 +73,19 @@ export default function Page() {
         <title>${title}</title>
       </Head>
 
-      <div className="page-wrapper">
-        <div className="page-body">
-          <div className="container-xl">
+      <div className="page-body">
+        <div className="container-xl">
 
-            <h1 className="mb-4">${title}</h1>
+          <h1 className="mb-4">${title}</h1>
 
-            <div className="row row-cards mb-4">
-              ${kpiBlocks || "<p>Geen KPI’s</p>"}
-            </div>
-
-            <div className="row row-cards">
-              ${actionBlocks || "<p>Geen acties</p>"}
-            </div>
-
+          <div className="row row-cards mb-4">
+            ${kpiBlocks}
           </div>
+
+          <div className="row row-cards">
+            ${actionBlocks}
+          </div>
+
         </div>
       </div>
     </>
