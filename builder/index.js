@@ -6,7 +6,15 @@ BUILDER ENTRY
 ========================
 */
 export async function runBuilder(payload = {}) {
-  const actionId = payload.actionId
+  let actionId = payload.actionId
+
+  // Veiligheid: normaliseer actionId
+  if (actionId) {
+    actionId = actionId
+      .toLowerCase()
+      .replace(/:/g, "_")
+      .replace(/__+/g, "_")
+  }
 
   try {
     switch (actionId) {
@@ -16,29 +24,29 @@ export async function runBuilder(payload = {}) {
       BESTAANDE FRONTEND ACTIES
       ========================
       */
-      case "frontend:install_tabler": {
+      case "frontend_install_tabler": {
         const m = await import("./frontend/installTabler.js")
         return await m.installTabler(payload)
       }
 
-      case "frontend:apply_tabler_layout": {
+      case "frontend_apply_tabler_layout": {
         const m = await import("./frontend/applyTablerLayout.js")
         return await m.applyTablerLayout(payload)
       }
 
-      case "frontend:generate_navigation": {
+      case "frontend_generate_navigation": {
         const m = await import("./frontend/generateTablerNav.js")
         return await m.generateTablerNav(payload)
       }
 
-      case "frontend:generate_login": {
+      case "frontend_generate_login": {
         const m = await import("./frontend/generateTablerLogin.js")
         return await m.generateTablerLogin(payload)
       }
 
       /*
       ========================
-      PAGINA – SIMPEL (oud)
+      PAGINA – SIMPEL
       ========================
       */
       case "frontend_write_file": {
@@ -48,7 +56,7 @@ export async function runBuilder(payload = {}) {
 
       /*
       ========================
-      PAGINA – STANDAARD MET KPI + KNOPPEN (nieuw)
+      PAGINA – STANDAARD MET KPI + KNOPPEN
       ========================
       */
       case "frontend_generate_standard_page": {
