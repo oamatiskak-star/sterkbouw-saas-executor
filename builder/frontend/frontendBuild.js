@@ -21,22 +21,53 @@ export async function frontendBuild() {
 
   fs.mkdirSync("/tmp", { recursive: true })
 
-  if (!fs.existsSync(path.join(FRONTEND_ROOT, ".git"))) {
-    console.log("FRONTEND REPO CLONE START")
+  /*
+  ========================
+  REPO VOORBEREIDING
+  ========================
+  */
+  if (!fs.existsSync(FRONTEND_ROOT)) {
+    console.log("FRONTEND ROOT BESTAAT NIET, CLONE START")
     execSync(`git clone ${FRONTEND_REPO} ${FRONTEND_ROOT}`, {
       stdio: "inherit"
     })
   }
 
-  // Zet git identity lokaal in repo
+  if (!fs.existsSync(path.join(FRONTEND_ROOT, ".git"))) {
+    throw new Error("FRONTEND_ROOT_BESTAAT_MAAR_IS_GEEN_GIT_REPO")
+  }
+
+  /*
+  ========================
+  GIT CONFIG LOKAAL
+  ========================
+  */
   execSync(`git config user.name "${process.env.GIT_AUTHOR_NAME}"`, {
-    cwd: FRONTEND_ROOT
+    cwd: FRONTEND_ROOT,
+    stdio: "inherit"
   })
 
   execSync(`git config user.email "${process.env.GIT_AUTHOR_EMAIL}"`, {
-    cwd: FRONTEND_ROOT
+    cwd: FRONTEND_ROOT,
+    stdio: "inherit"
   })
 
+  /*
+  ========================
+  SYNC MET REMOTE
+  ========================
+  */
+  console.log("FRONTEND GIT PULL")
+  execSync("git pull --rebase || true", {
+    cwd: FRONTEND_ROOT,
+    stdio: "inherit"
+  })
+
+  /*
+  ========================
+  COMMIT + PUSH
+  ========================
+  */
   execSync("git status", {
     cwd: FRONTEND_ROOT,
     stdio: "inherit"
@@ -48,7 +79,7 @@ export async function frontendBuild() {
   })
 
   execSync(
-    'git commit -m "auto: generate ui" || true',
+    'git commit -m "auto: generate ui" || echo "NO_CHANGES_TO_COMMIT"',
     {
       cwd: FRONTEND_ROOT,
       stdio: "inherit"
