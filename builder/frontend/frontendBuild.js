@@ -26,15 +26,18 @@ export async function frontendBuild() {
   REPO VOORBEREIDING
   ========================
   */
+  if (fs.existsSync(FRONTEND_ROOT)) {
+    if (!fs.existsSync(path.join(FRONTEND_ROOT, ".git"))) {
+      console.log("FRONTEND_ROOT BESTAAT MAAR GEEN GIT REPO → OPSCHONEN")
+      fs.rmSync(FRONTEND_ROOT, { recursive: true, force: true })
+    }
+  }
+
   if (!fs.existsSync(FRONTEND_ROOT)) {
     console.log("FRONTEND ROOT BESTAAT NIET, CLONE START")
     execSync(`git clone ${FRONTEND_REPO} ${FRONTEND_ROOT}`, {
       stdio: "inherit"
     })
-  }
-
-  if (!fs.existsSync(path.join(FRONTEND_ROOT, ".git"))) {
-    throw new Error("FRONTEND_ROOT_BESTAAT_MAAR_IS_GEEN_GIT_REPO")
   }
 
   /*
