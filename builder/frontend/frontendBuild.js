@@ -1,6 +1,11 @@
 import { execSync } from "child_process"
+import fs from "fs"
 
 const FRONTEND_ROOT = "/app/frontend"
+const FRONTEND_REPO =
+  "https://x-access-token:" +
+  process.env.GITHUB_TOKEN +
+  "@github.com/oamatiskak-star/sterkbouw-saas-front.git"
 
 export async function frontendBuild() {
   console.log("FRONTEND BUILD START")
@@ -9,24 +14,21 @@ export async function frontendBuild() {
     throw new Error("GITHUB_TOKEN ontbreekt")
   }
 
-  const repoUrl =
-    "https://x-access-token:" +
-    process.env.GITHUB_TOKEN +
-    "@github.com/oamatiskak-star/sterkbouw-saas-front.git"
+  if (!fs.existsSync(FRONTEND_ROOT + "/.git")) {
+    console.log("FRONTEND REPO CLONE START")
+    execSync(`rm -rf ${FRONTEND_ROOT}`)
+    execSync(`git clone ${FRONTEND_REPO} ${FRONTEND_ROOT}`, {
+      stdio: "inherit"
+    })
+  }
 
   execSync("git add .", { cwd: FRONTEND_ROOT, stdio: "inherit" })
-
-  execSync(
-    'git commit -m "auto: generate frontend ui" || true',
-    { cwd: FRONTEND_ROOT, stdio: "inherit" }
-  )
-
-  execSync(
-    `git push ${repoUrl}`,
-    { cwd: FRONTEND_ROOT, stdio: "inherit" }
-  )
+  execSync('git commit -m "auto: generate ui" || true', {
+    cwd: FRONTEND_ROOT,
+    stdio: "inherit"
+  })
+  execSync("git push", { cwd: FRONTEND_ROOT, stdio: "inherit" })
 
   console.log("FRONTEND BUILD DONE")
-
   return { status: "done" }
 }
