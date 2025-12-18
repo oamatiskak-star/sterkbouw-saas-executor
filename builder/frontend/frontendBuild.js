@@ -22,6 +22,14 @@ export async function frontendBuild() {
     })
   }
 
+  // 🔑 ZET GIT IDENTITY
+  execSync('git config user.name "AO Executor"', {
+    cwd: FRONTEND_ROOT
+  })
+  execSync('git config user.email "ao-executor@users.noreply.github.com"', {
+    cwd: FRONTEND_ROOT
+  })
+
   execSync("git add .", { cwd: FRONTEND_ROOT, stdio: "inherit" })
   execSync('git commit -m "auto: generate ui" || true', {
     cwd: FRONTEND_ROOT,
