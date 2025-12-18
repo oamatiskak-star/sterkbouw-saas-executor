@@ -13,7 +13,6 @@ export async function generateStandardPage(payload = {}) {
   const {
     route,
     title,
-    subtitle,
     kpis = [],
     actions = []
   } = payload
@@ -35,50 +34,56 @@ export async function generateStandardPage(payload = {}) {
 
   ensureDir(path.dirname(filePath))
 
-  const kpiBlocks = kpis.map((kpi, i) => `
-    <div className="card">
-      <div className="card-body">
-        <div className="subheader">${kpi.label}</div>
-        <div className="h1">${kpi.value ?? "-"}</div>
-      </div>
-    </div>
+  const kpiBlocks = kpis.map(kpi => `
+        <div className="card">
+          <div className="card-body">
+            <div className="subheader">${kpi.label}</div>
+            <div className="h1">${kpi.value}</div>
+          </div>
+        </div>
   `).join("")
 
-  const actionCards = actions.map(action => `
-    <div className="col-md-4">
-      <div className="card h-100">
-        <div className="card-body">
-          <h3 className="card-title">${action.label}</h3>
-          <p className="text-muted">${action.description ?? ""}</p>
-          <a href="${action.route}" className="btn btn-primary mt-3">
-            Openen
-          </a>
+  const actionBlocks = actions.map(action => `
+        <div className="col-md-3">
+          <div className="card card-link">
+            <div className="card-body">
+              <h3 className="card-title">${action.label}</h3>
+              <a href="${action.route}" className="btn btn-primary w-100">
+                Open
+              </a>
+            </div>
+          </div>
         </div>
-      </div>
-    </div>
   `).join("")
 
   const content = `
+import Head from "next/head"
+
 export default function Page() {
   return (
-    <div className="page-body">
-      <div className="container-xl">
+    <>
+      <Head>
+        <title>${title}</title>
+      </Head>
 
-        <div className="mb-4">
-          <h1 className="page-title">${title}</h1>
-          <div className="text-muted">${subtitle ?? ""}</div>
+      <div className="page-wrapper">
+        <div className="page-body">
+          <div className="container-xl">
+
+            <h1 className="mb-4">${title}</h1>
+
+            <div className="row row-cards mb-4">
+              ${kpiBlocks || "<p>Geen KPI’s</p>"}
+            </div>
+
+            <div className="row row-cards">
+              ${actionBlocks || "<p>Geen acties</p>"}
+            </div>
+
+          </div>
         </div>
-
-        <div className="row row-cards mb-4">
-          ${kpiBlocks}
-        </div>
-
-        <div className="row row-cards">
-          ${actionCards}
-        </div>
-
       </div>
-    </div>
+    </>
   )
 }
 `.trim()
