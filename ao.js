@@ -105,15 +105,24 @@ if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
         else {
           if (
             task.type.startsWith("generate_") ||
-            task.type.startsWith("builder_")
+            task.type.startsWith("builder_") ||
+            task.payload?.actionId?.startsWith("frontend_")
           ) {
             if (!ENABLE_FRONTEND_WRITE) {
               throw new Error("FRONTEND_WRITE_DISABLED")
             }
           }
 
-          console.log("RUN ACTION:", task.type)
-          const result = await runAction(task)
+          const actionPayload = {
+            ...task.payload,
+            task_id: task.id,
+            project_id: task.project_id
+          }
+
+          console.log("RUN ACTION:", actionPayload.actionId)
+
+          const result = await runAction(actionPayload)
+
           console.log("ACTION RESULT:", result)
         }
 
