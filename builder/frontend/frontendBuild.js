@@ -15,10 +15,12 @@ export async function frontendBuild() {
     throw new Error("GITHUB_TOKEN_ONTBREEKT")
   }
 
-  // zorg dat tmp bestaat
+  if (!process.env.GIT_AUTHOR_NAME || !process.env.GIT_AUTHOR_EMAIL) {
+    throw new Error("GIT_IDENTITY_ONTBREEKT")
+  }
+
   fs.mkdirSync("/tmp", { recursive: true })
 
-  // clone ALS repo nog niet bestaat
   if (!fs.existsSync(path.join(FRONTEND_ROOT, ".git"))) {
     console.log("FRONTEND REPO CLONE START")
     execSync(`git clone ${FRONTEND_REPO} ${FRONTEND_ROOT}`, {
@@ -26,7 +28,15 @@ export async function frontendBuild() {
     })
   }
 
-  // safety check
+  // Zet git identity lokaal in repo
+  execSync(`git config user.name "${process.env.GIT_AUTHOR_NAME}"`, {
+    cwd: FRONTEND_ROOT
+  })
+
+  execSync(`git config user.email "${process.env.GIT_AUTHOR_EMAIL}"`, {
+    cwd: FRONTEND_ROOT
+  })
+
   execSync("git status", {
     cwd: FRONTEND_ROOT,
     stdio: "inherit"
