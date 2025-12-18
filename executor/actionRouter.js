@@ -1,5 +1,6 @@
 import { runBuilder } from "../builder/index.js"
 import { createClient } from "@supabase/supabase-js"
+import { architectFullUiBuild } from "./actions/architectFullUiBuild.js"
 
 /*
 ACTION ROUTER
@@ -17,23 +18,35 @@ const supabase = createClient(
 /*
 ========================
 ACTION ALIAS MAP
-Hier lossen we alles op
 ========================
 */
 const ACTION_ALIAS = {
   generate_page: "frontend_write_file",
   generate_dashboard: "frontend_write_file",
+
   builder_run: "frontend_build",
-  builder_execute: "frontend_build"
+  builder_execute: "frontend_build",
+
+  frontend_generate_page: "frontend_generate_standard_page"
 }
 
 export async function runAction(task) {
-  try {
-    if (!task) {
-      return { status: "ignored", reason: "GEEN_TASK" }
-    }
+  if (!task) {
+    return { status: "ignored", reason: "GEEN_TASK" }
+  }
 
+  try {
     const payload = task.payload || {}
+
+    /*
+    ========================
+    ARCHITECT TAKEN
+    ========================
+    */
+    if (task.type === "architect:full_ui_pages_build") {
+      console.log("ARCHITECT FULL UI BUILD")
+      return await architectFullUiBuild(task)
+    }
 
     /*
     ========================
@@ -50,11 +63,7 @@ export async function runAction(task) {
         : null)
 
     if (!actionId) {
-      await supabase
-        .from("tasks")
-        .update({ status: "done" })
-        .eq("id", task.id)
-
+      await supabase.from("tasks").update({ status: "done" }).eq("id", task.id)
       return { status: "done", reason: "GEEN_ACTION_ID" }
     }
 
@@ -66,6 +75,8 @@ export async function runAction(task) {
     if (ACTION_ALIAS[actionId]) {
       actionId = ACTION_ALIAS[actionId]
     }
+
+    console.log("RUN ACTION:", actionId)
 
     /*
     ========================
@@ -79,15 +90,15 @@ export async function runAction(task) {
       .single()
 
     if (!gate) {
-      return { status: "blocked", reason: "DEPLOY_GATE_MIST" }
+      throw new Error("DEPLOY_GATE_MIST")
     }
 
     if (actionId.startsWith("frontend_") && gate.allow_frontend !== true) {
-      return { status: "blocked", reason: "FRONTEND_GATE_GESLOTEN" }
+      throw new Error("FRONTEND_GATE_GESLOTEN")
     }
 
     if (actionId.startsWith("builder_") && gate.allow_build !== true) {
-      return { status: "blocked", reason: "BUILD_GATE_GESLOTEN" }
+      throw new Error("BUILD_GATE_GESLOTEN")
     }
 
     /*
@@ -102,18 +113,20 @@ export async function runAction(task) {
       ...payload
     })
 
-    await supabase
-      .from("tasks")
-      .update({ status: "done" })
-      .eq("id", task.id)
+    await supabase.from("tasks").update({ status: "done" }).eq("id", task.id)
 
     return { status: "ok", actionId, result }
 
   } catch (err) {
+    console.error("ACTION FOUT:", err.message)
+
     await supabase
       .from("tasks")
-      .update({ status: "error" })
-      .eq("id", task?.id)
+      .update({
+        status: "failed",
+        error: err.message
+      })
+      .eq("id", task.id)
 
     return { status: "error", error: err.message }
   }
