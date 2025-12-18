@@ -1,13 +1,7 @@
 import fs from "fs"
 import path from "path"
-import { createClient } from "@supabase/supabase-js"
 
 const FRONTEND_ROOT = "/tmp/frontend"
-
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY
-)
 
 function ensureDir(dir) {
   if (!fs.existsSync(dir)) {
@@ -16,56 +10,73 @@ function ensureDir(dir) {
 }
 
 export async function generateStandardPage(payload = {}) {
-  const { route, title = "Pagina" } = payload
-  if (!route) throw new Error("ROUTE_ONTBREEKT")
+  const {
+    route,
+    title,
+    subtitle,
+    kpis = [],
+    actions = []
+  } = payload
+
+  if (!route) {
+    throw new Error("ROUTE_ONTBREEKT")
+  }
 
   const clean =
-    route === "/" ? "index" : route.replace(/^\//, "").replace(/\/$/, "")
+    route === "/"
+      ? "index"
+      : route.replace(/^\//, "").replace(/\/$/, "")
 
-  const filePath = path.join(FRONTEND_ROOT, "pages", `${clean}.js`)
+  const filePath = path.join(
+    FRONTEND_ROOT,
+    "pages",
+    `${clean}.js`
+  )
+
   ensureDir(path.dirname(filePath))
 
-  const { data: actions } = await supabase
-    .from("page_actions")
-    .select("label, action, target")
-    .eq("route", route)
+  const kpiBlocks = kpis.map((kpi, i) => `
+    <div className="card">
+      <div className="card-body">
+        <div className="subheader">${kpi.label}</div>
+        <div className="h1">${kpi.value ?? "-"}</div>
+      </div>
+    </div>
+  `).join("")
 
-  const buttons = (actions || [])
-    .map(
-      a => `
-        <button
-          className="btn btn-primary me-2"
-          onClick={() => window.location.href='${a.target}'}
-        >
-          ${a.label}
-        </button>
-      `
-    )
-    .join("\n")
+  const actionCards = actions.map(action => `
+    <div className="col-md-4">
+      <div className="card h-100">
+        <div className="card-body">
+          <h3 className="card-title">${action.label}</h3>
+          <p className="text-muted">${action.description ?? ""}</p>
+          <a href="${action.route}" className="btn btn-primary mt-3">
+            Openen
+          </a>
+        </div>
+      </div>
+    </div>
+  `).join("")
 
   const content = `
 export default function Page() {
   return (
-    <div>
-      <h1>${title}</h1>
+    <div className="page-body">
+      <div className="container-xl">
 
-      <div style={{ display: "flex", gap: 12, marginBottom: 24 }}>
-        ${buttons || "<span />"}
-      </div>
+        <div className="mb-4">
+          <h1 className="page-title">${title}</h1>
+          <div className="text-muted">${subtitle ?? ""}</div>
+        </div>
 
-      <div className="row row-cards">
-        <div className="col-md-3">
-          <div className="card"><div className="card-body">KPI 1</div></div>
+        <div className="row row-cards mb-4">
+          ${kpiBlocks}
         </div>
-        <div className="col-md-3">
-          <div className="card"><div className="card-body">KPI 2</div></div>
+
+        <div className="row row-cards">
+          ${actionCards}
         </div>
-        <div className="col-md-3">
-          <div className="card"><div className="card-body">KPI 3</div></div>
-        </div>
-        <div className="col-md-3">
-          <div className="card"><div className="card-body">KPI 4</div></div>
-        </div>
+
       </div>
     </div>
   )
