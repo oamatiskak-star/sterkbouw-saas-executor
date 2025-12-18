@@ -22,12 +22,12 @@ export async function architectFullUiBuild(task) {
     await runBuilder({
       actionId: "frontend_generate_standard_page",
       taskId: task.id,
-      payload: {
-        route: page.route,
-        title: page.title || "Pagina",
-        kpis: page.kpis || [],
-        actions: page.actions || []
-      }
+
+      // ⬇⬇⬇ BELANGRIJK ⬇⬇⬇
+      route: page.route,
+      title: page.title || "Pagina",
+      kpis: Array.isArray(page.kpis) ? page.kpis : [],
+      actions: Array.isArray(page.actions) ? page.actions : []
     })
   }
 
@@ -40,5 +40,8 @@ export async function architectFullUiBuild(task) {
 
   console.log("ARCHITECT UI BUILD KLAAR")
 
-  return { status: "done", pages: pages.length }
+  return {
+    status: "done",
+    pages_generated: pages.length
+  }
 }
