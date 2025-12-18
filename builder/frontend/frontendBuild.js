@@ -1,8 +1,10 @@
 import { execSync } from "child_process"
 import fs from "fs"
+import path from "path"
 
 const FRONTEND_ROOT = "/tmp/frontend"
-const FRONTEND_REPO = "https://x-access-token:" +
+const FRONTEND_REPO =
+  "https://x-access-token:" +
   process.env.GITHUB_TOKEN +
   "@github.com/oamatiskak-star/sterkbouw-saas-front.git"
 
@@ -13,13 +15,18 @@ export async function frontendBuild() {
     throw new Error("GITHUB_TOKEN_ONTBREEKT")
   }
 
-  if (!fs.existsSync(FRONTEND_ROOT)) {
+  // zorg dat tmp bestaat
+  fs.mkdirSync("/tmp", { recursive: true })
+
+  // clone ALS repo nog niet bestaat
+  if (!fs.existsSync(path.join(FRONTEND_ROOT, ".git"))) {
     console.log("FRONTEND REPO CLONE START")
     execSync(`git clone ${FRONTEND_REPO} ${FRONTEND_ROOT}`, {
       stdio: "inherit"
     })
   }
 
+  // safety check
   execSync("git status", {
     cwd: FRONTEND_ROOT,
     stdio: "inherit"
