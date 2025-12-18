@@ -16,20 +16,17 @@ export async function frontendBuild() {
 
   if (!fs.existsSync(FRONTEND_ROOT + "/.git")) {
     console.log("FRONTEND REPO CLONE START")
-    execSync(`rm -rf ${FRONTEND_ROOT}`)
     execSync(`git clone ${FRONTEND_REPO} ${FRONTEND_ROOT}`, {
       stdio: "inherit"
     })
   }
 
-  // 🔑 ZET GIT IDENTITY
-  execSync('git config user.name "AO Executor"', {
-    cwd: FRONTEND_ROOT
-  })
+  execSync('git config user.name "AO Executor"', { cwd: FRONTEND_ROOT })
   execSync('git config user.email "ao-executor@users.noreply.github.com"', {
     cwd: FRONTEND_ROOT
   })
 
+  execSync("git status", { cwd: FRONTEND_ROOT, stdio: "inherit" })
   execSync("git add .", { cwd: FRONTEND_ROOT, stdio: "inherit" })
   execSync('git commit -m "auto: generate ui" || true', {
     cwd: FRONTEND_ROOT,
