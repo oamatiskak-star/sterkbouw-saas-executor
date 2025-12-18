@@ -2,7 +2,7 @@ import fs from "fs"
 import path from "path"
 import { execSync } from "child_process"
 
-const FRONTEND_ROOT = "/app/frontend"
+const FRONTEND_ROOT = "/tmp/frontend"
 const FRONTEND_REPO =
   "https://x-access-token:" +
   process.env.GITHUB_TOKEN +
