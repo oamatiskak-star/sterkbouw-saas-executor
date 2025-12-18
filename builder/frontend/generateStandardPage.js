@@ -1,7 +1,7 @@
 import fs from "fs"
 import path from "path"
 
-const FRONTEND_ROOT = "/app/frontend"
+const FRONTEND_ROOT = "/tmp/frontend"
 
 export async function generateStandardPage(payload = {}) {
   const { route, title, actions = [] } = payload
