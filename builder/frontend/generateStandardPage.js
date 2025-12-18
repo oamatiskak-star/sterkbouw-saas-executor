@@ -36,56 +36,44 @@ export async function generateStandardPage(payload = {}) {
 
   const kpiBlocks = kpis.length
     ? kpis.map(kpi => `
-          <div className="col-md-3">
-            <div className="card">
-              <div className="card-body">
-                <div className="subheader">${kpi.label}</div>
-                <div className="h1">${kpi.value}</div>
-              </div>
-            </div>
+      <div className="col-md-3">
+        <div className="card">
+          <div className="card-body">
+            <div className="subheader">${kpi.label}</div>
+            <div className="h1">${kpi.value}</div>
           </div>
+        </div>
+      </div>
     `).join("")
     : `<div className="col-12"><p>Geen KPI’s</p></div>`
 
   const actionBlocks = actions.length
     ? actions.map(action => `
-          <div className="col-md-3">
-            <a href="${action.route}" className="card card-link">
-              <div className="card-body text-center">
-                <h3 className="card-title">${action.label}</h3>
-                <div className="btn btn-primary mt-2 w-100">
-                  Open
-                </div>
-              </div>
-            </a>
+      <div className="col-md-3">
+        <a href="${action.route}" className="card card-link">
+          <div className="card-body text-center">
+            <h3 className="card-title">${action.label}</h3>
+            <div className="btn btn-primary mt-2 w-100">
+              Open
+            </div>
           </div>
+        </a>
+      </div>
     `).join("")
     : `<div className="col-12"><p>Geen acties</p></div>`
 
   const content = `
-import Head from "next/head"
-
 export default function Page() {
   return (
     <>
-      <Head>
-        <title>${title}</title>
-      </Head>
+      <h1 className="mb-4">${title}</h1>
 
-      <div className="page-body">
-        <div className="container-xl">
+      <div className="row row-cards mb-4">
+        ${kpiBlocks}
+      </div>
 
-          <h1 className="mb-4">${title}</h1>
-
-          <div className="row row-cards mb-4">
-            ${kpiBlocks}
-          </div>
-
-          <div className="row row-cards">
-            ${actionBlocks}
-          </div>
-
-        </div>
+      <div className="row row-cards">
+        ${actionBlocks}
       </div>
     </>
   )
