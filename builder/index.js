@@ -38,9 +38,8 @@ export async function runBuilder(payload = {}) {
 
       /*
       ========================
-      NIEUW – PAGINA GENERATIE
+      PAGINA – SIMPEL (oud)
       ========================
-      frontend_write_file
       */
       case "frontend_write_file": {
         const m = await import("./frontend/generatePage.js")
@@ -49,9 +48,18 @@ export async function runBuilder(payload = {}) {
 
       /*
       ========================
-      NIEUW – FRONTEND BUILD
+      PAGINA – STANDAARD MET KPI + KNOPPEN (nieuw)
       ========================
-      frontend_build
+      */
+      case "frontend_generate_standard_page": {
+        const m = await import("./frontend/generateStandardPage.js")
+        return await m.generateStandardPage(payload)
+      }
+
+      /*
+      ========================
+      FRONTEND BUILD
+      ========================
       */
       case "frontend_build": {
         const m = await import("./frontend/frontendBuild.js")
