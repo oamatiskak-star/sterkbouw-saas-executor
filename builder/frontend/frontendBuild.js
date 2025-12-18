@@ -26,13 +26,24 @@ export async function frontendBuild() {
     cwd: FRONTEND_ROOT
   })
 
-  execSync("git status", { cwd: FRONTEND_ROOT, stdio: "inherit" })
-  execSync("git add .", { cwd: FRONTEND_ROOT, stdio: "inherit" })
-  execSync('git commit -m "auto: generate ui" || true', {
+  // 👉 DIT IS DE SLEUTEL
+  execSync("git add -A", {
     cwd: FRONTEND_ROOT,
     stdio: "inherit"
   })
-  execSync("git push", { cwd: FRONTEND_ROOT, stdio: "inherit" })
+
+  execSync(
+    'git commit -m "auto: generate ui" || echo "nothing to commit"',
+    {
+      cwd: FRONTEND_ROOT,
+      stdio: "inherit"
+    }
+  )
+
+  execSync("git push", {
+    cwd: FRONTEND_ROOT,
+    stdio: "inherit"
+  })
 
   console.log("FRONTEND BUILD DONE")
   return { status: "done" }
