@@ -12,149 +12,149 @@ STABIEL
 */
 
 const supabase = createClient(
-process.env.SUPABASE_URL,
-process.env.SUPABASE_SERVICE_ROLE_KEY
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
 )
 
 /*
 ACTION ALIAS MAP
+– expliciete frontend koppelingen
 */
 const ACTION_ALIAS = {
-generate_page: "frontend_write_file",
-generate_dashboard: "frontend_write_file",
+  generate_page: "frontend_generate_standard_page",
+  generate_dashboard: "frontend_generate_standard_page",
 
-builder_run: "frontend_build",
-builder_execute: "frontend_build",
+  builder_run: "frontend_build",
+  builder_execute: "frontend_build",
 
-frontend_generate_page: "frontend_generate_standard_page"
+  frontend_generate_page: "frontend_generate_standard_page",
+
+  // NIEUW – frontend orchestration
+  frontend_structure_normalize: "frontend_sync_navigation",
+  frontend_canonical_fix: "frontend_apply_global_layout_github",
+  frontend_canonical_commit: "frontend_build"
 }
 
 export async function runAction(task) {
-if (!task) {
-return { status: "ignored", reason: "GEEN_TASK" }
-}
+  if (!task) {
+    return { status: "ignored", reason: "GEEN_TASK" }
+  }
 
-try {
-const payload = task.payload || {}
+  try {
+    const payload = task.payload || {}
 
-/*
-ARCHITECT TAKEN
-VOLLEDIG GEISOLEERD
+    /*
+    ARCHITECT TAKEN
+    VOLLEDIG GEISOLEERD
+    */
+    if (task.type === "architect:full_ui_pages_build") {
+      console.log("ARCHITECT FULL UI BUILD START")
 
-*/
-if (task.type === "architect:full_ui_pages_build") {
-console.log("ARCHITECT FULL UI BUILD START")
+      try {
+        const result = await architectFullUiBuild(task)
 
-try {
-const result = await architectFullUiBuild(task)
+        await supabase
+          .from("tasks")
+          .update({ status: "done" })
+          .eq("id", task.id)
 
-await supabase
-.from("tasks")
-.update({ status: "done" })
-.eq("id", task.id)
+        return {
+          status: "ok",
+          actionId: "architect_full_ui_pages_build",
+          result
+        }
+      } catch (err) {
+        await supabase
+          .from("tasks")
+          .update({
+            status: "failed",
+            error: err.message
+          })
+          .eq("id", task.id)
 
-return {
-status: "ok",
-actionId: "architect_full_ui_pages_build",
-result
-}
+        throw err
+      }
+    }
 
-} catch (err) {
-await supabase
-.from("tasks")
-.update({
-status: "failed",
-error: err.message
-})
-.eq("id", task.id)
+    /*
+    ACTION ID AFLEIDING
+    */
+    let actionId =
+      payload.actionId ||
+      (task.type
+        ? task.type
+            .toLowerCase()
+            .replace(/[^a-z0-9_]+/g, "")
+            .replace(/^_|_$/g, "")
+        : null)
 
-throw err
-}
-}
+    if (!actionId) {
+      await supabase
+        .from("tasks")
+        .update({ status: "done" })
+        .eq("id", task.id)
 
-/*
-ACTION ID AFLEIDING
+      return { status: "done", reason: "GEEN_ACTION_ID" }
+    }
 
-*/
-let actionId =
-payload.actionId ||
-(task.type
-? task.type
-.toLowerCase()
-.replace(/[^a-z0-9]+/g, "")
-.replace(/^|_$/g, "")
-: null)
+    /*
+    ALIAS TOE PASSEN
+    */
+    if (ACTION_ALIAS[actionId]) {
+      actionId = ACTION_ALIAS[actionId]
+    }
 
-if (!actionId) {
-await supabase
-.from("tasks")
-.update({ status: "done" })
-.eq("id", task.id)
+    console.log("RUN ACTION:", actionId)
 
-return { status: "done", reason: "GEEN_ACTION_ID" }
-}
+    /*
+    DEPLOY GATE
+    */
+    const { data: gate, error: gateError } = await supabase
+      .from("deploy_gate")
+      .select("allow_frontend, allow_build")
+      .eq("id", 1)
+      .single()
 
-/*
-ALIAS TOE PASSEN
+    if (gateError || !gate) {
+      throw new Error("DEPLOY_GATE_MIST")
+    }
 
-*/
-if (ACTION_ALIAS[actionId]) {
-actionId = ACTION_ALIAS[actionId]
-}
+    if (actionId.startsWith("frontend_") && gate.allow_frontend !== true) {
+      throw new Error("FRONTEND_GATE_GESLOTEN")
+    }
 
-console.log("RUN ACTION:", actionId)
+    if (actionId.startsWith("builder_") && gate.allow_build !== true) {
+      throw new Error("BUILD_GATE_GESLOTEN")
+    }
 
-/*
-DEPLOY GATE
+    /*
+    BUILDER EXECUTIE
+    */
+    const result = await runBuilder({
+      actionId,
+      taskId: task.id,
+      originalType: task.type,
+      ...payload
+    })
 
-*/
-const { data: gate, error: gateError } = await supabase
-.from("deploy_gate")
-.select("allow_frontend, allow_build")
-.eq("id", 1)
-.single()
+    await supabase
+      .from("tasks")
+      .update({ status: "done" })
+      .eq("id", task.id)
 
-if (gateError || !gate) {
-throw new Error("DEPLOY_GATE_MIST")
-}
+    return { status: "ok", actionId, result }
 
-if (actionId.startsWith("frontend_") && gate.allow_frontend !== true) {
-throw new Error("FRONTEND_GATE_GESLOTEN")
-}
+  } catch (err) {
+    console.error("ACTION FOUT:", err.message)
 
-if (actionId.startsWith("builder_") && gate.allow_build !== true) {
-throw new Error("BUILD_GATE_GESLOTEN")
-}
+    await supabase
+      .from("tasks")
+      .update({
+        status: "failed",
+        error: err.message
+      })
+      .eq("id", task.id)
 
-/*
-BUILDER EXECUTIE
-
-*/
-const result = await runBuilder({
-actionId,
-taskId: task.id,
-originalType: task.type,
-...payload
-})
-
-await supabase
-.from("tasks")
-.update({ status: "done" })
-.eq("id", task.id)
-
-return { status: "ok", actionId, result }
-
-} catch (err) {
-console.error("ACTION FOUT:", err.message)
-
-await supabase
-.from("tasks")
-.update({
-status: "failed",
-error: err.message
-})
-.eq("id", task.id)
-
-return { status: "error", error: err.message }
-}
+    return { status: "error", error: err.message }
+  }
 }
