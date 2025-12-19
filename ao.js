@@ -1,4 +1,6 @@
 import express from "express"
+import fs from "fs"
+import path from "path"
 import { createClient } from "@supabase/supabase-js"
 
 // BESTAANDE BESTANDEN – ECHTE PADEN
@@ -6,6 +8,17 @@ import { runAction } from "./executor/actionRouter.js"
 import { architectFullUiBuild } from "./actions/architectFullUiBuild.js"
 import { startArchitectSystemScan } from "./architect/systemScanner.js"
 import { startForceBuild } from "./architect/forceBuild.js"
+
+/*
+========================
+STRICT MODE CONFIG
+========================
+*/
+const STRICT_MODE = true
+
+const REQUIRE_ACTION_ID = true
+const REQUIRE_ROUTE_EXISTS = true
+const REQUIRE_ACTION_HANDLER = true
 
 /*
 ========================
@@ -18,6 +31,18 @@ const PORT = process.env.PORT || 8080
 if (!AO_ROLE) {
   console.error("AO_ROLE ontbreekt. Service stopt.")
   process.exit(1)
+}
+
+if (!process.env.SUPABASE_URL) {
+  throw new Error("ENV_MISSING_SUPABASE_URL")
+}
+
+if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+  throw new Error("ENV_MISSING_SUPABASE_SERVICE_ROLE_KEY")
+}
+
+if (!process.env.AO_PROJECT_ROOT) {
+  throw new Error("ENV_MISSING_AO_PROJECT_ROOT")
 }
 
 /*
@@ -40,6 +65,35 @@ const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
 )
+
+/*
+========================
+FRONTEND ROUTES PAD
+========================
+*/
+const FRONTEND_PAGES_PATH = path.join(
+  process.env.AO_PROJECT_ROOT,
+  "sterkbouw-saas-front",
+  "pages"
+)
+
+/*
+========================
+UTILS
+========================
+*/
+function assert(condition, code) {
+  if (!condition) throw new Error(code)
+}
+
+function routeExists(route) {
+  const clean = route.replace(/^\/+/g, "")
+  const filePath = path.join(
+    FRONTEND_PAGES_PATH,
+    clean === "" ? "index.js" : `${clean}.js`
+  )
+  return fs.existsSync(filePath)
+}
 
 /*
 ========================
@@ -117,11 +171,12 @@ if (AO_ROLE === "ARCHITECT") {
 
 /*
 ========================
-EXECUTOR MODE
+EXECUTOR MODE – STRICT
 ========================
 */
 if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
   console.log("AO EXECUTOR gestart")
+  console.log("STRICT MODE:", STRICT_MODE)
 
   async function pollTasks() {
     const { data: tasks, error } = await supabase
@@ -129,66 +184,93 @@ if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
       .select("*")
       .eq("status", "open")
       .eq("assigned_to", "executor")
+      .order("created_at", { ascending: true })
       .limit(1)
 
     if (error || !tasks || tasks.length === 0) return
 
     const task = tasks[0]
 
-    console.log("EXECUTE TASK:", task.type, task.id)
-
-    await supabase
-      .from("tasks")
-      .update({ status: "running" })
-      .eq("id", task.id)
+    console.log("TASK_START", task.id, task.type || task.action_id)
 
     try {
+      assert(task.status === "open", "TASK_NOT_OPEN")
+
+      if (REQUIRE_ACTION_ID) {
+        assert(task.action_id || task.type, "ACTION_ID_MISSING")
+      }
+
+      await supabase
+        .from("tasks")
+        .update({ status: "running" })
+        .eq("id", task.id)
+
+      /*
+      ========================
+      ARCHITECT TASKS
+      ========================
+      */
       if (task.type === "architect:system_full_scan") {
         await startArchitectSystemScan()
-
-        await supabase
-          .from("tasks")
-          .update({ status: "done" })
-          .eq("id", task.id)
-
-        return
       }
 
-      if (task.type === "architect:force_build") {
+      else if (task.type === "architect:force_build") {
         await startForceBuild(task.project_id)
-
-        await supabase
-          .from("tasks")
-          .update({ status: "done" })
-          .eq("id", task.id)
-
-        return
       }
 
-      // FRONTEND WRITE GATE
-      if (
-        task.type.startsWith("frontend_") &&
-        ENABLE_FRONTEND_WRITE !== true
-      ) {
-        throw new Error("FRONTEND_WRITE_DISABLED")
+      /*
+      ========================
+      ROUTE VALIDATION TASKS
+      ========================
+      */
+      else if (task.action_type === "route") {
+        assert(task.route, "ROUTE_MISSING")
+
+        if (REQUIRE_ROUTE_EXISTS) {
+          assert(routeExists(task.route), "ROUTE_NOT_FOUND")
+        }
       }
 
-      // HIER ZIT DE BELANGRIJKSTE FIX:
-      // runAction krijgt het VOLLEDIGE task object
-      await runAction(task)
+      /*
+      ========================
+      ACTION TASKS
+      ========================
+      */
+      else {
+        if (
+          task.type &&
+          task.type.startsWith("frontend_") &&
+          ENABLE_FRONTEND_WRITE !== true
+        ) {
+          throw new Error("FRONTEND_WRITE_DISABLED")
+        }
+
+        await runAction(task)
+      }
+
+      await supabase
+        .from("tasks")
+        .update({
+          status: "done",
+          finished_at: new Date().toISOString()
+        })
+        .eq("id", task.id)
+
+      console.log("TASK_DONE", task.id)
 
     } catch (err) {
-      console.error("EXECUTOR ERROR:", err.message)
+      console.error("TASK_FAILED", task.id, err.message)
 
       await supabase
         .from("tasks")
         .update({
           status: "failed",
-          error: err.message
+          error: err.message,
+          finished_at: new Date().toISOString()
         })
         .eq("id", task.id)
 
-      return
+      if (STRICT_MODE) return
     }
   }
 
