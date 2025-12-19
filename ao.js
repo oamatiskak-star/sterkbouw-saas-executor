@@ -124,16 +124,18 @@ if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
   console.log("AO EXECUTOR gestart")
 
   async function pollTasks() {
-    const { data: tasks } = await supabase
+    const { data: tasks, error } = await supabase
       .from("tasks")
       .select("*")
       .eq("status", "open")
       .eq("assigned_to", "executor")
       .limit(1)
 
-    if (!tasks || tasks.length === 0) return
+    if (error || !tasks || tasks.length === 0) return
 
     const task = tasks[0]
+
+    console.log("EXECUTE TASK:", task.type, task.id)
 
     await supabase
       .from("tasks")
@@ -143,31 +145,41 @@ if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
     try {
       if (task.type === "architect:system_full_scan") {
         await startArchitectSystemScan()
-      } else if (task.type === "architect:force_build") {
-        await startForceBuild(task.project_id)
-      } else {
-        if (
-          task.type.startsWith("generate_") ||
-          task.payload?.actionId?.startsWith("frontend_")
-        ) {
-          if (!ENABLE_FRONTEND_WRITE) {
-            throw new Error("FRONTEND_WRITE_DISABLED")
-          }
-        }
 
-        await runAction({
-          ...task.payload,
-          task_id: task.id,
-          project_id: task.project_id
-        })
+        await supabase
+          .from("tasks")
+          .update({ status: "done" })
+          .eq("id", task.id)
+
+        return
       }
 
-      await supabase
-        .from("tasks")
-        .update({ status: "done" })
-        .eq("id", task.id)
+      if (task.type === "architect:force_build") {
+        await startForceBuild(task.project_id)
+
+        await supabase
+          .from("tasks")
+          .update({ status: "done" })
+          .eq("id", task.id)
+
+        return
+      }
+
+      // FRONTEND WRITE GATE
+      if (
+        task.type.startsWith("frontend_") &&
+        ENABLE_FRONTEND_WRITE !== true
+      ) {
+        throw new Error("FRONTEND_WRITE_DISABLED")
+      }
+
+      // HIER ZIT DE BELANGRIJKSTE FIX:
+      // runAction krijgt het VOLLEDIGE task object
+      await runAction(task)
 
     } catch (err) {
+      console.error("EXECUTOR ERROR:", err.message)
+
       await supabase
         .from("tasks")
         .update({
@@ -175,6 +187,8 @@ if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
           error: err.message
         })
         .eq("id", task.id)
+
+      return
     }
   }
 
