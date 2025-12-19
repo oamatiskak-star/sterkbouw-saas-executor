@@ -2,9 +2,9 @@ import express from "express"
 import { createClient } from "@supabase/supabase-js"
 
 import { runAction } from "./actionRouter.js"
-import { startArchitectLoop } from "../architect/index.js"
-import { startArchitectSystemScan } from "../architect/systemScanner.js"
-import { startForceBuild } from "../architect/forceBuild.js"
+import { startArchitectLoop } from "./architect/index.js"
+import { startArchitectSystemScan } from "./architect/systemScanner.js"
+import { startForceBuild } from "./architect/forceBuild.js"
 
 /*
 ========================
@@ -15,13 +15,13 @@ const AO_ROLE = process.env.AO_ROLE
 const PORT = process.env.PORT || 8080
 
 if (!AO_ROLE) {
-  console.error("AO_ROLE ontbreekt. Service stopt.")
+  console.error("AO_ROLE ontbreekt")
   process.exit(1)
 }
 
 /*
 ========================
-FRONTEND WRITE FLAG
+WRITE FLAG
 ========================
 */
 const ENABLE_FRONTEND_WRITE =
@@ -42,7 +42,7 @@ const supabase = createClient(
 
 /*
 ========================
-ROOT + PING
+PING
 ========================
 */
 app.get("/", (_, res) => {
@@ -55,61 +55,68 @@ app.get("/ping", (_, res) => {
 
 /*
 ========================
-UI API – KNOPPENMATRIX
+EXECUTOR LOOP
 ========================
 */
-app.get("/api/ui/:page_slug", async (req, res) => {
-  const { page_slug } = req.params
+if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
+  async function pollTasks() {
+    const { data: tasks } = await supabase
+      .from("tasks")
+      .select("*")
+      .eq("status", "open")
+      .eq("assigned_to", "executor")
+      .order("created_at", { ascending: true })
+      .limit(1)
 
-  const { data, error } = await supabase
-    .from("page_buttons")
-    .select(`
-      sort_order,
-      ui_buttons (
-        label,
-        icon,
-        action_type,
-        action_target,
-        variant
-      )
-    `)
-    .eq("page_slug", page_slug)
-    .order("sort_order", { ascending: true })
+    if (!tasks || tasks.length === 0) return
 
-  if (error) {
-    return res.status(500).json({ ok: false, error: error.message })
-  }
+    const task = tasks[0]
 
-  const buttons = (data || []).map(row => ({
-    label: row.ui_buttons.label,
-    icon: row.ui_buttons.icon,
-    type: row.ui_buttons.action_type || "route",
-    action: row.ui_buttons.action_target,
-    style: row.ui_buttons.variant || "primary"
-  }))
+    await supabase
+      .from("tasks")
+      .update({ status: "running" })
+      .eq("id", task.id)
 
-  res.json({
-    ok: true,
-    components: [
-      {
-        type: "action_group",
-        config: {
-          title: "Acties",
-          buttons,
-          ui: {
-            wrapper: "card",
-            shadow: "soft",
-            buttons: {
-              primary: { bg: "#F5C400", text: "#000", radius: 10 },
-              secondary: { bg: "#EEF1F6", text: "#1C2434", radius: 10 },
-              danger: { bg: "#E5533D", text: "#fff", radius: 10 }
-            }
+    try {
+      if (task.type === "architect:system_full_scan") {
+        await startArchitectSystemScan()
+      } else if (task.type === "architect:force_build") {
+        await startForceBuild(task.project_id)
+      } else {
+        if (
+          task.type.startsWith("generate_") ||
+          task.type.startsWith("builder_")
+        ) {
+          if (!ENABLE_FRONTEND_WRITE) {
+            throw new Error("FRONTEND_WRITE_DISABLED")
           }
         }
+
+        await runAction({
+          ...task.payload,
+          task_id: task.id,
+          project_id: task.project_id
+        })
       }
-    ]
-  })
-})
+
+      await supabase
+        .from("tasks")
+        .update({ status: "done" })
+        .eq("id", task.id)
+
+    } catch (err) {
+      await supabase
+        .from("tasks")
+        .update({
+          status: "failed",
+          error: err.message
+        })
+        .eq("id", task.id)
+    }
+  }
+
+  setInterval(pollTasks, 3000)
+}
 
 /*
 ========================
@@ -122,79 +129,11 @@ if (AO_ROLE === "ARCHITECT") {
 
 /*
 ========================
-EXECUTOR LOOP
-========================
-*/
-if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
-  async function pollTasks() {
-    try {
-      const { data: tasks, error } = await supabase
-        .from("tasks")
-        .select("id, type, payload, status, assigned_to, project_id")
-        .eq("status", "open")
-        .eq("assigned_to", "executor")
-        .order("created_at", { ascending: true })
-        .limit(1)
-
-      if (error || !tasks || tasks.length === 0) return
-
-      const task = tasks[0]
-
-      await supabase
-        .from("tasks")
-        .update({ status: "running" })
-        .eq("id", task.id)
-
-      try {
-        if (task.type === "architect:system_full_scan") {
-          await startArchitectSystemScan()
-        } else if (task.type === "architect:force_build") {
-          await startForceBuild(task.project_id)
-        } else {
-          if (
-            task.type.startsWith("generate_") ||
-            task.type.startsWith("builder_") ||
-            task.payload?.actionId?.startsWith("frontend_")
-          ) {
-            if (!ENABLE_FRONTEND_WRITE) {
-              throw new Error("FRONTEND_WRITE_DISABLED")
-            }
-          }
-
-          await runAction({
-            ...task.payload,
-            task_id: task.id,
-            project_id: task.project_id
-          })
-        }
-
-        await supabase
-          .from("tasks")
-          .update({ status: "done" })
-          .eq("id", task.id)
-
-      } catch (err) {
-        await supabase
-          .from("tasks")
-          .update({
-            status: "failed",
-            error: err.message || "ONBEKENDE_FOUT"
-          })
-          .eq("id", task.id)
-      }
-    } catch {}
-  }
-
-  setInterval(pollTasks, 3000)
-}
-
-/*
-========================
 SERVER START
 ========================
 */
 app.listen(PORT, () => {
   console.log("AO SERVICE LIVE")
   console.log("ROLE:", AO_ROLE)
-  console.log("POORT:", PORT)
+  console.log("PORT:", PORT)
 })
