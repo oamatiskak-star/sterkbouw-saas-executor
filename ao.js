@@ -160,11 +160,11 @@ if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
 
     const task = tasks[0]
 
-    console.log("TASK_START", task.id, task.type || task.action_id)
+    console.log("TASK_START", task.id, task.type)
 
     try {
       assert(task.status === "open", "TASK_NOT_OPEN")
-      assert(task.action_type || task.type, "ACTION_TYPE_MISSING")
+      assert(task.type, "TASK_TYPE_MISSING")
 
       await supabase
         .from("tasks")
@@ -186,29 +186,34 @@ if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
 
       /*
       ========================
-      ROUTE VALIDATION
+      ROUTE VALIDATIE TASKS
       ========================
       */
-      else if (task.action_type === "route") {
-        assert(task.route, "ROUTE_MISSING")
+      else if (
+        task.type === "route:validate" ||
+        task.type === "ui:route"
+      ) {
+        const route = task.payload?.route
+        assert(route, "ROUTE_MISSING_IN_PAYLOAD")
 
         const { data: page } = await supabase
           .from("pages")
           .select("id")
-          .eq("route", task.route)
+          .eq("route", route)
           .maybeSingle()
 
-        assert(page, "ROUTE_NOT_IN_PAGES")
+        assert(page, "ROUTE_NOT_FOUND_IN_PAGES")
       }
 
       /*
       ========================
-      ACTION EXECUTION
+      ACTION TASKS
       ========================
       */
       else {
+        assert(task.action_id, "ACTION_ID_MISSING")
+
         if (
-          task.type &&
           task.type.startsWith("frontend_") &&
           ENABLE_FRONTEND_WRITE !== true
         ) {
