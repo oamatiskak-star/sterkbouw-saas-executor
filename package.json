@@ -2,11 +2,11 @@
   "name": "sterkbouw-saas-executor",
   "version": "1.0.0",
   "type": "module",
-  "main": "executor/ao.js",
+  "main": "ao.js",
   "scripts": {
-    "start": "node executor/ao.js",
-    "dev": "nodemon executor/ao.js",
-    "check": "node --check executor/ao.js"
+    "start": "node ao.js",
+    "dev": "nodemon ao.js",
+    "check": "node --check ao.js"
   },
   "dependencies": {
     "axios": "^1.6.7",
