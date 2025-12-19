@@ -6,4 +6,4 @@ WORKDIR /app
 COPY . .
 RUN npm install
 
-CMD ["node", "ao.js"]
+CMD ["node", "executor/ao.js"]
