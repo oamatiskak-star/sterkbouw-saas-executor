@@ -1,6 +1,4 @@
 import express from "express"
-import fs from "fs"
-import path from "path"
 import { createClient } from "@supabase/supabase-js"
 
 // BESTAANDE BESTANDEN – ECHTE PADEN
@@ -15,10 +13,6 @@ STRICT MODE CONFIG
 ========================
 */
 const STRICT_MODE = true
-
-const REQUIRE_ACTION_ID = true
-const REQUIRE_ROUTE_EXISTS = true
-const REQUIRE_ACTION_HANDLER = true
 
 /*
 ========================
@@ -39,10 +33,6 @@ if (!process.env.SUPABASE_URL) {
 
 if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
   throw new Error("ENV_MISSING_SUPABASE_SERVICE_ROLE_KEY")
-}
-
-if (!process.env.AO_PROJECT_ROOT) {
-  throw new Error("ENV_MISSING_AO_PROJECT_ROOT")
 }
 
 /*
@@ -68,31 +58,11 @@ const supabase = createClient(
 
 /*
 ========================
-FRONTEND ROUTES PAD
-========================
-*/
-const FRONTEND_PAGES_PATH = path.join(
-  process.env.AO_PROJECT_ROOT,
-  "sterkbouw-saas-front",
-  "pages"
-)
-
-/*
-========================
 UTILS
 ========================
 */
 function assert(condition, code) {
   if (!condition) throw new Error(code)
-}
-
-function routeExists(route) {
-  const clean = route.replace(/^\/+/g, "")
-  const filePath = path.join(
-    FRONTEND_PAGES_PATH,
-    clean === "" ? "index.js" : `${clean}.js`
-  )
-  return fs.existsSync(filePath)
 }
 
 /*
@@ -157,7 +127,6 @@ ARCHITECT MODE
 */
 if (AO_ROLE === "ARCHITECT") {
   console.log("AO ARCHITECT gestart")
-  console.log("ArchitectFullUiBuild actief")
 
   architectFullUiBuild({
     payload: {
@@ -195,10 +164,7 @@ if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
 
     try {
       assert(task.status === "open", "TASK_NOT_OPEN")
-
-      if (REQUIRE_ACTION_ID) {
-        assert(task.action_id || task.type, "ACTION_ID_MISSING")
-      }
+      assert(task.action_type || task.type, "ACTION_TYPE_MISSING")
 
       await supabase
         .from("tasks")
@@ -220,20 +186,24 @@ if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
 
       /*
       ========================
-      ROUTE VALIDATION TASKS
+      ROUTE VALIDATION
       ========================
       */
       else if (task.action_type === "route") {
         assert(task.route, "ROUTE_MISSING")
 
-        if (REQUIRE_ROUTE_EXISTS) {
-          assert(routeExists(task.route), "ROUTE_NOT_FOUND")
-        }
+        const { data: page } = await supabase
+          .from("pages")
+          .select("id")
+          .eq("route", task.route)
+          .maybeSingle()
+
+        assert(page, "ROUTE_NOT_IN_PAGES")
       }
 
       /*
       ========================
-      ACTION TASKS
+      ACTION EXECUTION
       ========================
       */
       else {
