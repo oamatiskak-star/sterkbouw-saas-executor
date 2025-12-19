@@ -1,9 +1,8 @@
 import express from "express"
 import { createClient } from "@supabase/supabase-js"
 
-// ✅ BESTAANDE BESTANDEN – ECHTE PADEN
+// BESTAANDE BESTANDEN – ECHTE PADEN
 import { runAction } from "./executor/actionRouter.js"
-
 import { architectFullUiBuild } from "./actions/architectFullUiBuild.js"
 import { startArchitectSystemScan } from "./architect/systemScanner.js"
 import { startForceBuild } from "./architect/forceBuild.js"
@@ -49,6 +48,53 @@ PING
 */
 app.get("/", (_, res) => res.send("OK"))
 app.get("/ping", (_, res) => res.send("AO LIVE : " + AO_ROLE))
+
+/*
+========================
+UI API – KNOPPENMATRIX
+========================
+*/
+app.get("/api/ui/:page_slug", async (req, res) => {
+  const { page_slug } = req.params
+
+  const { data, error } = await supabase
+    .from("page_buttons")
+    .select(`
+      sort_order,
+      ui_buttons (
+        label,
+        icon,
+        action_type,
+        action_target,
+        variant
+      )
+    `)
+    .eq("page_slug", page_slug)
+    .order("sort_order", { ascending: true })
+
+  if (error) {
+    return res.status(500).json({ ok: false, error: error.message })
+  }
+
+  res.json({
+    ok: true,
+    components: [
+      {
+        type: "action_group",
+        config: {
+          title: "Acties",
+          buttons: (data || []).map(r => ({
+            label: r.ui_buttons.label,
+            icon: r.ui_buttons.icon,
+            type: r.ui_buttons.action_type || "route",
+            action: r.ui_buttons.action_target,
+            style: r.ui_buttons.variant || "primary"
+          }))
+        }
+      }
+    ]
+  })
+})
 
 /*
 ========================
@@ -126,22 +172,3 @@ if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
         .from("tasks")
         .update({
           status: "failed",
-          error: err.message
-        })
-        .eq("id", task.id)
-    }
-  }
-
-  setInterval(pollTasks, 3000)
-}
-
-/*
-========================
-SERVER START
-========================
-*/
-app.listen(PORT, () => {
-  console.log("AO SERVICE LIVE")
-  console.log("ROLE:", AO_ROLE)
-  console.log("PORT:", PORT)
-})
