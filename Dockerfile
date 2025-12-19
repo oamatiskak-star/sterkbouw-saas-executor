@@ -7,4 +7,4 @@ RUN npm install
 
 COPY . .
 
-CMD ["node", "executor/ao.js"]
+CMD ["node", "ao.js"]
