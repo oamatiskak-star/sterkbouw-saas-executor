@@ -19,7 +19,7 @@ function ensureFrontendRepo() {
     throw new Error("GITHUB_TOKEN_ONTBREEKT")
   }
 
-  if (!fs.existsSync(FRONTEND_ROOT + "/.git")) {
+  if (!fs.existsSync(path.join(FRONTEND_ROOT, ".git"))) {
     console.log("FRONTEND REPO CLONE (generatePage)")
     execSync(`git clone ${FRONTEND_REPO} ${FRONTEND_ROOT}`, {
       stdio: "inherit"
@@ -39,20 +39,18 @@ export async function generatePage(payload = {}) {
 
   // 2. ROUTE OPSCHONEN
   const clean =
-    route === "/"
-      ? "index"
-      : route.replace(/^\//, "").replace(/\/$/, "")
+    route === "/" ? "index" : route.replace(/^\//, "").replace(/\/$/, "")
 
-  const filePath = path.join(
-    FRONTEND_ROOT,
-    "pages",
-    `${clean}.js`
-  )
+  // 3. TARGET PAD (ALTIJD index.js)
+  const filePath =
+    clean === "index"
+      ? path.join(FRONTEND_ROOT, "pages", "index.js")
+      : path.join(FRONTEND_ROOT, "pages", clean, "index.js")
 
-  // 3. MAPSTRUCTUUR AANMAKEN
+  // 4. MAPSTRUCTUUR AANMAKEN
   ensureDir(path.dirname(filePath))
 
-  // 4. PAGINA CONTENT
+  // 5. PAGINA CONTENT
   const content = `
 export default function Page() {
   return (
@@ -64,7 +62,7 @@ export default function Page() {
 }
 `.trim()
 
-  // 5. SCHRIJF BESTAND
+  // 6. SCHRIJF BESTAND
   fs.writeFileSync(filePath, content)
 
   console.log("FRONTEND PAGE WRITTEN:", filePath)
