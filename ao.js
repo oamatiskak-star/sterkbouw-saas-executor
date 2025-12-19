@@ -1,10 +1,11 @@
 import express from "express"
 import { createClient } from "@supabase/supabase-js"
 
-import { runAction } from "./actionRouter.js"
-import { startArchitectLoop } from "./architect/index.js"
-import { startArchitectSystemScan } from "./architect/systemScanner.js"
-import { startForceBuild } from "./architect/forceBuild.js"
+// 🔴 ENIGE AANPASSING: PADEN EXPLICIET NAAR /executor
+import { runAction } from "./executor/actionRouter.js"
+import { startArchitectLoop } from "./executor/architect/index.js"
+import { startArchitectSystemScan } from "./executor/architect/systemScanner.js"
+import { startForceBuild } from "./executor/architect/forceBuild.js"
 
 /*
 ========================
@@ -60,7 +61,6 @@ app.get("/ping", (_, res) => {
 /*
 ========================
 UI API – KNOPPENMATRIX
-NIEUW, NIET INGRIJPEND
 ========================
 */
 app.get("/api/ui/:page_slug", async (req, res) => {
@@ -166,12 +166,10 @@ if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
         if (task.type === "architect:system_full_scan") {
           console.log("ARCHITECT SYSTEM FULL SCAN START")
           await startArchitectSystemScan()
-        } 
-        else if (task.type === "architect:force_build") {
+        } else if (task.type === "architect:force_build") {
           console.log("ARCHITECT FORCE BUILD START:", task.project_id)
           await startForceBuild(task.project_id)
-        } 
-        else {
+        } else {
           if (
             task.type.startsWith("generate_") ||
             task.type.startsWith("builder_") ||
@@ -189,9 +187,7 @@ if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
           }
 
           console.log("RUN ACTION:", actionPayload.actionId)
-
           const result = await runAction(actionPayload)
-
           console.log("ACTION RESULT:", result)
         }
 
