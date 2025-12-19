@@ -172,3 +172,22 @@ if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
         .from("tasks")
         .update({
           status: "failed",
+          error: err.message
+        })
+        .eq("id", task.id)
+    }
+  }
+
+  setInterval(pollTasks, 3000)
+}
+
+/*
+========================
+SERVER START
+========================
+*/
+app.listen(PORT, () => {
+  console.log("AO SERVICE LIVE")
+  console.log("ROLE:", AO_ROLE)
+  console.log("PORT:", PORT)
+})
