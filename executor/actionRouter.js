@@ -1,14 +1,13 @@
 import { runBuilder } from "../builder/index.js"
 import { createClient } from "@supabase/supabase-js"
 import { architectFullUiBuild } from "../actions/architectFullUiBuild.js"
-import { sendTelegramMessage } from "../integrations/telegram.js"
+import { sendTelegram } from "../integrations/telegramSender.js"
 
 /*
 AO EXECUTOR – ACTION ROUTER
 ENIGE INGANG
 SQL-FIRST
 STRICT MODE
-VOLLEDIG AUTONOOM
 TELEGRAM + CHATGPT GESTUURD
 */
 
@@ -24,9 +23,7 @@ MODES
 */
 const MODES = {
   STRICT: true,
-  TELEGRAM: true,
-  AUTONOMOUS: true,
-  CHATGPT_DRIVEN: true
+  TELEGRAM: true
 }
 
 /*
@@ -49,36 +46,23 @@ const ACTION_ALIAS = {
 
   // backend
   run_initialization: "backend_run_initialization",
-  start_calculation: "backend_start_calculation",
-
-  // telegram / commandRouter
-  scan_source: "system_scan_source",
-  scan: "system_scan_source",
-  health_check: "system_health_check",
-  health: "system_health_check",
-  classify_source: "system_classify_source",
-  build_structure: "system_build_structure",
-  write_code: "system_write_code"
+  start_calculation: "backend_start_calculation"
 }
 
 /*
 ====================================================
 SYSTEM / COMMAND ACTIONS
 – GEEN BUILDER
-– WEL ZICHTBAAR RESULTAAT
+– WEL TERUGKOPPELING
 ====================================================
 */
 const SYSTEM_ACTIONS = {
-  system_scan_source: true,
-  system_health_check: true,
-  system_classify_source: true,
-  system_build_structure: true,
-  system_write_code: true,
-
   architect_full_ui_pages_build: true,
   system_post_deploy_verify: true,
   backend_run_initialization: true,
-  backend_start_calculation: true
+  backend_start_calculation: true,
+  system_health: true,
+  system_status: true
 }
 
 /*
@@ -90,10 +74,10 @@ async function updateTask(taskId, data) {
   await supabase.from("tasks").update(data).eq("id", taskId)
 }
 
-async function telegramLog(message) {
+async function telegramLog(chatId, message) {
   if (!MODES.TELEGRAM) return
   try {
-    await sendTelegramMessage(message)
+    await sendTelegram(chatId, message)
   } catch (_) {}
 }
 
@@ -103,11 +87,10 @@ EXECUTOR ENTRYPOINT
 ====================================================
 */
 export async function runAction(task) {
-  if (!task) {
-    return { status: "ignored", reason: "GEEN_TASK" }
-  }
+  if (!task) return
 
   const payload = task.payload || {}
+  const chatId = payload.chat_id || null
 
   let actionId =
     payload.actionId ||
@@ -128,7 +111,7 @@ export async function runAction(task) {
   }
 
   console.log("AO RUN ACTION:", actionId)
-  await telegramLog(`▶️ AO start: ${actionId}`)
+  if (chatId) await telegramLog(chatId, `▶️ Start: ${actionId}`)
 
   /*
   ====================================================
@@ -139,24 +122,33 @@ export async function runAction(task) {
     try {
       const result = await architectFullUiBuild(task)
       await updateTask(task.id, { status: "done" })
-      await telegramLog("✅ Architect klaar")
-      return { status: "ok", actionId, result }
+      if (chatId) await telegramLog(chatId, "✅ UI opgebouwd")
+      return
     } catch (err) {
       await updateTask(task.id, { status: "failed", error: err.message })
-      await telegramLog("❌ Architect fout: " + err.message)
+      if (chatId) await telegramLog(chatId, "❌ Architect fout: " + err.message)
       throw err
     }
   }
 
   /*
   ====================================================
-  SYSTEM / TELEGRAM / CHATGPT COMMANDS
+  SYSTEM / STATUS / HEALTH
   ====================================================
   */
   if (SYSTEM_ACTIONS[actionId]) {
     await updateTask(task.id, { status: "done" })
-    await telegramLog(`🧠 System actie uitgevoerd: ${actionId}`)
-    return { status: "ok", actionId }
+
+    if (chatId) {
+      if (actionId === "system_status") {
+        await telegramLog(chatId, "Systeem draait. Executor actief.")
+      } else if (actionId === "system_health") {
+        await telegramLog(chatId, "Health OK. Geen fouten gemeld.")
+      } else {
+        await telegramLog(chatId, `🧠 Actie uitgevoerd: ${actionId}`)
+      }
+    }
+    return
   }
 
   /*
@@ -198,12 +190,12 @@ export async function runAction(task) {
     })
 
     await updateTask(task.id, { status: "done" })
-    await telegramLog(`✅ Uitgevoerd: ${actionId}`)
-    return { status: "ok", actionId, result }
+    if (chatId) await telegramLog(chatId, `✅ Klaar: ${actionId}`)
+    return result
 
   } catch (err) {
     await updateTask(task.id, { status: "failed", error: err.message })
-    await telegramLog(`❌ Fout in ${actionId}: ${err.message}`)
+    if (chatId) await telegramLog(chatId, `❌ Fout: ${err.message}`)
     throw err
   }
 }
