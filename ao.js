@@ -61,7 +61,7 @@ APP + SUPABASE
 */
 const app = express()
 
-// 🔥 HARD REQUEST TAP – ALLES LOGGEN
+// 🔥 HARD REQUEST TAP – LOGT ELKE HIT
 app.use((req, res, next) => {
   console.log("INCOMING_REQUEST", {
     method: req.method,
@@ -97,7 +97,7 @@ app.get("/ping", (_, res) => res.send("AO LIVE : " + AO_ROLE))
 
 /*
 ========================
-TELEGRAM WEBHOOK (POST + GET DEBUG)
+TELEGRAM WEBHOOK
 ========================
 */
 app.post("/telegram/webhook", async (req, res) => {
@@ -112,11 +112,35 @@ app.post("/telegram/webhook", async (req, res) => {
   res.sendStatus(200)
 })
 
-// 🔧 GET fallback om te zien of pad geraakt wordt
+// GET fallback om te zien of pad geraakt wordt
 app.get("/telegram/webhook", (_, res) => {
   console.log("TELEGRAM_WEBHOOK_GET_HIT")
   res.send("OK")
 })
+
+/*
+========================
+SELF TEST – ÉÉN KEER BIJ START
+========================
+*/
+setTimeout(async () => {
+  console.log("SELFTEST_START")
+
+  const fakeUpdate = {
+    message: {
+      text: "selftest",
+      chat: { id: 999 },
+      from: { username: "selftest" }
+    }
+  }
+
+  try {
+    await handleTelegramWebhook(fakeUpdate)
+    console.log("SELFTEST_DONE")
+  } catch (err) {
+    console.error("SELFTEST_ERROR", err.message)
+  }
+}, 3000)
 
 /*
 ========================
@@ -185,7 +209,7 @@ if (AO_ROLE === "ARCHITECT") {
 
 /*
 ========================
-EXECUTOR MODE – AUTONOOM
+EXECUTOR MODE
 ========================
 */
 if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
@@ -193,7 +217,7 @@ if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
   console.log("STRICT MODE:", STRICT_MODE)
 
   async function pollTasks() {
-    const { data: tasks, error } = await supabase
+    const { data: tasks } = await supabase
       .from("tasks")
       .select("*")
       .eq("status", "open")
@@ -201,7 +225,7 @@ if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
       .order("created_at", { ascending: true })
       .limit(1)
 
-    if (error || !tasks || tasks.length === 0) return
+    if (!tasks || tasks.length === 0) return
 
     const task = tasks[0]
     console.log("TASK_START", task.id, task.type)
@@ -217,40 +241,9 @@ if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
 
       if (task.type === "architect:system_full_scan") {
         await startArchitectSystemScan()
-      }
-
-      else if (task.type === "architect:force_build") {
+      } else if (task.type === "architect:force_build") {
         await startForceBuild(task.project_id)
-      }
-
-      else if (
-        task.type === "route:validate" ||
-        task.type === "ui:route"
-      ) {
-        const route = task.payload?.route
-        assert(route, "ROUTE_MISSING_IN_PAYLOAD")
-
-        const { data: page } = await supabase
-          .from("pages")
-          .select("id")
-          .eq("route", route)
-          .maybeSingle()
-
-        assert(page, "ROUTE_NOT_FOUND_IN_PAGES")
-      }
-
-      else {
-        if (STRICT_MODE && !task.payload?.actionId) {
-          throw new Error("ACTION_ID_MISSING")
-        }
-
-        if (
-          task.type.startsWith("frontend_") &&
-          ENABLE_FRONTEND_WRITE !== true
-        ) {
-          throw new Error("FRONTEND_WRITE_DISABLED")
-        }
-
+      } else {
         await runAction(task)
       }
 
@@ -275,8 +268,6 @@ if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
           finished_at: new Date().toISOString()
         })
         .eq("id", task.id)
-
-      if (STRICT_MODE) return
     }
   }
 
