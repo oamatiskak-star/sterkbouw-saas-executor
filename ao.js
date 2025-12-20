@@ -17,6 +17,7 @@ IMPORTS – TELEGRAM
 ========================
 */
 import { handleTelegramWebhook } from "./integrations/telegramWebhook.js"
+import { sendTelegram } from "./integrations/telegramSender.js"
 
 /*
 ========================
@@ -61,7 +62,6 @@ APP + SUPABASE
 */
 const app = express()
 
-// 🔥 HARD REQUEST TAP – LOGT ELKE HIT
 app.use((req, res, next) => {
   console.log("INCOMING_REQUEST", {
     method: req.method,
@@ -112,7 +112,6 @@ app.post("/telegram/webhook", async (req, res) => {
   res.sendStatus(200)
 })
 
-// GET fallback om te zien of pad geraakt wordt
 app.get("/telegram/webhook", (_, res) => {
   console.log("TELEGRAM_WEBHOOK_GET_HIT")
   res.send("OK")
@@ -120,7 +119,7 @@ app.get("/telegram/webhook", (_, res) => {
 
 /*
 ========================
-SELF TEST – ÉÉN KEER BIJ START
+SELFTEST – ÉÉN KEER
 ========================
 */
 setTimeout(async () => {
@@ -144,59 +143,10 @@ setTimeout(async () => {
 
 /*
 ========================
-UI API – KNOPPENMATRIX
-========================
-*/
-app.get("/api/ui/:page_slug", async (req, res) => {
-  const { page_slug } = req.params
-
-  const { data, error } = await supabase
-    .from("page_buttons")
-    .select(`
-      sort_order,
-      ui_buttons (
-        label,
-        icon,
-        action_type,
-        action_target,
-        variant
-      )
-    `)
-    .eq("page_slug", page_slug)
-    .order("sort_order", { ascending: true })
-
-  if (error) {
-    return res.status(500).json({ ok: false, error: error.message })
-  }
-
-  res.json({
-    ok: true,
-    components: [
-      {
-        type: "action_group",
-        config: {
-          title: "Acties",
-          buttons: (data || []).map(r => ({
-            label: r.ui_buttons.label,
-            icon: r.ui_buttons.icon,
-            type: r.ui_buttons.action_type || "route",
-            action: r.ui_buttons.action_target,
-            style: r.ui_buttons.variant || "primary"
-          }))
-        }
-      }
-    ]
-  })
-})
-
-/*
-========================
 ARCHITECT MODE
 ========================
 */
 if (AO_ROLE === "ARCHITECT") {
-  console.log("AO ARCHITECT gestart")
-
   architectFullUiBuild({
     payload: {
       pages: [
@@ -228,12 +178,8 @@ if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
     if (!tasks || tasks.length === 0) return
 
     const task = tasks[0]
-    console.log("TASK_START", task.id, task.type)
 
     try {
-      assert(task.status === "open", "TASK_NOT_OPEN")
-      assert(task.type, "TASK_TYPE_MISSING")
-
       await supabase
         .from("tasks")
         .update({ status: "running" })
@@ -255,11 +201,7 @@ if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
         })
         .eq("id", task.id)
 
-      console.log("TASK_DONE", task.id)
-
     } catch (err) {
-      console.error("TASK_FAILED", task.id, err.message)
-
       await supabase
         .from("tasks")
         .update({
@@ -276,14 +218,15 @@ if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
 
 /*
 ========================
-SERVER START
+SERVER START + TELEGRAM MELDING
 ========================
 */
-app.listen(PORT, "0.0.0.0", () => {
+app.listen(PORT, "0.0.0.0", async () => {
   console.log("AO SERVICE LIVE")
   console.log("ROLE:", AO_ROLE)
   console.log("PORT:", PORT)
-})try {
+
+  try {
     await sendTelegram(
       process.env.TELEGRAM_CHAT_ID,
       `AO Executor LIVE\nRole: ${AO_ROLE}\nPort: ${PORT}`
