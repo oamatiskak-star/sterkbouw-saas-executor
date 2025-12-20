@@ -6,7 +6,6 @@ import { runAction } from "./executor/actionRouter.js"
 import { architectFullUiBuild } from "./actions/architectFullUiBuild.js"
 import { startArchitectSystemScan } from "./architect/systemScanner.js"
 import { startForceBuild } from "./architect/forceBuild.js"
-import { startMailWorkflowScheduler } from "./executor/actions/runMailWorkflowInterval.js"
 
 /*
 ========================
@@ -251,11 +250,6 @@ if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
   }
 
   setInterval(pollTasks, 3000)
-
-  // ========================
-  // MAIL WORKFLOW SCHEDULER
-  // ========================
-  startMailWorkflowScheduler(10000) // elke 10 seconden
 }
 
 /*
