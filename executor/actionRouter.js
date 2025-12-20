@@ -106,6 +106,7 @@ export async function runAction(task) {
   ====================================================
   */
   let actionId =
+    task.action ||          // ✅ NIEUW: PRIORITEIT
     payload.actionId ||
     task.action_id ||
     task.type ||
