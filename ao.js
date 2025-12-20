@@ -283,4 +283,12 @@ app.listen(PORT, "0.0.0.0", () => {
   console.log("AO SERVICE LIVE")
   console.log("ROLE:", AO_ROLE)
   console.log("PORT:", PORT)
+})try {
+    await sendTelegram(
+      process.env.TELEGRAM_CHAT_ID,
+      `AO Executor LIVE\nRole: ${AO_ROLE}\nPort: ${PORT}`
+    )
+  } catch (e) {
+    console.error("TELEGRAM_STARTUP_NOTIFY_FAILED", e.message)
+  }
 })
