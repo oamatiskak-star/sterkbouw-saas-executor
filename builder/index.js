@@ -8,7 +8,7 @@ BUILDER ENTRY
 export async function runBuilder(payload = {}) {
   let actionId = payload.actionId
 
-  // Veiligheid: normaliseer actionId
+  // normaliseer
   if (actionId) {
     actionId = actionId
       .toLowerCase()
@@ -21,7 +21,7 @@ export async function runBuilder(payload = {}) {
 
       /*
       ========================
-      BESTAANDE FRONTEND ACTIES
+      FRONTEND
       ========================
       */
       case "frontend_install_tabler": {
@@ -44,34 +44,33 @@ export async function runBuilder(payload = {}) {
         return await m.generateTablerLogin(payload)
       }
 
-      /*
-      ========================
-      PAGINA – SIMPEL
-      ========================
-      */
       case "frontend_write_file": {
         const m = await import("./frontend/generatePage.js")
         return await m.generatePage(payload)
       }
 
-      /*
-      ========================
-      PAGINA – STANDAARD MET KPI + KNOPPEN
-      ========================
-      */
       case "frontend_generate_standard_page": {
         const m = await import("./frontend/generateStandardPage.js")
         return await m.generateStandardPage(payload)
       }
 
-      /*
-      ========================
-      FRONTEND BUILD
-      ========================
-      */
       case "frontend_build": {
         const m = await import("./frontend/frontendBuild.js")
         return await m.frontendBuild(payload)
+      }
+
+      /*
+      ========================
+      BACKEND / SYSTEM (NO-OP HIER)
+      – WORDEN IN EXECUTOR AFGEHANDELD
+      ========================
+      */
+      case "backend_run_initialization":
+      case "backend_start_calculation":
+      case "system_post_deploy_verify":
+      case "system_status":
+      case "system_health": {
+        return { status: "ok", actionId }
       }
 
       /*
@@ -84,6 +83,6 @@ export async function runBuilder(payload = {}) {
         return { status: "ignored", actionId }
     }
   } catch (err) {
-    return { status: "error", error: err.message }
+    return { status: "error", actionId, error: err.message }
   }
 }
