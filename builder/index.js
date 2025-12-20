@@ -21,6 +21,21 @@ export async function runBuilder(payload = {}) {
 
       /*
       ========================
+      PROJECT / REKENWOLK
+      ========================
+      */
+      case "project_scan": {
+        const m = await import("./actions/PROJECT_SCAN.js")
+        return await m.default(payload)
+      }
+
+      case "start_rekenwolk": {
+        const m = await import("./actions/START_REKENWOLK.js")
+        return await m.default(payload)
+      }
+
+      /*
+      ========================
       FRONTEND
       ========================
       */
