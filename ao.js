@@ -21,21 +21,9 @@ if (!process.env.SUPABASE_SERVICE_ROLE_KEY) throw new Error("ENV_MISSING_SUPABAS
 
 const app = express()
 
-/*
-====================================
-CRITISCH – BODY PARSER EERST
-====================================
-*/
 app.use(express.json({ type: "*/*" }))
 
-/*
-====================================
-TELEGRAM WEBHOOK – ABSOLUUT VOORAAN
-====================================
-*/
-app.get("/telegram/webhook", (_, res) => {
-  res.status(200).send("OK")
-})
+app.get("/telegram/webhook", (_, res) => res.status(200).send("OK"))
 
 app.post("/telegram/webhook", async (req, res) => {
   try {
@@ -46,39 +34,19 @@ app.post("/telegram/webhook", async (req, res) => {
   res.sendStatus(200)
 })
 
-/*
-====================================
-OPTIONELE REQUEST LOG (NA WEBHOOK)
-====================================
-*/
 app.use((req, res, next) => {
   console.log("INCOMING_REQUEST", req.method, req.path)
   next()
 })
 
-/*
-====================================
-SUPABASE
-====================================
-*/
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
 )
 
-/*
-====================================
-PING
-====================================
-*/
 app.get("/", (_, res) => res.send("OK"))
 app.get("/ping", (_, res) => res.send("AO LIVE : " + AO_ROLE))
 
-/*
-====================================
-ARCHITECT MODE
-====================================
-*/
 if (AO_ROLE === "ARCHITECT") {
   architectFullUiBuild({
     payload: {
@@ -92,64 +60,121 @@ if (AO_ROLE === "ARCHITECT") {
 
 /*
 ====================================
-EXECUTOR MODE
+BESTAANDE TASKS POLL (ONGEWIJZIGD)
+====================================
+*/
+async function pollLegacyTasks() {
+  const { data: tasks } = await supabase
+    .from("tasks")
+    .select("*")
+    .eq("status", "open")
+    .eq("assigned_to", "executor")
+    .limit(1)
+
+  if (!tasks || tasks.length === 0) return
+
+  const task = tasks[0]
+
+  try {
+    await supabase.from("tasks").update({ status: "running" }).eq("id", task.id)
+
+    if (task.type === "architect:system_full_scan") {
+      await startArchitectSystemScan()
+    } else if (task.type === "architect:force_build") {
+      await startForceBuild(task.project_id)
+    } else {
+      await runAction(task)
+    }
+
+    await supabase
+      .from("tasks")
+      .update({ status: "done", finished_at: new Date().toISOString() })
+      .eq("id", task.id)
+
+  } catch (err) {
+    await supabase
+      .from("tasks")
+      .update({
+        status: "failed",
+        error: err.message,
+        finished_at: new Date().toISOString()
+      })
+      .eq("id", task.id)
+  }
+}
+
+/*
+====================================
+NIEUWE EXECUTOR_TASKS POLL (FIX)
+====================================
+*/
+async function pollExecutorTasks() {
+  const { data: tasks } = await supabase
+    .from("executor_tasks")
+    .select("*")
+    .eq("status", "open")
+    .or("assigned_to.eq.executor,assigned_to.is.null")
+    .order("created_at", { ascending: true })
+    .limit(1)
+
+  if (!tasks || tasks.length === 0) return
+
+  const task = tasks[0]
+
+  console.log("EXECUTOR_TASK_PICKED", task.action, task.id)
+
+  try {
+    await supabase
+      .from("executor_tasks")
+      .update({
+        status: "running",
+        started_at: new Date().toISOString()
+      })
+      .eq("id", task.id)
+
+    await runAction(task)
+
+    await supabase
+      .from("executor_tasks")
+      .update({
+        status: "done",
+        finished_at: new Date().toISOString()
+      })
+      .eq("id", task.id)
+
+  } catch (err) {
+    console.error("EXECUTOR_TASK_ERROR", err.message)
+
+    await supabase
+      .from("executor_tasks")
+      .update({
+        status: "failed",
+        error: err.message,
+        finished_at: new Date().toISOString()
+      })
+      .eq("id", task.id)
+  }
+}
+
+/*
+====================================
+EXECUTOR MODE – KEEP ALIVE
 ====================================
 */
 if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
   console.log("AO EXECUTOR gestart")
 
-  async function pollTasks() {
-    const { data: tasks } = await supabase
-      .from("tasks")
-      .select("*")
-      .eq("status", "open")
-      .eq("assigned_to", "executor")
-      .limit(1)
+  setInterval(async () => {
+    await pollLegacyTasks()
+    await pollExecutorTasks()
+  }, 3000)
 
-    if (!tasks || tasks.length === 0) return
-
-    const task = tasks[0]
-
-    try {
-      await supabase
-        .from("tasks")
-        .update({ status: "running" })
-        .eq("id", task.id)
-
-      if (task.type === "architect:system_full_scan") {
-        await startArchitectSystemScan()
-      } else if (task.type === "architect:force_build") {
-        await startForceBuild(task.project_id)
-      } else {
-        await runAction(task)
-      }
-
-      await supabase
-        .from("tasks")
-        .update({
-          status: "done",
-          finished_at: new Date().toISOString()
-        })
-        .eq("id", task.id)
-
-    } catch (err) {
-      await supabase
-        .from("tasks")
-        .update({
-          status: "failed",
-          error: err.message,
-          finished_at: new Date().toISOString()
-        })
-        .eq("id", task.id)
-    }
-  }
-
-  setInterval(pollTasks, 3000)
+  process.stdin.resume()
 }
 
 /*
 ====================================
-SERVER START + STARTUP MELDING
+SERVER START
 ====================================
 */
 app.listen(PORT, "0.0.0.0", async () => {
