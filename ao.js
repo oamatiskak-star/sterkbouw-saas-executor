@@ -13,7 +13,7 @@ import { startForceBuild } from "./architect/forceBuild.js"
 
 /*
 ========================
-IMPORTS – TELEGRAM + LLM
+IMPORTS – TELEGRAM
 ========================
 */
 import { handleTelegramWebhook } from "./integrations/telegramWebhook.js"
@@ -90,12 +90,16 @@ TELEGRAM WEBHOOK
 ========================
 */
 app.post("/telegram/webhook", async (req, res) => {
+  console.log("TELEGRAM_WEBHOOK_HIT")
+
   try {
-    await handleTelegramWebhook(req, res)
+    await handleTelegramWebhook(req.body)
   } catch (err) {
     console.error("TELEGRAM_WEBHOOK_ERROR", err.message)
-    res.sendStatus(200)
   }
+
+  // Telegram vereist altijd 200
+  res.sendStatus(200)
 })
 
 /*
@@ -195,11 +199,6 @@ if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
         .update({ status: "running" })
         .eq("id", task.id)
 
-      /*
-      ========================
-      ARCHITECT TAKEN
-      ========================
-      */
       if (task.type === "architect:system_full_scan") {
         await startArchitectSystemScan()
       }
@@ -208,11 +207,6 @@ if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
         await startForceBuild(task.project_id)
       }
 
-      /*
-      ========================
-      ROUTE VALIDATIE
-      ========================
-      */
       else if (
         task.type === "route:validate" ||
         task.type === "ui:route"
@@ -229,11 +223,6 @@ if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
         assert(page, "ROUTE_NOT_FOUND_IN_PAGES")
       }
 
-      /*
-      ========================
-      ACTION ROUTER
-      ========================
-      */
       else {
         if (STRICT_MODE && !task.payload?.actionId) {
           throw new Error("ACTION_ID_MISSING")
@@ -280,7 +269,7 @@ if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
 
 /*
 ========================
-SERVER START (RAILWAY FIX)
+SERVER START
 ========================
 */
 app.listen(PORT, "0.0.0.0", () => {
