@@ -1,4 +1,4 @@
-// routes: sterkbouw-saas-executor/integrations/telegramWebhook.js
+// ROUTE: sterkbouw-saas-executor/integrations/telegramWebhook.js
 
 import { createClient } from "@supabase/supabase-js"
 import { interpretTelegramMessage } from "../llm/telegramInterpreter.js"
@@ -10,14 +10,14 @@ const supabase = createClient(
 )
 
 export async function handleTelegramWebhook(req, res) {
-  const msg = req.body.message
+  const msg = req.body?.message
   if (!msg || !msg.text) return res.sendStatus(200)
 
   const chatId = msg.chat.id.toString()
-  const username = msg.from.username || null
+  const username = msg.from?.username || null
   const text = msg.text
 
-  // 1. Opslaan inkomend bericht
+  // 1. Log inkomend bericht
   const { data: log } = await supabase
     .from("telegram_messages")
     .insert({
@@ -29,14 +29,14 @@ export async function handleTelegramWebhook(req, res) {
     .select()
     .single()
 
-  // 2. Interpreteren via ChatGPT
+  // 2. Interpreteren via ChatGPT Core
   const interpreted = await interpretTelegramMessage(text)
 
-  // 3. Terugpraten naar gebruiker
-  if (interpreted.actionId === "system_clarify") {
+  // 3. Terugpraten (volledig ChatGPT-achtig)
+  if (interpreted.type === "system:clarify") {
     await sendTelegramMessage(
       chatId,
-      interpreted.payload.question
+      interpreted.payload.message || "Kun je dit verder toelichten?"
     )
 
     await supabase
@@ -53,13 +53,13 @@ export async function handleTelegramWebhook(req, res) {
 
   await sendTelegramMessage(
     chatId,
-    `Ik heb dit begrepen:\n\n` +
+    `Ik begrijp je.\n\n` +
     `Actie: ${interpreted.actionId}\n` +
-    `Type: ${interpreted.type}\n\n` +
-    `Ik ga dit nu uitvoeren.`
+    `Ik ga dit voorbereiden.\n\n` +
+    `Bevestig met: bevestig`
   )
 
-  // 4. Update log
+  // 4. Update interpretatie-log
   await supabase
     .from("telegram_messages")
     .update({
@@ -69,19 +69,22 @@ export async function handleTelegramWebhook(req, res) {
     })
     .eq("id", log.id)
 
-  // 5. Task aanmaken voor executor
+  // 5. Task klaarzetten (nog niet uitvoeren)
   await supabase.from("tasks").insert({
     type: interpreted.type,
     action_id: interpreted.actionId,
     status: "open",
-    payload: interpreted.payload,
+    payload: {
+      ...interpreted.payload,
+      chat_id: chatId
+    },
     assigned_to: "executor",
     source: "telegram"
   })
 
   await sendTelegramMessage(
     chatId,
-    "Taak is aangemaakt en staat in de wachtrij."
+    "Taak is aangemaakt. Wacht op bevestiging of aanvullende instructie."
   )
 
   res.sendStatus(200)
