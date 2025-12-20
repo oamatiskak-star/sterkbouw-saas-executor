@@ -1,6 +1,6 @@
 import fetch from "node-fetch"
 
-export async function sendTelegramMessage(chatId, text) {
+export async function sendTelegram(chatId, text) {
   if (!process.env.TELEGRAM_BOT_TOKEN) {
     console.error("TELEGRAM_BOT_TOKEN ontbreekt")
     return
