@@ -32,7 +32,10 @@ const ACTION_ALIAS = {
   // NIEUW – frontend orchestration
   frontend_structure_normalize: "frontend_sync_navigation",
   frontend_canonical_fix: "frontend_apply_global_layout_github",
-  frontend_canonical_commit: "frontend_build"
+  frontend_canonical_commit: "frontend_build",
+
+  // NIEUW – initialization flow
+  run_initialization: "backend_run_initialization"
 }
 
 export async function runAction(task) {
@@ -111,7 +114,7 @@ export async function runAction(task) {
     */
     const { data: gate, error: gateError } = await supabase
       .from("deploy_gate")
-      .select("allow_frontend, allow_build")
+      .select("allow_frontend, allow_build, allow_backend")
       .eq("id", 1)
       .single()
 
@@ -127,8 +130,12 @@ export async function runAction(task) {
       throw new Error("BUILD_GATE_GESLOTEN")
     }
 
+    if (actionId.startsWith("backend_") && gate.allow_backend !== true) {
+      throw new Error("BACKEND_GATE_GESLOTEN")
+    }
+
     /*
-    BUILDER EXECUTIE
+    BUILDER / BACKEND EXECUTIE
     */
     const result = await runBuilder({
       actionId,
