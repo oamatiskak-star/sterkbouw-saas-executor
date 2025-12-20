@@ -9,19 +9,39 @@ const supabase = createClient(
 
 export async function handleTelegramWebhook(body) {
   try {
+    // ========================
+    // HARD DEBUG – RAW INPUT
+    // ========================
+    console.log("TG_RAW", JSON.stringify(body))
+
     const msg = body?.message
     if (!msg || !msg.text) {
-      console.log("TELEGRAM_UPDATE_ZONDER_TEKST")
+      console.log("TG_NO_TEXT")
+      return
+    }
+
+    // ========================
+    // ANTI ECHO / BOT FILTER
+    // ========================
+    if (msg.from?.is_bot) {
+      console.log("TG_IGNORED_BOT_MESSAGE")
       return
     }
 
     const chatId = msg.chat.id.toString()
     const username = msg.from?.username || null
-    const text = msg.text
+    const text = msg.text.trim()
 
-    console.log("TELEGRAM_ONTVANGEN:", chatId, text)
+    console.log("TG_TEXT_RECEIVED", chatId, text)
 
-    // 1. Log inkomend bericht
+    // ========================
+    // HARD ECHO – BEWIJS ONTVANGST
+    // ========================
+    await sendTelegram(chatId, `ONTvangen: ${text}`)
+
+    // ========================
+    // LOG IN SUPABASE
+    // ========================
     const { data: log, error: logError } = await supabase
       .from("telegram_messages")
       .insert({
@@ -38,13 +58,17 @@ export async function handleTelegramWebhook(body) {
       return
     }
 
+    // ========================
+    // INTERPRETER
+    // ========================
     let interpreted
     try {
       interpreted = await interpretTelegramMessage(text)
+      console.log("TG_INTERPRETED", interpreted)
     } catch (err) {
       await sendTelegram(
         chatId,
-        "Ik kan je bericht nu niet verwerken. Formuleer het anders."
+        "Interpreter faalde. Probeer het anders te formuleren."
       )
 
       await supabase
@@ -63,7 +87,9 @@ export async function handleTelegramWebhook(body) {
       return
     }
 
-    // 2. Clarify-modus
+    // ========================
+    // CLARIFY MODE
+    // ========================
     if (interpreted.type === "system:clarify") {
       await sendTelegram(
         chatId,
@@ -82,23 +108,17 @@ export async function handleTelegramWebhook(body) {
       return
     }
 
-    // 3. Terugkoppeling
+    // ========================
+    // TERUGKOPPELING
+    // ========================
     await sendTelegram(
       chatId,
-      `Ik begrijp je.\n\nActie: ${interpreted.actionId}\n\nIk zet dit klaar.`
+      `Actie herkend: ${interpreted.actionId}`
     )
 
-    // 4. Update log
-    await supabase
-      .from("telegram_messages")
-      .update({
-        interpreted_action: interpreted.actionId,
-        payload: interpreted.payload,
-        status: "interpreted"
-      })
-      .eq("id", log.id)
-
-    // 5. Task aanmaken
+    // ========================
+    // TASK AANMAKEN
+    // ========================
     await supabase.from("tasks").insert({
       type: interpreted.type,
       action_id: interpreted.actionId,
@@ -111,10 +131,16 @@ export async function handleTelegramWebhook(body) {
       source: "telegram"
     })
 
-    await sendTelegram(
-      chatId,
-      "Taak is aangemaakt en klaar voor uitvoering."
-    )
+    await sendTelegram(chatId, "Taak aangemaakt en klaar voor uitvoering.")
+
+    await supabase
+      .from("telegram_messages")
+      .update({
+        interpreted_action: interpreted.actionId,
+        payload: interpreted.payload,
+        status: "task_created"
+      })
+      .eq("id", log.id)
 
   } catch (fatal) {
     console.error("TELEGRAM_WEBHOOK_FATAL", fatal.message)
