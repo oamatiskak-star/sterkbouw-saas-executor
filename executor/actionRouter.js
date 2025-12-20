@@ -3,6 +3,10 @@ import { createClient } from "@supabase/supabase-js"
 import { architectFullUiBuild } from "../actions/architectFullUiBuild.js"
 import { sendTelegram } from "../integrations/telegramSender.js"
 
+// ✅ TOEGEVOEGD: systeem handlers
+import { handleProjectScan } from "../handlers/projectScan.js"
+import { handleStartRekenwolk } from "../handlers/startRekenwolk.js"
+
 /*
 AO EXECUTOR – ACTION ROUTER
 ENIGE INGANG
@@ -92,6 +96,28 @@ export async function runAction(task) {
   const payload = task.payload || {}
   const chatId = payload.chat_id || null
 
+  /*
+  ====================================================
+  🔥 SYSTEEMACTIES ZONDER action_id (FIX)
+  ====================================================
+  */
+  if (task.action === "PROJECT_SCAN") {
+    console.log("AO SYSTEM ACTION: PROJECT_SCAN")
+    await handleProjectScan(task)
+    return
+  }
+
+  if (task.action === "START_REKENWOLK") {
+    console.log("AO SYSTEM ACTION: START_REKENWOLK")
+    await handleStartRekenwolk(task)
+    return
+  }
+
+  /*
+  ====================================================
+  BESTAANDE ACTION ID LOGICA (ONGEWIJZIGD)
+  ====================================================
+  */
   let actionId =
     payload.actionId ||
     task.action_id ||
@@ -195,7 +221,4 @@ export async function runAction(task) {
 
   } catch (err) {
     await updateTask(task.id, { status: "failed", error: err.message })
-    if (chatId) await telegramLog(chatId, `❌ Fout: ${err.message}`)
-    throw err
-  }
-}
+    if (chatId) await telegramLog(chatId, `❌ Fo
