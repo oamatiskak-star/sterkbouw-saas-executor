@@ -1,14 +1,15 @@
 import { runBuilder } from "../builder/index.js"
 import { createClient } from "@supabase/supabase-js"
 import { architectFullUiBuild } from "../actions/architectFullUiBuild.js"
+import { sendTelegramMessage } from "../integrations/telegram.js"
 
 /*
-ACTION ROUTER
-
-ENIGE EXECUTOR INGANG
+AO EXECUTOR – ACTION ROUTER
+ENIGE INGANG
 SQL-FIRST
-DEPLOY GATE AFDWINGING
-STABIEL
+STRICT MODE
+VOLLEDIG AUTONOOM
+CHATGPT / TELEGRAM GESTUURD
 */
 
 const supabase = createClient(
@@ -17,8 +18,21 @@ const supabase = createClient(
 )
 
 /*
+====================================================
+MODUS DEFINITIES
+====================================================
+*/
+const MODES = {
+  STRICT: true,
+  TELEGRAM: true,
+  AUTONOMOUS: true,
+  CHATGPT_DRIVEN: true
+}
+
+/*
+====================================================
 ACTION ALIAS MAP
-– expliciete frontend koppelingen
+====================================================
 */
 const ACTION_ALIAS = {
   generate_page: "frontend_generate_standard_page",
@@ -28,115 +42,138 @@ const ACTION_ALIAS = {
   builder_execute: "frontend_build",
 
   frontend_generate_page: "frontend_generate_standard_page",
-
-  // NIEUW – frontend orchestration
   frontend_structure_normalize: "frontend_sync_navigation",
   frontend_canonical_fix: "frontend_apply_global_layout_github",
   frontend_canonical_commit: "frontend_build",
 
-  // NIEUW – initialization flow
-  run_initialization: "backend_run_initialization"
+  run_initialization: "backend_run_initialization",
+  start_calculation: "backend_start_calculation"
 }
 
+/*
+====================================================
+SYSTEM / ORCHESTRATION ACTIONS
+– GEEN BUILDER
+– WEL AUTONOME FLOW
+====================================================
+*/
+const SYSTEM_ACTIONS = {
+  architect_full_ui_pages_build: true,
+  builder_full_system_wire: true,
+  system_post_deploy_verify: true,
+  backend_run_initialization: true,
+  backend_start_calculation: true
+}
+
+/*
+====================================================
+HULPFUNCTIES
+====================================================
+*/
+async function updateTask(taskId, data) {
+  await supabase.from("tasks").update(data).eq("id", taskId)
+}
+
+async function telegramLog(message) {
+  if (MODES.TELEGRAM) {
+    try {
+      await sendTelegramMessage(message)
+    } catch (_) {}
+  }
+}
+
+/*
+====================================================
+EXECUTOR ENTRYPOINT
+====================================================
+*/
 export async function runAction(task) {
   if (!task) {
     return { status: "ignored", reason: "GEEN_TASK" }
   }
 
+  const payload = task.payload || {}
+
+  let actionId =
+    payload.actionId ||
+    (task.type
+      ? task.type
+          .toLowerCase()
+          .replace(/[^a-z0-9_]+/g, "_")
+          .replace(/^_|_$/g, "")
+      : null)
+
+  if (MODES.STRICT && !actionId) {
+    throw new Error("ACTION_ID_MISSING")
+  }
+
+  if (ACTION_ALIAS[actionId]) {
+    actionId = ACTION_ALIAS[actionId]
+  }
+
+  console.log("AO RUN ACTION:", actionId)
+  await telegramLog(`▶️ AO START: ${actionId}`)
+
+  /*
+  ====================================================
+  ARCHITECT – VOLLEDIG GEISOLEERD
+  ====================================================
+  */
+  if (actionId === "architect_full_ui_pages_build") {
+    try {
+      const result = await architectFullUiBuild(task)
+      await updateTask(task.id, { status: "done" })
+      await telegramLog("✅ Architect klaar")
+      return { status: "ok", actionId, result }
+    } catch (err) {
+      await updateTask(task.id, { status: "failed", error: err.message })
+      await telegramLog("❌ Architect fout: " + err.message)
+      throw err
+    }
+  }
+
+  /*
+  ====================================================
+  SYSTEM / AUTONOME ACTIONS
+  ====================================================
+  */
+  if (SYSTEM_ACTIONS[actionId]) {
+    await updateTask(task.id, { status: "done" })
+    await telegramLog(`🧠 System action uitgevoerd: ${actionId}`)
+    return { status: "ok", actionId }
+  }
+
+  /*
+  ====================================================
+  DEPLOY GATE
+  ====================================================
+  */
+  const { data: gate } = await supabase
+    .from("deploy_gate")
+    .select("allow_frontend, allow_build, allow_backend")
+    .eq("id", 1)
+    .single()
+
+  if (!gate) throw new Error("DEPLOY_GATE_MIST")
+
+  if (actionId.startsWith("frontend_") && gate.allow_frontend !== true) {
+    throw new Error("FRONTEND_GATE_GESLOTEN")
+  }
+
+  if (actionId.startsWith("builder_") && gate.allow_build !== true) {
+    throw new Error("BUILD_GATE_GESLOTEN")
+  }
+
+  if (actionId.startsWith("backend_") && gate.allow_backend !== true) {
+    throw new Error("BACKEND_GATE_GESLOTEN")
+  }
+
+  /*
+  ====================================================
+  BUILDER / BACKEND EXECUTIE
+  ====================================================
+  */
   try {
-    const payload = task.payload || {}
-
-    /*
-    ARCHITECT TAKEN
-    VOLLEDIG GEISOLEERD
-    */
-    if (task.type === "architect:full_ui_pages_build") {
-      console.log("ARCHITECT FULL UI BUILD START")
-
-      try {
-        const result = await architectFullUiBuild(task)
-
-        await supabase
-          .from("tasks")
-          .update({ status: "done" })
-          .eq("id", task.id)
-
-        return {
-          status: "ok",
-          actionId: "architect_full_ui_pages_build",
-          result
-        }
-      } catch (err) {
-        await supabase
-          .from("tasks")
-          .update({
-            status: "failed",
-            error: err.message
-          })
-          .eq("id", task.id)
-
-        throw err
-      }
-    }
-
-    /*
-    ACTION ID AFLEIDING
-    */
-    let actionId =
-      payload.actionId ||
-      (task.type
-        ? task.type
-            .toLowerCase()
-            .replace(/[^a-z0-9_]+/g, "")
-            .replace(/^_|_$/g, "")
-        : null)
-
-    if (!actionId) {
-      await supabase
-        .from("tasks")
-        .update({ status: "done" })
-        .eq("id", task.id)
-
-      return { status: "done", reason: "GEEN_ACTION_ID" }
-    }
-
-    /*
-    ALIAS TOE PASSEN
-    */
-    if (ACTION_ALIAS[actionId]) {
-      actionId = ACTION_ALIAS[actionId]
-    }
-
-    console.log("RUN ACTION:", actionId)
-
-    /*
-    DEPLOY GATE
-    */
-    const { data: gate, error: gateError } = await supabase
-      .from("deploy_gate")
-      .select("allow_frontend, allow_build, allow_backend")
-      .eq("id", 1)
-      .single()
-
-    if (gateError || !gate) {
-      throw new Error("DEPLOY_GATE_MIST")
-    }
-
-    if (actionId.startsWith("frontend_") && gate.allow_frontend !== true) {
-      throw new Error("FRONTEND_GATE_GESLOTEN")
-    }
-
-    if (actionId.startsWith("builder_") && gate.allow_build !== true) {
-      throw new Error("BUILD_GATE_GESLOTEN")
-    }
-
-    if (actionId.startsWith("backend_") && gate.allow_backend !== true) {
-      throw new Error("BACKEND_GATE_GESLOTEN")
-    }
-
-    /*
-    BUILDER / BACKEND EXECUTIE
-    */
     const result = await runBuilder({
       actionId,
       taskId: task.id,
@@ -144,24 +181,13 @@ export async function runAction(task) {
       ...payload
     })
 
-    await supabase
-      .from("tasks")
-      .update({ status: "done" })
-      .eq("id", task.id)
+    await updateTask(task.id, { status: "done" })
+    await telegramLog(`✅ Uitgevoerd: ${actionId}`)
 
     return { status: "ok", actionId, result }
-
   } catch (err) {
-    console.error("ACTION FOUT:", err.message)
-
-    await supabase
-      .from("tasks")
-      .update({
-        status: "failed",
-        error: err.message
-      })
-      .eq("id", task.id)
-
-    return { status: "error", error: err.message }
+    await updateTask(task.id, { status: "failed", error: err.message })
+    await telegramLog(`❌ Fout in ${actionId}: ${err.message}`)
+    throw err
   }
 }
