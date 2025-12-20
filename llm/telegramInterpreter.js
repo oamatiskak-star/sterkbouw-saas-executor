@@ -2,8 +2,7 @@ import OpenAI from "openai"
 
 /*
 ========================
-SAFE OPENAI INITIALISATIE
-– NOOIT CRASHEN BIJ ONTBREKEN KEY
+SAFE OPENAI INIT
 ========================
 */
 const OPENAI_KEY = process.env.OPENAI_API_KEY
@@ -15,20 +14,22 @@ if (OPENAI_KEY && OPENAI_KEY.length > 10) {
 
 /*
 ========================
-AO TELEGRAM → CHATGPT INTERPRETER
-STRICT
-AUTONOOM
-BACKWARD COMPATIBLE
+SYSTEM PROMPT
+– MAG PRATEN
+– MAG ACTIES VOORSTELLEN
+– JSON OF CHAT
 ========================
 */
-
 const SYSTEM_PROMPT = `
-Je bent AO-Architect en AO-Operator.
+Je bent AO, een autonome bouw- en ontwikkelassistent.
 
-Zet Telegram-berichten om naar uitvoerbare systeemopdrachten.
-Je mag NOOIT vrije tekst teruggeven.
+Je taak:
+1. Als de gebruiker een ACTIE vraagt: geef JSON.
+2. Als de gebruiker een VRAAG stelt of praat: geef NORMALE TEKST.
 
-Je antwoord is ALTIJD valide JSON in exact dit formaat:
+REGELS JSON:
+- Gebruik alleen JSON als er echt een actie nodig is.
+- Formaat:
 
 {
   "type": "...",
@@ -36,57 +37,15 @@ Je antwoord is ALTIJD valide JSON in exact dit formaat:
   "payload": { ... }
 }
 
-Regels:
-- actionId is VERPLICHT
-- payload bevat altijd actionId
-- Gebruik alleen toegestane acties
-- Als intentie onduidelijk is: kies system_post_deploy_verify
-
 Toegestane acties:
-- architect:full_ui_pages_build
-- builder:full_system_wire
-- backend_run_initialization
+- architect_full_ui_pages_build
 - backend_start_calculation
+- backend_run_initialization
 - frontend_generate_standard_page
 - system_post_deploy_verify
 
-Voorbeelden:
-"herbouw frontend" →
-{
-  "type": "architect:full_ui_pages_build",
-  "actionId": "architect_full_ui_pages_build",
-  "payload": {}
-}
-
-"start calculatie voor breskens" →
-{
-  "type": "backend_start_calculation",
-  "actionId": "backend_start_calculation",
-  "payload": {
-    "project": "Breskens"
-  }
-}
+Als geen actie nodig is: praat normaal terug.
 `
-
-/*
-========================
-VALIDATIE
-========================
-*/
-function validateParsed(parsed) {
-  if (!parsed) throw new Error("LEEG_RESPONSE")
-  if (!parsed.type) throw new Error("TYPE_ONTBREEKT")
-  if (!parsed.actionId) throw new Error("ACTION_ID_ONTBREEKT")
-
-  return {
-    type: parsed.type,
-    actionId: parsed.actionId,
-    payload: {
-      actionId: parsed.actionId,
-      ...(parsed.payload || {})
-    }
-  }
-}
 
 /*
 ========================
@@ -94,19 +53,12 @@ INTERPRETER
 ========================
 */
 export async function interpretTelegramMessage(text) {
-  /*
-  HARD FALLBACK ALS OPENAI NIET BESCHIKBAAR IS
-  SYSTEEM BLIJFT ALTIJD DRAAIEN
-  */
+  // ❗ HARD FALLBACK
   if (!openai) {
     return {
-      type: "system:post_deploy_verify",
-      actionId: "system_post_deploy_verify",
-      payload: {
-        actionId: "system_post_deploy_verify",
-        reason: "OPENAI_API_KEY_MISSING",
-        originalText: text
-      }
+      reply:
+        "Ik ben online, maar ChatGPT is niet gekoppeld.\n" +
+        "Controleer OPENAI_API_KEY."
     }
   }
 
@@ -116,45 +68,35 @@ export async function interpretTelegramMessage(text) {
       { role: "system", content: SYSTEM_PROMPT },
       { role: "user", content: text }
     ],
-    temperature: 0
+    temperature: 0.2
   })
 
-  const raw = completion.choices[0]?.message?.content
-
-  if (!raw) {
-    return {
-      type: "system:post_deploy_verify",
-      actionId: "system_post_deploy_verify",
-      payload: { actionId: "system_post_deploy_verify" }
-    }
+  const msg = completion.choices[0]?.message?.content
+  if (!msg) {
+    return { reply: "Ik kreeg geen antwoord. Probeer het opnieuw." }
   }
 
-  let parsed
+  // ======================
+  // JSON → ACTIE
+  // ======================
   try {
-    parsed = JSON.parse(raw)
+    const parsed = JSON.parse(msg)
+
+    if (parsed.actionId) {
+      return {
+        type: parsed.type || parsed.actionId,
+        actionId: parsed.actionId,
+        payload: parsed.payload || {}
+      }
+    }
   } catch {
-    return {
-      type: "system:post_deploy_verify",
-      actionId: "system_post_deploy_verify",
-      payload: {
-        actionId: "system_post_deploy_verify",
-        reason: "JSON_PARSE_FAIL",
-        originalText: text
-      }
-    }
+    // geen JSON = praat
   }
 
-  try {
-    return validateParsed(parsed)
-  } catch (err) {
-    return {
-      type: "system:post_deploy_verify",
-      actionId: "system_post_deploy_verify",
-      payload: {
-        actionId: "system_post_deploy_verify",
-        reason: err.message,
-        originalText: text
-      }
-    }
+  // ======================
+  // TEKST → CHAT
+  // ======================
+  return {
+    reply: msg
   }
 }
