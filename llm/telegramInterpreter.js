@@ -1,14 +1,25 @@
 import OpenAI from "openai"
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
-})
+/*
+========================
+SAFE OPENAI INITIALISATIE
+– NOOIT CRASHEN BIJ ONTBREKEN KEY
+========================
+*/
+const OPENAI_KEY = process.env.OPENAI_API_KEY
+
+let openai = null
+if (OPENAI_KEY && OPENAI_KEY.length > 10) {
+  openai = new OpenAI({ apiKey: OPENAI_KEY })
+}
 
 /*
+========================
 AO TELEGRAM → CHATGPT INTERPRETER
 STRICT
 AUTONOOM
 BACKWARD COMPATIBLE
+========================
 */
 
 const SYSTEM_PROMPT = `
@@ -58,7 +69,9 @@ Voorbeelden:
 `
 
 /*
+========================
 VALIDATIE
+========================
 */
 function validateParsed(parsed) {
   if (!parsed) throw new Error("LEEG_RESPONSE")
@@ -76,9 +89,27 @@ function validateParsed(parsed) {
 }
 
 /*
+========================
 INTERPRETER
+========================
 */
 export async function interpretTelegramMessage(text) {
+  /*
+  HARD FALLBACK ALS OPENAI NIET BESCHIKBAAR IS
+  SYSTEEM BLIJFT ALTIJD DRAAIEN
+  */
+  if (!openai) {
+    return {
+      type: "system:post_deploy_verify",
+      actionId: "system_post_deploy_verify",
+      payload: {
+        actionId: "system_post_deploy_verify",
+        reason: "OPENAI_API_KEY_MISSING",
+        originalText: text
+      }
+    }
+  }
+
   const completion = await openai.chat.completions.create({
     model: "gpt-4.1-mini",
     messages: [
@@ -88,7 +119,7 @@ export async function interpretTelegramMessage(text) {
     temperature: 0
   })
 
-  let raw = completion.choices[0]?.message?.content
+  const raw = completion.choices[0]?.message?.content
 
   if (!raw) {
     return {
@@ -101,8 +132,7 @@ export async function interpretTelegramMessage(text) {
   let parsed
   try {
     parsed = JSON.parse(raw)
-  } catch (e) {
-    // HARD FALLBACK — systeem blijft altijd draaien
+  } catch {
     return {
       type: "system:post_deploy_verify",
       actionId: "system_post_deploy_verify",
