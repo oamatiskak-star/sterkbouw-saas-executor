@@ -34,6 +34,36 @@ export async function runBuilder(payload = {}) {
         return await m.default(payload)
       }
 
+      case "generate_stabu": {
+        const m = await import("./actions/GENERATE_STABU.js")
+        return await m.default(payload)
+      }
+
+      case "derive_quantities": {
+        const m = await import("./actions/DERIVE_QUANTITIES.js")
+        return await m.default(payload)
+      }
+
+      case "installaties_e": {
+        const m = await import("./actions/INSTALLATIES_E.js")
+        return await m.default(payload)
+      }
+
+      case "installaties_w": {
+        const m = await import("./actions/INSTALLATIES_W.js")
+        return await m.default(payload)
+      }
+
+      case "planning": {
+        const m = await import("./actions/PLANNING.js")
+        return await m.default(payload)
+      }
+
+      case "rapportage": {
+        const m = await import("./actions/RAPPORTAGE.js")
+        return await m.default(payload)
+      }
+
       /*
       ========================
       FRONTEND
