@@ -3,9 +3,12 @@ import { runBuilder } from "../builder/index.js"
 import { architectFullUiBuild } from "../actions/architectFullUiBuild.js"
 import { sendTelegram } from "../integrations/telegramSender.js"
 
-// ✅ JUISTE PADEN
-import { handleProjectScan } from "./handlers/projectScan.js"
-import { handleStartRekenwolk } from "./handlers/startRekenwolk.js"
+/*
+====================================================
+AO EXECUTOR – ACTION ROUTER
+STABIEL / SQL-FIRST / CRASH-VRIJ
+====================================================
+*/
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -15,7 +18,7 @@ const supabase = createClient(
 const STRICT_MODE = true
 const TELEGRAM_MODE = true
 
-async function updateExecutorTask(taskId, data) {
+async function updateTask(taskId, data) {
   await supabase
     .from("executor_tasks")
     .update(data)
@@ -35,48 +38,61 @@ export async function runAction(task) {
     return
   }
 
-  const payload = task.payload || {}
+  const { id, action, payload = {}, project_id } = task
   const chatId = payload.chat_id || null
 
-  /*
-  ====================================================
-  SYSTEEMACTIES – EERST, ZONDER action_id
-  ====================================================
-  */
-  try {
-    if (task.action === "PROJECT_SCAN") {
-      console.log("RUN SYSTEM ACTION: PROJECT_SCAN", task.id)
-      await handleProjectScan(task)
-      return
-    }
+  console.log("EXECUTOR_RUN_ACTION:", action, id)
 
-    if (task.action === "START_REKENWOLK") {
-      console.log("RUN SYSTEM ACTION: START_REKENWOLK", task.id)
-      await handleStartRekenwolk(task)
-      return
-    }
-  } catch (err) {
-    console.error("SYSTEM_ACTION_ERROR", err.message)
+  // mark running
+  await updateTask(id, {
+    status: "running",
+    started_at: new Date().toISOString()
+  })
 
-    await updateExecutorTask(task.id, {
-      status: "failed",
-      error: err.message,
-      finished_at: new Date().toISOString()
-    })
-
-    throw err
+  if (chatId) {
+    await telegramLog(chatId, `▶️ Start: ${action}`)
   }
 
   /*
   ====================================================
-  BUILDER ACTIES
+  ARCHITECT ACTIE (APART, MAAR VEILIG)
   ====================================================
   */
-  let actionId =
-    payload.actionId ||
-    task.action_id ||
-    task.type ||
-    null
+  if (action === "ARCHITECT_FULL_UI_BUILD") {
+    try {
+      await architectFullUiBuild(task)
+
+      await updateTask(id, {
+        status: "done",
+        finished_at: new Date().toISOString()
+      })
+
+      if (chatId) {
+        await telegramLog(chatId, "✅ Architect taak voltooid")
+      }
+
+      return
+    } catch (err) {
+      await updateTask(id, {
+        status: "failed",
+        error: err.message,
+        finished_at: new Date().toISOString()
+      })
+
+      if (chatId) {
+        await telegramLog(chatId, `❌ Architect fout: ${err.message}`)
+      }
+
+      throw err
+    }
+  }
+
+  /*
+  ====================================================
+  STANDAARD BUILDER ACTIE
+  ====================================================
+  */
+  let actionId = action
 
   if (typeof actionId === "string") {
     actionId = actionId
@@ -89,51 +105,38 @@ export async function runAction(task) {
     throw new Error("ACTION_ID_MISSING")
   }
 
-  console.log("RUN BUILDER ACTION:", actionId)
-  if (chatId) await telegramLog(chatId, `▶️ Start: ${actionId}`)
-
-  if (actionId === "architect_full_ui_pages_build") {
-    try {
-      await architectFullUiBuild(task)
-      await updateExecutorTask(task.id, { status: "done" })
-      if (chatId) await telegramLog(chatId, "✅ UI opgebouwd")
-      return
-    } catch (err) {
-      await updateExecutorTask(task.id, {
-        status: "failed",
-        error: err.message,
-        finished_at: new Date().toISOString()
-      })
-      throw err
-    }
-  }
-
   try {
     const result = await runBuilder({
       actionId,
-      taskId: task.id,
-      project_id: task.project_id,
+      taskId: id,
+      project_id,
       ...payload
     })
 
-    await updateExecutorTask(task.id, {
+    await updateTask(id, {
       status: "done",
       finished_at: new Date().toISOString()
     })
 
-    if (chatId) await telegramLog(chatId, `✅ Klaar: ${actionId}`)
+    if (chatId) {
+      await telegramLog(chatId, `✅ Klaar: ${action}`)
+    }
+
     return result
 
   } catch (err) {
-    console.error("BUILDER_ERROR", err.message)
+    console.error("EXECUTOR_BUILDER_ERROR", err.message)
 
-    await updateExecutorTask(task.id, {
+    await updateTask(id, {
       status: "failed",
       error: err.message,
       finished_at: new Date().toISOString()
     })
 
-    if (chatId) await telegramLog(chatId, `❌ Fout: ${err.message}`)
+    if (chatId) {
+      await telegramLog(chatId, `❌ Fout bij ${action}: ${err.message}`)
+    }
+
     throw err
   }
 }
