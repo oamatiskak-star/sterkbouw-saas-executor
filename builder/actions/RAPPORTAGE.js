@@ -5,5 +5,3 @@ export default async function RAPPORTAGE({ project_id, supabase }) {
     created_at: new Date().toISOString()
   })
 }
-js
-Code kopiëren
