@@ -1,15 +1,6 @@
 import { createClient } from "@supabase/supabase-js"
 import { sendTelegram } from "../../integrations/telegramSender.js"
 
-/*
-================================
-PROJECT SCAN HANDLER
-GEEN supabaseClient.js
-GEEN externe afhankelijkheden
-CRASH-VRIJ
-================================
-*/
-
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
@@ -21,11 +12,8 @@ export async function handleProjectScan(task) {
   }
 
   const project_id = task.project_id
-
   const payload =
-    task.payload && typeof task.payload === "object"
-      ? task.payload
-      : {}
+    task.payload && typeof task.payload === "object" ? task.payload : {}
 
   const chatId = payload.chat_id || null
 
@@ -33,9 +21,9 @@ export async function handleProjectScan(task) {
     await sendTelegram(chatId, "🔍 Projectscan gestart")
   }
 
-  /* ============================
+  /* =========================
      START LOG
-  ============================ */
+  ========================= */
   await supabase.from("project_initialization_log").insert({
     project_id,
     module: "PROJECT_SCAN",
@@ -43,15 +31,15 @@ export async function handleProjectScan(task) {
     started_at: new Date().toISOString()
   })
 
-  /* ============================
-     SCAN (STABIEL – placeholder)
-     HIER KOMT LATER JE ECHTE SCAN
-  ============================ */
+  /* =========================
+     SCAN (STABIEL)
+     hier komt straks echte scan
+  ========================= */
   await new Promise(resolve => setTimeout(resolve, 500))
 
-  /* ============================
+  /* =========================
      DONE LOG
-  ============================ */
+  ========================= */
   await supabase.from("project_initialization_log").insert({
     project_id,
     module: "PROJECT_SCAN",
@@ -59,10 +47,21 @@ export async function handleProjectScan(task) {
     finished_at: new Date().toISOString()
   })
 
-  /* ============================
-     EXECUTOR TASK AFRONDEN
-     (DIT WAS DE ONTBREKENDE SCHAKEL)
-  ============================ */
+  /* =========================
+     VOLGENDE STAP AANMAKEN
+     START_REKENWOLK
+  ========================= */
+  await supabase.from("executor_tasks").insert({
+    project_id,
+    action: "START_REKENWOLK",
+    payload,
+    status: "open",
+    assigned_to: "executor"
+  })
+
+  /* =========================
+     HUIDIGE TASK AFRONDEN
+  ========================= */
   await supabase
     .from("executor_tasks")
     .update({
@@ -72,6 +71,6 @@ export async function handleProjectScan(task) {
     .eq("id", task.id)
 
   if (chatId) {
-    await sendTelegram(chatId, "✅ Projectscan afgerond")
+    await sendTelegram(chatId, "✅ Projectscan afgerond. Rekenwolk start…")
   }
 }
