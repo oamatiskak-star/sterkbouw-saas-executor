@@ -5,12 +5,27 @@ import { chatRespond } from "../llm/chatResponder.js"
 import { sendTelegram } from "./telegramSender.js"
 
 export async function handleConversation(chatId, text) {
-  const session = await getOrCreateSession(chatId)
-  await storeMessage(session.id, "user", text)
+  try {
+    const session = await getOrCreateSession(chatId)
 
-  const context = await buildContext(session.id)
-  const reply = await chatRespond(context)
+    await storeMessage(session.id, "user", text)
 
-  await storeMessage(session.id, "assistant", reply)
-  await sendTelegram(chatId, reply)
+    const context = await buildContext(session.id)
+    if (!context) {
+      console.error("CONTEXT_LEEG", session.id)
+      return
+    }
+
+    const reply = await chatRespond(context)
+    if (!reply) {
+      console.error("REPLY_LEEG", session.id)
+      return
+    }
+
+    await storeMessage(session.id, "assistant", reply)
+    await sendTelegram(chatId, reply)
+
+  } catch (err) {
+    console.error("TELEGRAM_CONVERSATION_ERROR", err.message)
+  }
 }
