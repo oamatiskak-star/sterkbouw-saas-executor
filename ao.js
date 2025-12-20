@@ -60,6 +60,17 @@ APP + SUPABASE
 ========================
 */
 const app = express()
+
+// 🔥 HARD REQUEST TAP – ALLES LOGGEN
+app.use((req, res, next) => {
+  console.log("INCOMING_REQUEST", {
+    method: req.method,
+    path: req.path,
+    contentType: req.headers["content-type"]
+  })
+  next()
+})
+
 app.use(express.json())
 
 const supabase = createClient(
@@ -86,11 +97,11 @@ app.get("/ping", (_, res) => res.send("AO LIVE : " + AO_ROLE))
 
 /*
 ========================
-TELEGRAM WEBHOOK
+TELEGRAM WEBHOOK (POST + GET DEBUG)
 ========================
 */
 app.post("/telegram/webhook", async (req, res) => {
-  console.log("TELEGRAM_WEBHOOK_HIT")
+  console.log("TELEGRAM_WEBHOOK_HIT_RAW", req.body)
 
   try {
     await handleTelegramWebhook(req.body)
@@ -98,8 +109,13 @@ app.post("/telegram/webhook", async (req, res) => {
     console.error("TELEGRAM_WEBHOOK_ERROR", err.message)
   }
 
-  // Telegram vereist altijd 200
   res.sendStatus(200)
+})
+
+// 🔧 GET fallback om te zien of pad geraakt wordt
+app.get("/telegram/webhook", (_, res) => {
+  console.log("TELEGRAM_WEBHOOK_GET_HIT")
+  res.send("OK")
 })
 
 /*
