@@ -1,6 +1,6 @@
 import { createClient } from "@supabase/supabase-js"
 import { interpretTelegramMessage } from "../llm/telegramInterpreter.js"
-import { sendTelegramMessage } from "./telegram.js"
+import { sendTelegram } from "./telegramSender.js"
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -33,8 +33,8 @@ export async function handleTelegramWebhook(body) {
       .select()
       .single()
 
-    if (logError) {
-      console.error("TELEGRAM_LOG_ERROR", logError.message)
+    if (logError || !log) {
+      console.error("TELEGRAM_LOG_ERROR", logError?.message)
       return
     }
 
@@ -42,7 +42,7 @@ export async function handleTelegramWebhook(body) {
     try {
       interpreted = await interpretTelegramMessage(text)
     } catch (err) {
-      await sendTelegramMessage(
+      await sendTelegram(
         chatId,
         "Ik kan je bericht nu niet verwerken. Formuleer het anders."
       )
@@ -58,9 +58,14 @@ export async function handleTelegramWebhook(body) {
       return
     }
 
+    if (!interpreted || !interpreted.type) {
+      console.error("INTERPRET_EMPTY")
+      return
+    }
+
     // 2. Clarify-modus
     if (interpreted.type === "system:clarify") {
-      await sendTelegramMessage(
+      await sendTelegram(
         chatId,
         interpreted.payload?.message || "Kun je dit verduidelijken?"
       )
@@ -78,7 +83,7 @@ export async function handleTelegramWebhook(body) {
     }
 
     // 3. Terugkoppeling
-    await sendTelegramMessage(
+    await sendTelegram(
       chatId,
       `Ik begrijp je.\n\nActie: ${interpreted.actionId}\n\nIk zet dit klaar.`
     )
@@ -106,7 +111,7 @@ export async function handleTelegramWebhook(body) {
       source: "telegram"
     })
 
-    await sendTelegramMessage(
+    await sendTelegram(
       chatId,
       "Taak is aangemaakt en klaar voor uitvoering."
     )
