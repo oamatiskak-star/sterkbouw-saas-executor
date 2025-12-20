@@ -5,6 +5,9 @@ import { handleDeriveQuantities } from "./handlers/deriveQuantities.js"
 import { handleInstallationsE } from "./handlers/handleInstallationsE.js"
 import { handleInstallationsW } from "./handlers/handleInstallationsW.js"
 import { handlePlanning } from "./handlers/handlePlanning.js"
+import { handleGenerateReportPdf } from "./handlers/generateReportPdf.js"
+import { handleGenerateAssumptionsReport } from "./handlers/generateAssumptionsReport.js"
+import { handleGenerateRiskReport } from "./handlers/generateRiskReport.js"
 import { handleFinalizeRekenwolk } from "./handlers/finalizeRekenwolk.js"
 
 export async function routeTask(task) {
@@ -29,6 +32,15 @@ export async function routeTask(task) {
 
     case "PLANNING":
       return handlePlanning(task)
+
+    case "GENERATE_REPORT_PDF":
+      return handleGenerateReportPdf(task)
+
+    case "GENERATE_ASSUMPTIONS_REPORT":
+      return handleGenerateAssumptionsReport(task)
+
+    case "GENERATE_RISK_REPORT":
+      return handleGenerateRiskReport(task)
 
     case "FINALIZE_REKENWOLK":
       return handleFinalizeRekenwolk(task)
