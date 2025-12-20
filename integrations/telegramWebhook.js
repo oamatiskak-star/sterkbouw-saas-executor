@@ -7,20 +7,22 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 )
 
-export async function handleTelegramWebhook(req, res) {
-  // 🚨 CRITISCH: Telegram ALTIJD direct OK
-  res.sendStatus(200)
-
+export async function handleTelegramWebhook(body) {
   try {
-    const msg = req.body?.message
-    if (!msg || !msg.text) return
+    const msg = body?.message
+    if (!msg || !msg.text) {
+      console.log("TELEGRAM_UPDATE_ZONDER_TEKST")
+      return
+    }
 
     const chatId = msg.chat.id.toString()
     const username = msg.from?.username || null
     const text = msg.text
 
+    console.log("TELEGRAM_ONTVANGEN:", chatId, text)
+
     // 1. Log inkomend bericht
-    const { data: log } = await supabase
+    const { data: log, error: logError } = await supabase
       .from("telegram_messages")
       .insert({
         chat_id: chatId,
@@ -31,13 +33,18 @@ export async function handleTelegramWebhook(req, res) {
       .select()
       .single()
 
+    if (logError) {
+      console.error("TELEGRAM_LOG_ERROR", logError.message)
+      return
+    }
+
     let interpreted
     try {
       interpreted = await interpretTelegramMessage(text)
     } catch (err) {
       await sendTelegramMessage(
         chatId,
-        "Ik kan je bericht nu niet verwerken. Probeer het zo opnieuw te formuleren."
+        "Ik kan je bericht nu niet verwerken. Formuleer het anders."
       )
 
       await supabase
@@ -70,10 +77,10 @@ export async function handleTelegramWebhook(req, res) {
       return
     }
 
-    // 3. Terugpraten zoals ChatGPT
+    // 3. Terugkoppeling
     await sendTelegramMessage(
       chatId,
-      `Ik begrijp je.\n\nActie: ${interpreted.actionId}\n\nIk bereid dit nu voor.`
+      `Ik begrijp je.\n\nActie: ${interpreted.actionId}\n\nIk zet dit klaar.`
     )
 
     // 4. Update log
@@ -101,11 +108,10 @@ export async function handleTelegramWebhook(req, res) {
 
     await sendTelegramMessage(
       chatId,
-      "Taak is aangemaakt en staat klaar voor uitvoering."
+      "Taak is aangemaakt en klaar voor uitvoering."
     )
 
   } catch (fatal) {
-    // ❗ NOOIT throwen richting Telegram
     console.error("TELEGRAM_WEBHOOK_FATAL", fatal.message)
   }
 }
