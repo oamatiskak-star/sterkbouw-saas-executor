@@ -16,6 +16,19 @@ export async function routeTask(task) {
 
     case "DERIVE_QUANTITIES":
       return handleDeriveQuantities(task)
+      
+    case "INSTALLATIES_E":
+      return handleInstallationsE(task)
+
+    case "INSTALLATIES_W":
+      return handleInstallationsW(task)
+
+    case "PLANNING":
+      return handlePlanning(task)
+
+    case "FINALIZE_REKENWOLK":
+      return handleFinalizeRekenwolk(task)
+
 
     default:
       throw new Error(`UNKNOWN_TASK_TYPE: ${task.task_type}`)
