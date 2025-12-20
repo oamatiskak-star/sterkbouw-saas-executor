@@ -71,7 +71,7 @@ app.use((req, res, next) => {
   next()
 })
 
-app.use(express.json())
+app.use(express.json({ type: "*/*" }))
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
