@@ -23,25 +23,46 @@ export async function runInitialization({ project_id, options }) {
     if (!options[key]) continue
 
     const module = MODULES[key]
+    const startedAt = new Date().toISOString()
 
     await supabase.from("project_initialization_log").insert({
       project_id,
       module,
       status: "running",
-      started_at: new Date().toISOString()
+      started_at: startedAt
     })
 
-    // hier wordt jouw bestaande module aangeroepen
-    // dispatcher only, geen logica duplicatie
+    try {
+      // dispatcher: hier roept de executor de bestaande module aan
+      // GEEN logica hier, alleen uitvoeren
 
-    await supabase
-      .from("project_initialization_log")
-      .update({
-        status: "done",
-        finished_at: new Date().toISOString()
-      })
-      .eq("project_id", project_id)
-      .eq("module", module)
+      await supabase
+        .from("project_initialization_log")
+        .update({
+          status: "done",
+          finished_at: new Date().toISOString()
+        })
+        .eq("project_id", project_id)
+        .eq("module", module)
+
+    } catch (err) {
+      await supabase
+        .from("project_initialization_log")
+        .update({
+          status: "error",
+          finished_at: new Date().toISOString(),
+          output_ref: err.message
+        })
+        .eq("project_id", project_id)
+        .eq("module", module)
+
+      await supabase
+        .from("projects")
+        .update({ status: "error" })
+        .eq("id", project_id)
+
+      throw err
+    }
   }
 
   await supabase
