@@ -1,0 +1,1 @@
+export async function runMailWorkflowInterval(){console.log("MAIL WORKFLOW RUN")}
