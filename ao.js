@@ -6,6 +6,7 @@ import { runAction } from "./executor/actionRouter.js"
 import { architectFullUiBuild } from "./actions/architectFullUiBuild.js"
 import { startArchitectSystemScan } from "./architect/systemScanner.js"
 import { startForceBuild } from "./architect/forceBuild.js"
+import { handleTelegramWebhook } from "./integrations/telegramWebhook.js"
 
 /*
 ========================
@@ -75,6 +76,13 @@ app.get("/ping", (_, res) => res.send("AO LIVE : " + AO_ROLE))
 
 /*
 ========================
+TELEGRAM WEBHOOK
+========================
+*/
+app.post("/telegram/webhook", handleTelegramWebhook)
+
+/*
+========================
 UI API – KNOPPENMATRIX
 ========================
 */
@@ -140,7 +148,7 @@ if (AO_ROLE === "ARCHITECT") {
 
 /*
 ========================
-EXECUTOR MODE – STRICT
+EXECUTOR MODE – AUTONOOM
 ========================
 */
 if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
@@ -173,7 +181,7 @@ if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
 
       /*
       ========================
-      ARCHITECT TASKS
+      ARCHITECT TAKEN
       ========================
       */
       if (task.type === "architect:system_full_scan") {
@@ -186,7 +194,7 @@ if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
 
       /*
       ========================
-      ROUTE VALIDATIE TASKS
+      ROUTE VALIDATIE
       ========================
       */
       else if (
@@ -207,11 +215,13 @@ if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
 
       /*
       ========================
-      ACTION TASKS
+      ACTION ROUTER
       ========================
       */
       else {
-        assert(task.action_id, "ACTION_ID_MISSING")
+        if (STRICT_MODE && !task.payload?.actionId) {
+          throw new Error("ACTION_ID_MISSING")
+        }
 
         if (
           task.type.startsWith("frontend_") &&
