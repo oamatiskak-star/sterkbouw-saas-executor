@@ -5,8 +5,8 @@ import { sendTelegram } from "../../integrations/telegramSender.js"
 ================================
 PROJECT SCAN HANDLER
 GEEN supabaseClient.js
-GEEN externe imports
-VOLLEDIG ZELFSTANDIG
+GEEN externe afhankelijkheden
+CRASH-VRIJ
 ================================
 */
 
@@ -22,7 +22,6 @@ export async function handleProjectScan(task) {
 
   const project_id = task.project_id
 
-  // HARD GUARD payload
   const payload =
     task.payload && typeof task.payload === "object"
       ? task.payload
@@ -34,7 +33,9 @@ export async function handleProjectScan(task) {
     await sendTelegram(chatId, "🔍 Projectscan gestart")
   }
 
-  // START LOG
+  /* ============================
+     START LOG
+  ============================ */
   await supabase.from("project_initialization_log").insert({
     project_id,
     module: "PROJECT_SCAN",
@@ -42,17 +43,33 @@ export async function handleProjectScan(task) {
     started_at: new Date().toISOString()
   })
 
-  // ⬇️ HIER KOMT LATER JE ECHTE SCAN
-  // nu expres stabiel en async-safe
+  /* ============================
+     SCAN (STABIEL – placeholder)
+     HIER KOMT LATER JE ECHTE SCAN
+  ============================ */
   await new Promise(resolve => setTimeout(resolve, 500))
 
-  // DONE LOG
+  /* ============================
+     DONE LOG
+  ============================ */
   await supabase.from("project_initialization_log").insert({
     project_id,
     module: "PROJECT_SCAN",
     status: "done",
     finished_at: new Date().toISOString()
   })
+
+  /* ============================
+     EXECUTOR TASK AFRONDEN
+     (DIT WAS DE ONTBREKENDE SCHAKEL)
+  ============================ */
+  await supabase
+    .from("executor_tasks")
+    .update({
+      status: "done",
+      finished_at: new Date().toISOString()
+    })
+    .eq("id", task.id)
 
   if (chatId) {
     await sendTelegram(chatId, "✅ Projectscan afgerond")
