@@ -2,6 +2,10 @@ import { handleProjectScan } from "./handlers/projectScan.js"
 import { handleStartRekenwolk } from "./handlers/startRekenwolk.js"
 import { handleGenerateStabu } from "./handlers/generateStabu.js"
 import { handleDeriveQuantities } from "./handlers/deriveQuantities.js"
+import { handleInstallationsE } from "./handlers/handleInstallationsE.js"
+import { handleInstallationsW } from "./handlers/handleInstallationsW.js"
+import { handlePlanning } from "./handlers/handlePlanning.js"
+import { handleFinalizeRekenwolk } from "./handlers/finalizeRekenwolk.js"
 
 export async function routeTask(task) {
   switch (task.task_type) {
@@ -16,7 +20,7 @@ export async function routeTask(task) {
 
     case "DERIVE_QUANTITIES":
       return handleDeriveQuantities(task)
-      
+
     case "INSTALLATIES_E":
       return handleInstallationsE(task)
 
@@ -28,7 +32,6 @@ export async function routeTask(task) {
 
     case "FINALIZE_REKENWOLK":
       return handleFinalizeRekenwolk(task)
-
 
     default:
       throw new Error(`UNKNOWN_TASK_TYPE: ${task.task_type}`)
