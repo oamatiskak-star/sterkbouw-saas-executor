@@ -89,7 +89,14 @@ app.get("/ping", (_, res) => res.send("AO LIVE : " + AO_ROLE))
 TELEGRAM WEBHOOK
 ========================
 */
-app.post("/telegram/webhook", handleTelegramWebhook)
+app.post("/telegram/webhook", async (req, res) => {
+  try {
+    await handleTelegramWebhook(req, res)
+  } catch (err) {
+    console.error("TELEGRAM_WEBHOOK_ERROR", err.message)
+    res.sendStatus(200)
+  }
+})
 
 /*
 ========================
@@ -273,10 +280,10 @@ if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
 
 /*
 ========================
-SERVER START
+SERVER START (RAILWAY FIX)
 ========================
 */
-app.listen(PORT, () => {
+app.listen(PORT, "0.0.0.0", () => {
   console.log("AO SERVICE LIVE")
   console.log("ROLE:", AO_ROLE)
   console.log("PORT:", PORT)
