@@ -1,85 +1,34 @@
-import { runBuilder } from "../builder/index.js"
 import { createClient } from "@supabase/supabase-js"
+import { runBuilder } from "../builder/index.js"
 import { architectFullUiBuild } from "../actions/architectFullUiBuild.js"
 import { sendTelegram } from "../integrations/telegramSender.js"
 
-// ✅ TOEGEVOEGD: systeem handlers
+// SYSTEEM HANDLERS (CRASH SAFE)
 import { handleProjectScan } from "../handlers/projectScan.js"
 import { handleStartRekenwolk } from "../handlers/startRekenwolk.js"
-
-/*
-AO EXECUTOR – ACTION ROUTER
-ENIGE INGANG
-SQL-FIRST
-STRICT MODE
-TELEGRAM + CHATGPT GESTUURD
-*/
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
 )
 
-/*
-====================================================
-MODES
-====================================================
-*/
-const MODES = {
-  STRICT: true,
-  TELEGRAM: true
-}
-
-/*
-====================================================
-ACTION ALIAS MAP
-====================================================
-*/
-const ACTION_ALIAS = {
-  // frontend
-  generate_page: "frontend_generate_standard_page",
-  generate_dashboard: "frontend_generate_standard_page",
-  frontend_generate_page: "frontend_generate_standard_page",
-  frontend_structure_normalize: "frontend_sync_navigation",
-  frontend_canonical_fix: "frontend_apply_global_layout_github",
-  frontend_canonical_commit: "frontend_build",
-
-  // builder
-  builder_run: "frontend_build",
-  builder_execute: "frontend_build",
-
-  // backend
-  run_initialization: "backend_run_initialization",
-  start_calculation: "backend_start_calculation"
-}
-
-/*
-====================================================
-SYSTEM / COMMAND ACTIONS
-– GEEN BUILDER
-– WEL TERUGKOPPELING
-====================================================
-*/
-const SYSTEM_ACTIONS = {
-  architect_full_ui_pages_build: true,
-  system_post_deploy_verify: true,
-  backend_run_initialization: true,
-  backend_start_calculation: true,
-  system_health: true,
-  system_status: true
-}
+const STRICT_MODE = true
+const TELEGRAM_MODE = true
 
 /*
 ====================================================
 HULPFUNCTIES
 ====================================================
 */
-async function updateTask(taskId, data) {
-  await supabase.from("tasks").update(data).eq("id", taskId)
+async function updateExecutorTask(taskId, data) {
+  await supabase
+    .from("executor_tasks")
+    .update(data)
+    .eq("id", taskId)
 }
 
 async function telegramLog(chatId, message) {
-  if (!MODES.TELEGRAM) return
+  if (!TELEGRAM_MODE || !chatId) return
   try {
     await sendTelegram(chatId, message)
   } catch (_) {}
@@ -87,138 +36,124 @@ async function telegramLog(chatId, message) {
 
 /*
 ====================================================
-EXECUTOR ENTRYPOINT
+EXECUTOR ENTRYPOINT – CRASH SAFE
 ====================================================
 */
 export async function runAction(task) {
-  if (!task) return
+  if (!task || !task.id) {
+    console.error("RUNACTION_NO_TASK")
+    return
+  }
 
   const payload = task.payload || {}
   const chatId = payload.chat_id || null
 
   /*
   ====================================================
-  🔥 SYSTEEMACTIES ZONDER action_id (FIX)
+  SYSTEEM ACTIES – ALTIJD EERST
   ====================================================
   */
-  if (task.action === "PROJECT_SCAN") {
-    console.log("AO SYSTEM ACTION: PROJECT_SCAN")
-    await handleProjectScan(task)
-    return
-  }
+  try {
+    if (task.action === "PROJECT_SCAN") {
+      console.log("RUN SYSTEM ACTION: PROJECT_SCAN", task.id)
+      await handleProjectScan(task)
+      return
+    }
 
-  if (task.action === "START_REKENWOLK") {
-    console.log("AO SYSTEM ACTION: START_REKENWOLK")
-    await handleStartRekenwolk(task)
-    return
+    if (task.action === "START_REKENWOLK") {
+      console.log("RUN SYSTEM ACTION: START_REKENWOLK", task.id)
+      await handleStartRekenwolk(task)
+      return
+    }
+  } catch (err) {
+    console.error("SYSTEM_ACTION_ERROR", err.message)
+
+    await updateExecutorTask(task.id, {
+      status: "failed",
+      error: err.message,
+      finished_at: new Date().toISOString()
+    })
+
+    throw err
   }
 
   /*
   ====================================================
-  BESTAANDE ACTION ID LOGICA (ONGEWIJZIGD)
+  ACTION ID RESOLUTIE (DEFENSIEF)
   ====================================================
   */
   let actionId =
     payload.actionId ||
     task.action_id ||
-    (task.type
-      ? task.type
-          .toLowerCase()
-          .replace(/[^a-z0-9_]+/g, "_")
-          .replace(/^_|_$/g, "")
-      : null)
+    task.type ||
+    null
 
-  if (MODES.STRICT && !actionId) {
+  if (typeof actionId === "string") {
+    actionId = actionId
+      .toLowerCase()
+      .replace(/[^a-z0-9_]+/g, "_")
+      .replace(/^_|_$/g, "")
+  }
+
+  if (STRICT_MODE && !actionId) {
     throw new Error("ACTION_ID_MISSING")
   }
 
-  if (ACTION_ALIAS[actionId]) {
-    actionId = ACTION_ALIAS[actionId]
-  }
-
-  console.log("AO RUN ACTION:", actionId)
+  console.log("RUN BUILDER ACTION:", actionId)
   if (chatId) await telegramLog(chatId, `▶️ Start: ${actionId}`)
 
   /*
   ====================================================
-  ARCHITECT
+  ARCHITECT ACTIE
   ====================================================
   */
   if (actionId === "architect_full_ui_pages_build") {
     try {
-      const result = await architectFullUiBuild(task)
-      await updateTask(task.id, { status: "done" })
+      await architectFullUiBuild(task)
+      await updateExecutorTask(task.id, { status: "done" })
       if (chatId) await telegramLog(chatId, "✅ UI opgebouwd")
       return
     } catch (err) {
-      await updateTask(task.id, { status: "failed", error: err.message })
-      if (chatId) await telegramLog(chatId, "❌ Architect fout: " + err.message)
+      await updateExecutorTask(task.id, {
+        status: "failed",
+        error: err.message,
+        finished_at: new Date().toISOString()
+      })
       throw err
     }
   }
 
   /*
   ====================================================
-  SYSTEM / STATUS / HEALTH
-  ====================================================
-  */
-  if (SYSTEM_ACTIONS[actionId]) {
-    await updateTask(task.id, { status: "done" })
-
-    if (chatId) {
-      if (actionId === "system_status") {
-        await telegramLog(chatId, "Systeem draait. Executor actief.")
-      } else if (actionId === "system_health") {
-        await telegramLog(chatId, "Health OK. Geen fouten gemeld.")
-      } else {
-        await telegramLog(chatId, `🧠 Actie uitgevoerd: ${actionId}`)
-      }
-    }
-    return
-  }
-
-  /*
-  ====================================================
-  DEPLOY GATE
-  ====================================================
-  */
-  const { data: gate } = await supabase
-    .from("deploy_gate")
-    .select("allow_frontend, allow_build, allow_backend")
-    .eq("id", 1)
-    .single()
-
-  if (!gate) throw new Error("DEPLOY_GATE_MIST")
-
-  if (actionId.startsWith("frontend_") && gate.allow_frontend !== true) {
-    throw new Error("FRONTEND_GATE_GESLOTEN")
-  }
-
-  if (actionId.startsWith("builder_") && gate.allow_build !== true) {
-    throw new Error("BUILD_GATE_GESLOTEN")
-  }
-
-  if (actionId.startsWith("backend_") && gate.allow_backend !== true) {
-    throw new Error("BACKEND_GATE_GESLOTEN")
-  }
-
-  /*
-  ====================================================
-  BUILDER / BACKEND EXECUTIE
+  BUILDER / BACKEND
   ====================================================
   */
   try {
     const result = await runBuilder({
       actionId,
       taskId: task.id,
-      originalType: task.type,
+      project_id: task.project_id,
       ...payload
     })
 
-    await updateTask(task.id, { status: "done" })
+    await updateExecutorTask(task.id, {
+      status: "done",
+      finished_at: new Date().toISOString()
+    })
+
     if (chatId) await telegramLog(chatId, `✅ Klaar: ${actionId}`)
     return result
 
   } catch (err) {
-    await updateTask(task.id, { status: "failed", error: err.message })
-    if (chatId) await telegramLog(chatId, `❌ Fo
+    console.error("BUILDER_ERROR", err.message)
+
+    await updateExecutorTask(task.id, {
+      status: "failed",
+      error: err.message,
+      finished_at: new Date().toISOString()
+    })
+
+    if (chatId) await telegramLog(chatId, `❌ Fout: ${err.message}`)
+    throw err
+  }
+}
