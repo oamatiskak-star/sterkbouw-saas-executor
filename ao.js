@@ -1,11 +1,21 @@
 import express from "express"
 import { createClient } from "@supabase/supabase-js"
 
-// BESTAANDE BESTANDEN – ECHTE PADEN
+/*
+========================
+IMPORTS – CORE
+========================
+*/
 import { runAction } from "./executor/actionRouter.js"
 import { architectFullUiBuild } from "./actions/architectFullUiBuild.js"
 import { startArchitectSystemScan } from "./architect/systemScanner.js"
 import { startForceBuild } from "./architect/forceBuild.js"
+
+/*
+========================
+IMPORTS – TELEGRAM + LLM
+========================
+*/
 import { handleTelegramWebhook } from "./integrations/telegramWebhook.js"
 
 /*
@@ -24,7 +34,7 @@ const AO_ROLE = process.env.AO_ROLE
 const PORT = process.env.PORT || 8080
 
 if (!AO_ROLE) {
-  console.error("AO_ROLE ontbreekt. Service stopt.")
+  console.error("AO_ROLE ontbreekt")
   process.exit(1)
 }
 
@@ -38,7 +48,7 @@ if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
 
 /*
 ========================
-WRITE FLAG
+WRITE FLAGS
 ========================
 */
 const ENABLE_FRONTEND_WRITE =
@@ -167,7 +177,6 @@ if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
     if (error || !tasks || tasks.length === 0) return
 
     const task = tasks[0]
-
     console.log("TASK_START", task.id, task.type)
 
     try {
