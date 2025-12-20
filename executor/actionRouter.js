@@ -9,7 +9,7 @@ ENIGE INGANG
 SQL-FIRST
 STRICT MODE
 VOLLEDIG AUTONOOM
-CHATGPT / TELEGRAM GESTUURD
+TELEGRAM + CHATGPT GESTUURD
 */
 
 const supabase = createClient(
@@ -19,7 +19,7 @@ const supabase = createClient(
 
 /*
 ====================================================
-MODUS DEFINITIES
+MODES
 ====================================================
 */
 const MODES = {
@@ -35,31 +35,47 @@ ACTION ALIAS MAP
 ====================================================
 */
 const ACTION_ALIAS = {
+  // frontend
   generate_page: "frontend_generate_standard_page",
   generate_dashboard: "frontend_generate_standard_page",
-
-  builder_run: "frontend_build",
-  builder_execute: "frontend_build",
-
   frontend_generate_page: "frontend_generate_standard_page",
   frontend_structure_normalize: "frontend_sync_navigation",
   frontend_canonical_fix: "frontend_apply_global_layout_github",
   frontend_canonical_commit: "frontend_build",
 
+  // builder
+  builder_run: "frontend_build",
+  builder_execute: "frontend_build",
+
+  // backend
   run_initialization: "backend_run_initialization",
-  start_calculation: "backend_start_calculation"
+  start_calculation: "backend_start_calculation",
+
+  // telegram / commandRouter
+  scan_source: "system_scan_source",
+  scan: "system_scan_source",
+  health_check: "system_health_check",
+  health: "system_health_check",
+  classify_source: "system_classify_source",
+  build_structure: "system_build_structure",
+  write_code: "system_write_code"
 }
 
 /*
 ====================================================
-SYSTEM / ORCHESTRATION ACTIONS
+SYSTEM / COMMAND ACTIONS
 – GEEN BUILDER
-– WEL AUTONOME FLOW
+– WEL ZICHTBAAR RESULTAAT
 ====================================================
 */
 const SYSTEM_ACTIONS = {
+  system_scan_source: true,
+  system_health_check: true,
+  system_classify_source: true,
+  system_build_structure: true,
+  system_write_code: true,
+
   architect_full_ui_pages_build: true,
-  builder_full_system_wire: true,
   system_post_deploy_verify: true,
   backend_run_initialization: true,
   backend_start_calculation: true
@@ -75,11 +91,10 @@ async function updateTask(taskId, data) {
 }
 
 async function telegramLog(message) {
-  if (MODES.TELEGRAM) {
-    try {
-      await sendTelegramMessage(message)
-    } catch (_) {}
-  }
+  if (!MODES.TELEGRAM) return
+  try {
+    await sendTelegramMessage(message)
+  } catch (_) {}
 }
 
 /*
@@ -96,6 +111,7 @@ export async function runAction(task) {
 
   let actionId =
     payload.actionId ||
+    task.action_id ||
     (task.type
       ? task.type
           .toLowerCase()
@@ -112,11 +128,11 @@ export async function runAction(task) {
   }
 
   console.log("AO RUN ACTION:", actionId)
-  await telegramLog(`▶️ AO START: ${actionId}`)
+  await telegramLog(`▶️ AO start: ${actionId}`)
 
   /*
   ====================================================
-  ARCHITECT – VOLLEDIG GEISOLEERD
+  ARCHITECT
   ====================================================
   */
   if (actionId === "architect_full_ui_pages_build") {
@@ -134,12 +150,12 @@ export async function runAction(task) {
 
   /*
   ====================================================
-  SYSTEM / AUTONOME ACTIONS
+  SYSTEM / TELEGRAM / CHATGPT COMMANDS
   ====================================================
   */
   if (SYSTEM_ACTIONS[actionId]) {
     await updateTask(task.id, { status: "done" })
-    await telegramLog(`🧠 System action uitgevoerd: ${actionId}`)
+    await telegramLog(`🧠 System actie uitgevoerd: ${actionId}`)
     return { status: "ok", actionId }
   }
 
@@ -183,8 +199,8 @@ export async function runAction(task) {
 
     await updateTask(task.id, { status: "done" })
     await telegramLog(`✅ Uitgevoerd: ${actionId}`)
-
     return { status: "ok", actionId, result }
+
   } catch (err) {
     await updateTask(task.id, { status: "failed", error: err.message })
     await telegramLog(`❌ Fout in ${actionId}: ${err.message}`)
