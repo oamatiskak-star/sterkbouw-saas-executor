@@ -1,16 +1,13 @@
 import OpenAI from "openai"
-import { CHATGPT_CORE_PROMPT } from "./systemPrompts/chatgptCore.prompt.js"
-
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
 
-export async function chatRespond(messages) {
-  const res = await openai.chat.completions.create({
-    model: "gpt-4.1-mini",
+export async function chatRespond({ text }) {
+  const r = await openai.chat.completions.create({
+    model: "gpt-4o-mini",
     messages: [
-      { role: "system", content: CHATGPT_CORE_PROMPT },
-      ...messages
-    ],
-    temperature: 0
+      { role: "system", content: "Je bent een behulpzame gesprekspartner." },
+      { role: "user", content: text }
+    ]
   })
-  return res.choices[0].message.content
+  return r.choices[0].message.content || "Oké."
 }
