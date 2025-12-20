@@ -3,9 +3,9 @@ import { runBuilder } from "../builder/index.js"
 import { architectFullUiBuild } from "../actions/architectFullUiBuild.js"
 import { sendTelegram } from "../integrations/telegramSender.js"
 
-// SYSTEEM HANDLERS (CRASH SAFE)
-import { handleProjectScan } from "../handlers/projectScan.js"
-import { handleStartRekenwolk } from "../handlers/startRekenwolk.js"
+// ✅ JUISTE PADEN
+import { handleProjectScan } from "./handlers/projectScan.js"
+import { handleStartRekenwolk } from "./handlers/startRekenwolk.js"
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -15,11 +15,6 @@ const supabase = createClient(
 const STRICT_MODE = true
 const TELEGRAM_MODE = true
 
-/*
-====================================================
-HULPFUNCTIES
-====================================================
-*/
 async function updateExecutorTask(taskId, data) {
   await supabase
     .from("executor_tasks")
@@ -34,11 +29,6 @@ async function telegramLog(chatId, message) {
   } catch (_) {}
 }
 
-/*
-====================================================
-EXECUTOR ENTRYPOINT – CRASH SAFE
-====================================================
-*/
 export async function runAction(task) {
   if (!task || !task.id) {
     console.error("RUNACTION_NO_TASK")
@@ -50,7 +40,7 @@ export async function runAction(task) {
 
   /*
   ====================================================
-  SYSTEEM ACTIES – ALTIJD EERST
+  SYSTEEMACTIES – EERST, ZONDER action_id
   ====================================================
   */
   try {
@@ -79,7 +69,7 @@ export async function runAction(task) {
 
   /*
   ====================================================
-  ACTION ID RESOLUTIE (DEFENSIEF)
+  BUILDER ACTIES
   ====================================================
   */
   let actionId =
@@ -102,11 +92,6 @@ export async function runAction(task) {
   console.log("RUN BUILDER ACTION:", actionId)
   if (chatId) await telegramLog(chatId, `▶️ Start: ${actionId}`)
 
-  /*
-  ====================================================
-  ARCHITECT ACTIE
-  ====================================================
-  */
   if (actionId === "architect_full_ui_pages_build") {
     try {
       await architectFullUiBuild(task)
@@ -123,11 +108,6 @@ export async function runAction(task) {
     }
   }
 
-  /*
-  ====================================================
-  BUILDER / BACKEND
-  ====================================================
-  */
   try {
     const result = await runBuilder({
       actionId,
