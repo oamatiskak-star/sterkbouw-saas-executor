@@ -3,6 +3,13 @@ import { createClient } from "@supabase/supabase-js"
 
 /*
 ========================
+ENTRYPOINT BEWIJS
+========================
+*/
+console.log("AO ENTRYPOINT ao.js LOADED")
+
+/*
+========================
 IMPORTS – CORE
 ========================
 */
@@ -49,19 +56,38 @@ if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
 
 /*
 ========================
-WRITE FLAGS
-========================
-*/
-const ENABLE_FRONTEND_WRITE =
-  process.env.ENABLE_FRONTEND_WRITE === "true"
-
-/*
-========================
-APP + SUPABASE
+APP INIT
 ========================
 */
 const app = express()
 
+/*
+========================
+TELEGRAM WEBHOOK – MOET EERST
+========================
+*/
+app.get("/telegram/webhook", (_, res) => {
+  console.log("TELEGRAM_WEBHOOK_GET_HIT")
+  res.status(200).send("OK")
+})
+
+app.post("/telegram/webhook", async (req, res) => {
+  console.log("TELEGRAM_WEBHOOK_POST_HIT")
+
+  try {
+    await handleTelegramWebhook(req.body)
+  } catch (err) {
+    console.error("TELEGRAM_WEBHOOK_ERROR", err.message)
+  }
+
+  res.sendStatus(200)
+})
+
+/*
+========================
+MIDDLEWARE (NA WEBHOOK)
+========================
+*/
 app.use((req, res, next) => {
   console.log("INCOMING_REQUEST", {
     method: req.method,
@@ -73,19 +99,15 @@ app.use((req, res, next) => {
 
 app.use(express.json({ type: "*/*" }))
 
+/*
+========================
+SUPABASE
+========================
+*/
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
 )
-
-/*
-========================
-UTILS
-========================
-*/
-function assert(condition, code) {
-  if (!condition) throw new Error(code)
-}
 
 /*
 ========================
@@ -94,28 +116,6 @@ PING
 */
 app.get("/", (_, res) => res.send("OK"))
 app.get("/ping", (_, res) => res.send("AO LIVE : " + AO_ROLE))
-
-/*
-========================
-TELEGRAM WEBHOOK
-========================
-*/
-app.post("/telegram/webhook", async (req, res) => {
-  console.log("TELEGRAM_WEBHOOK_HIT_RAW", req.body)
-
-  try {
-    await handleTelegramWebhook(req.body)
-  } catch (err) {
-    console.error("TELEGRAM_WEBHOOK_ERROR", err.message)
-  }
-
-  res.sendStatus(200)
-})
-
-app.get("/telegram/webhook", (_, res) => {
-  console.log("TELEGRAM_WEBHOOK_GET_HIT")
-  res.send("OK")
-})
 
 /*
 ========================
@@ -180,10 +180,7 @@ if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
     const task = tasks[0]
 
     try {
-      await supabase
-        .from("tasks")
-        .update({ status: "running" })
-        .eq("id", task.id)
+      await supabase.from("tasks").update({ status: "running" }).eq("id", task.id)
 
       if (task.type === "architect:system_full_scan") {
         await startArchitectSystemScan()
@@ -193,23 +190,17 @@ if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
         await runAction(task)
       }
 
-      await supabase
-        .from("tasks")
-        .update({
-          status: "done",
-          finished_at: new Date().toISOString()
-        })
-        .eq("id", task.id)
+      await supabase.from("tasks").update({
+        status: "done",
+        finished_at: new Date().toISOString()
+      }).eq("id", task.id)
 
     } catch (err) {
-      await supabase
-        .from("tasks")
-        .update({
-          status: "failed",
-          error: err.message,
-          finished_at: new Date().toISOString()
-        })
-        .eq("id", task.id)
+      await supabase.from("tasks").update({
+        status: "failed",
+        error: err.message,
+        finished_at: new Date().toISOString()
+      }).eq("id", task.id)
     }
   }
 
