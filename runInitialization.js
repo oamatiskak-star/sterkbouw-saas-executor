@@ -5,32 +5,34 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 )
 
-export async function runInitialization(project_id, options) {
-  const modules = [
-    "documents_scanner",
-    "foundation_analyzer",
-    "nen_analyzer",
-    "scope_reconstructor",
-    "calculation_initializer",
-    "installations_generator",
-    "planning_generator",
-    "report_preparer"
-  ]
+const MODULES = {
+  documents: "documents_scanner",
+  foundation_check: "foundation_analyzer",
+  nen_meting: "nen_analyzer",
+  bag_bro_check: "bag_bro_analyzer",
+  scope_reconstruction: "scope_reconstructor",
+  stabu_structure: "calculation_initializer",
+  installations_e: "installations_e",
+  installations_w: "installations_w",
+  planning: "planning_generator",
+  report_pdf: "report_preparer"
+}
 
-  for (const module of modules) {
-    if (options[module] === false) continue
+export async function runInitialization({ project_id, options }) {
+  for (const key of Object.keys(MODULES)) {
+    if (!options[key]) continue
 
-    const started_at = new Date().toISOString()
+    const module = MODULES[key]
 
     await supabase.from("project_initialization_log").insert({
       project_id,
       module,
       status: "running",
-      started_at
+      started_at: new Date().toISOString()
     })
 
-    // hier roept executor je bestaande logica aan
-    // GEEN PLACEHOLDERS, alleen dispatcher
+    // hier wordt jouw bestaande module aangeroepen
+    // dispatcher only, geen logica duplicatie
 
     await supabase
       .from("project_initialization_log")
