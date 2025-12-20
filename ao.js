@@ -23,24 +23,14 @@ const app = express()
 
 /*
 ====================================
-❗ FIX: BODY PARSER MOET EERST ❗
+CRITISCH – BODY PARSER EERST
 ====================================
 */
 app.use(express.json({ type: "*/*" }))
 
 /*
 ====================================
-OPTIONELE REQUEST LOG
-====================================
-*/
-app.use((req, res, next) => {
-  console.log("INCOMING_REQUEST", req.method, req.path)
-  next()
-})
-
-/*
-====================================
-TELEGRAM WEBHOOK
+TELEGRAM WEBHOOK – ABSOLUUT VOORAAN
 ====================================
 */
 app.get("/telegram/webhook", (_, res) => {
@@ -48,15 +38,22 @@ app.get("/telegram/webhook", (_, res) => {
 })
 
 app.post("/telegram/webhook", async (req, res) => {
-  console.log("TELEGRAM_WEBHOOK_POST_BODY", req.body)
-
   try {
     await handleTelegramWebhook(req.body)
   } catch (err) {
     console.error("TELEGRAM_WEBHOOK_ERROR", err.message)
   }
-
   res.sendStatus(200)
+})
+
+/*
+====================================
+OPTIONELE REQUEST LOG (NA WEBHOOK)
+====================================
+*/
+app.use((req, res, next) => {
+  console.log("INCOMING_REQUEST", req.method, req.path)
+  next()
 })
 
 /*
@@ -114,7 +111,10 @@ if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
     const task = tasks[0]
 
     try {
-      await supabase.from("tasks").update({ status: "running" }).eq("id", task.id)
+      await supabase
+        .from("tasks")
+        .update({ status: "running" })
+        .eq("id", task.id)
 
       if (task.type === "architect:system_full_scan") {
         await startArchitectSystemScan()
@@ -124,17 +124,23 @@ if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
         await runAction(task)
       }
 
-      await supabase.from("tasks").update({
-        status: "done",
-        finished_at: new Date().toISOString()
-      }).eq("id", task.id)
+      await supabase
+        .from("tasks")
+        .update({
+          status: "done",
+          finished_at: new Date().toISOString()
+        })
+        .eq("id", task.id)
 
     } catch (err) {
-      await supabase.from("tasks").update({
-        status: "failed",
-        error: err.message,
-        finished_at: new Date().toISOString()
-      }).eq("id", task.id)
+      await supabase
+        .from("tasks")
+        .update({
+          status: "failed",
+          error: err.message,
+          finished_at: new Date().toISOString()
+        })
+        .eq("id", task.id)
     }
   }
 
@@ -143,7 +149,7 @@ if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
 
 /*
 ====================================
-SERVER START + TELEGRAM MELDING
+SERVER START + STARTUP MELDING
 ====================================
 */
 app.listen(PORT, "0.0.0.0", async () => {
