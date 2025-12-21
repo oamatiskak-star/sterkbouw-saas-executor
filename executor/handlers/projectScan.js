@@ -18,59 +18,81 @@ export async function handleProjectScan(task) {
   const chatId = payload.chat_id || null
 
   if (chatId) {
-    await sendTelegram(chatId, "🔍 Projectscan gestart")
+    try {
+      await sendTelegram(chatId, "Projectscan gestart")
+    } catch (_) {}
   }
 
-  /* =========================
-     START LOG
-  ========================= */
-  await supabase.from("project_initialization_log").insert({
-    project_id,
-    module: "PROJECT_SCAN",
-    status: "running",
-    started_at: new Date().toISOString()
-  })
+  /*
+  ========================
+  START LOG
+  ========================
+  */
+  const { error: startLogError } = await supabase
+    .from("project_initialization_log")
+    .insert({
+      project_id,
+      module: "PROJECT_SCAN",
+      status: "running",
+      started_at: new Date().toISOString()
+    })
 
-  /* =========================
-     SCAN (STABIEL)
-     hier komt straks echte scan
-  ========================= */
+  if (startLogError) {
+    throw new Error("PROJECT_SCAN_LOG_START_FAILED: " + startLogError.message)
+  }
+
+  /*
+  ========================
+  SCAN PLACEHOLDER
+  ========================
+  */
   await new Promise(resolve => setTimeout(resolve, 500))
 
-  /* =========================
-     DONE LOG
-  ========================= */
-  await supabase.from("project_initialization_log").insert({
-    project_id,
-    module: "PROJECT_SCAN",
-    status: "done",
-    finished_at: new Date().toISOString()
-  })
-
-  /* =========================
-     VOLGENDE STAP AANMAKEN
-     START_REKENWOLK
-  ========================= */
-  await supabase.from("executor_tasks").insert({
-    project_id,
-    action: "START_REKENWOLK",
-    payload,
-    status: "open",
-    assigned_to: "executor"
-  })
-
-  /* =========================
-     HUIDIGE TASK AFRONDEN
-  ========================= */
-  await supabase
-    .from("executor_tasks")
+  /*
+  ========================
+  DONE LOG
+  ========================
+  */
+  const { error: doneLogError } = await supabase
+    .from("project_initialization_log")
     .update({
       status: "done",
       finished_at: new Date().toISOString()
     })
-    .eq("id", task.id)
+    .eq("project_id", project_id)
+    .eq("module", "PROJECT_SCAN")
+
+  if (doneLogError) {
+    throw new Error("PROJECT_SCAN_LOG_DONE_FAILED: " + doneLogError.message)
+  }
+
+  /*
+  ========================
+  VOLGENDE EXECUTOR TASK
+  ========================
+  */
+  const { error: nextTaskError } = await supabase
+    .from("executor_tasks")
+    .insert({
+      project_id,
+      action: "START_REKENWOLK",
+      payload,
+      status: "open",
+      assigned_to: "executor"
+    })
+
+  if (nextTaskError) {
+    throw new Error("PROJECT_SCAN_NEXT_TASK_FAILED: " + nextTaskError.message)
+  }
 
   if (chatId) {
-    await sendTelegram(chatId, "✅ Projectscan afgerond. Rekenwolk start…")
+    try {
+      await sendTelegram(chatId, "Projectscan afgerond. Rekenwolk start.")
+    } catch (_) {}
+  }
+
+  return {
+    state: "DONE",
+    project_id
   }
 }
