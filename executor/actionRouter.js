@@ -33,7 +33,6 @@ export async function runAction(task) {
     return
   }
 
-  // ⛑️ HARD FIX: payload ALTIJD object
   const payload =
     typeof task.payload === "object" && task.payload !== null
       ? task.payload
@@ -43,13 +42,54 @@ export async function runAction(task) {
 
   /*
   ====================================================
-  SYSTEM ACTIONS – ALTIJD EERST
+  SYSTEM ACTIONS
   ====================================================
   */
   try {
-    if (task.action === "PROJECT_SCAN") {
-      console.log("SYSTEM ACTION: PROJECT_SCAN", task.id)
+    /*
+    ----------------------------------------------------
+    CREATE PROJECT ID (MINIMALE ACTIE)
+    ----------------------------------------------------
+    */
+    if (task.action === "CREATE_PROJECT_ID") {
+      console.log("SYSTEM ACTION: CREATE_PROJECT_ID", task.id)
 
+      await updateExecutorTask(task.id, {
+        status: "running",
+        started_at: new Date().toISOString()
+      })
+
+      // 🔑 Supabase maakt ID
+      const { data: project, error } = await supabase
+        .from("projecten")
+        .insert({})
+        .select("id")
+        .single()
+
+      if (error) {
+        throw new Error(error.message)
+      }
+
+      // 🔁 ID expliciet teruggeven aan frontend
+      await updateExecutorTask(task.id, {
+        status: "done",
+        finished_at: new Date().toISOString(),
+        result: {
+          project_id: project.id
+        }
+      })
+
+      await telegramLog(chatId, `🆔 Project ID aangemaakt: ${project.id}`)
+
+      return
+    }
+
+    /*
+    ----------------------------------------------------
+    BESTAANDE SYSTEM ACTIONS
+    ----------------------------------------------------
+    */
+    if (task.action === "PROJECT_SCAN") {
       await updateExecutorTask(task.id, {
         status: "running",
         started_at: new Date().toISOString()
@@ -69,8 +109,6 @@ export async function runAction(task) {
     }
 
     if (task.action === "START_REKENWOLK") {
-      console.log("SYSTEM ACTION: START_REKENWOLK", task.id)
-
       await updateExecutorTask(task.id, {
         status: "running",
         started_at: new Date().toISOString()
@@ -88,6 +126,7 @@ export async function runAction(task) {
 
       return
     }
+
   } catch (err) {
     console.error("SYSTEM_ACTION_ERROR", err.message)
 
@@ -106,7 +145,7 @@ export async function runAction(task) {
   ====================================================
   */
   let actionId =
-    task.action ||          // ✅ NIEUW: PRIORITEIT
+    task.action ||
     payload.actionId ||
     task.action_id ||
     task.type ||
