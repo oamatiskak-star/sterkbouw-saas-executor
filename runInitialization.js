@@ -19,24 +19,42 @@ const MODULES = {
 }
 
 export async function runInitialization({ project_id, options }) {
+  if (!project_id) {
+    throw new Error("INIT_MISSING_PROJECT_ID")
+  }
+
+  if (!options || typeof options !== "object") {
+    throw new Error("INIT_MISSING_OPTIONS")
+  }
+
+  let executedModules = 0
+
   for (const key of Object.keys(MODULES)) {
     if (!options[key]) continue
 
     const module = MODULES[key]
     const startedAt = new Date().toISOString()
 
-    await supabase.from("project_initialization_log").insert({
-      project_id,
-      module,
-      status: "running",
-      started_at: startedAt
-    })
+    const { error: insertError } = await supabase
+      .from("project_initialization_log")
+      .insert({
+        project_id,
+        module,
+        status: "running",
+        started_at: startedAt
+      })
+
+    if (insertError) {
+      throw new Error("INIT_LOG_INSERT_FAILED: " + insertError.message)
+    }
+
+    executedModules++
 
     try {
-      // dispatcher: hier roept de executor de bestaande module aan
-      // GEEN logica hier, alleen uitvoeren
+      // dispatcher placeholder
+      // hier roept de executor de echte module aan
 
-      await supabase
+      const { error: doneError } = await supabase
         .from("project_initialization_log")
         .update({
           status: "done",
@@ -44,6 +62,10 @@ export async function runInitialization({ project_id, options }) {
         })
         .eq("project_id", project_id)
         .eq("module", module)
+
+      if (doneError) {
+        throw new Error("INIT_LOG_UPDATE_FAILED: " + doneError.message)
+      }
 
     } catch (err) {
       await supabase
@@ -63,6 +85,10 @@ export async function runInitialization({ project_id, options }) {
 
       throw err
     }
+  }
+
+  if (executedModules === 0) {
+    throw new Error("INIT_NO_MODULES_SELECTED")
   }
 
   await supabase
