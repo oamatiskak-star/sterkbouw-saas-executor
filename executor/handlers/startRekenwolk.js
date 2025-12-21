@@ -4,9 +4,9 @@ import { createClient } from "@supabase/supabase-js"
 ====================================
 START REKENWOLK – EXECUTOR HANDLER
 ====================================
-GEEN externe supabaseClient import
-GEEN chat_id verplicht
-CRASH-VRIJ
+- sluit GEEN executor_tasks af
+- faalt hard bij Supabase errors
+- consistente logging
 */
 
 const supabase = createClient(
@@ -15,26 +15,56 @@ const supabase = createClient(
 )
 
 export async function handleStartRekenwolk(task) {
+  if (!task) {
+    throw new Error("REKENWOLK_NO_TASK")
+  }
+
   const project_id = task.project_id || task.payload?.project_id
 
   if (!project_id) {
-    throw new Error("PROJECT_ID_MISSING")
+    throw new Error("REKENWOLK_PROJECT_ID_MISSING")
   }
 
-  // start log
-  await supabase.from("project_initialization_log").insert({
-    project_id,
-    module: "REKENWOLK",
-    status: "running"
-  })
+  const startedAt = new Date().toISOString()
 
-  // haal scanresultaten op
-  const { data: scanResults } = await supabase
+  /*
+  ========================
+  START LOG
+  ========================
+  */
+  const { error: startLogError } = await supabase
+    .from("project_initialization_log")
+    .insert({
+      project_id,
+      module: "REKENWOLK",
+      status: "running",
+      started_at: startedAt
+    })
+
+  if (startLogError) {
+    throw new Error("REKENWOLK_LOG_START_FAILED: " + startLogError.message)
+  }
+
+  /*
+  ========================
+  OPTIONEEL: SCAN RESULTATEN
+  ========================
+  */
+  const { error: scanError } = await supabase
     .from("project_scan_results")
-    .select("*")
+    .select("id")
     .eq("project_id", project_id)
+    .limit(1)
 
-  // rekenmodules simuleren / starten
+  if (scanError) {
+    throw new Error("REKENWOLK_SCAN_FETCH_FAILED: " + scanError.message)
+  }
+
+  /*
+  ========================
+  REKENMODULES
+  ========================
+  */
   const modules = [
     "STABU",
     "HOEVEELHEDEN",
@@ -45,35 +75,59 @@ export async function handleStartRekenwolk(task) {
   ]
 
   for (const module of modules) {
-    await supabase.from("project_initialization_log").insert({
-      project_id,
-      module,
-      status: "done"
-    })
+    const { error: moduleLogError } = await supabase
+      .from("project_initialization_log")
+      .insert({
+        project_id,
+        module,
+        status: "done",
+        finished_at: new Date().toISOString()
+      })
+
+    if (moduleLogError) {
+      throw new Error(
+        "REKENWOLK_MODULE_LOG_FAILED (" + module + "): " + moduleLogError.message
+      )
+    }
   }
 
-  // update calculatie
-  await supabase
+  /*
+  ========================
+  CALCULATIE STATUS
+  ========================
+  */
+  const { error: calculatieError } = await supabase
     .from("calculaties")
     .update({
       status: "initialized",
       workflow_status: "concept"
     })
-    .eq("id", project_id)
-
-  // sluit rekenwolk log
-  await supabase
-    .from("project_initialization_log")
-    .update({ status: "done" })
     .eq("project_id", project_id)
-    .eq("module", "REKENWOLK")
 
-  // executor task afronden
-  await supabase
-    .from("executor_tasks")
+  if (calculatieError) {
+    throw new Error("REKENWOLK_CALCULATIE_UPDATE_FAILED: " + calculatieError.message)
+  }
+
+  /*
+  ========================
+  SLUIT REKENWOLK LOG
+  ========================
+  */
+  const { error: doneLogError } = await supabase
+    .from("project_initialization_log")
     .update({
       status: "done",
       finished_at: new Date().toISOString()
     })
-    .eq("id", task.id)
+    .eq("project_id", project_id)
+    .eq("module", "REKENWOLK")
+
+  if (doneLogError) {
+    throw new Error("REKENWOLK_LOG_DONE_FAILED: " + doneLogError.message)
+  }
+
+  return {
+    state: "DONE",
+    project_id
+  }
 }
