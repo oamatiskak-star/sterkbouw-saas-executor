@@ -9,14 +9,19 @@ const supabase = createClient(
 ========================
 CALCULATIES BOUW
 ========================
-– m2 prijs
-– ruwbouw
-– afbouw
-– opslagen
+- placeholder rekenmodel
+- hard falen bij fouten
+- builder-contract compliant
 */
 
-export async function run({ project_id }) {
-  console.log("BUILDER CALCULATIES BOUW START", project_id)
+export default async function calculatiesBouw(payload = {}) {
+  const { project_id } = payload
+
+  if (!project_id) {
+    throw new Error("CALCULATIES_BOUW_MISSING_PROJECT_ID")
+  }
+
+  console.log("BUILDER_CALCULATIES_BOUW_START", project_id)
 
   const basis = {
     ruwbouw_per_m2: 950,
@@ -45,14 +50,24 @@ export async function run({ project_id }) {
     totaal
   }
 
-  await supabase.from("calculaties").insert({
+  const { error } = await supabase
+    .from("calculaties")
+    .insert({
+      project_id,
+      type: "bouw",
+      data: result,
+      created_at: new Date().toISOString()
+    })
+
+  if (error) {
+    throw new Error("CALCULATIES_BOUW_INSERT_FAILED: " + error.message)
+  }
+
+  console.log("BUILDER_CALCULATIES_BOUW_DONE", totaal)
+
+  return {
+    state: "DONE",
     project_id,
-    type: "bouw",
-    data: result,
-    created_at: new Date().toISOString()
-  })
-
-  console.log("BUILDER CALCULATIES BOUW DONE", totaal)
-
-  return result
+    result
+  }
 }
