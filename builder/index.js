@@ -4,16 +4,28 @@ import { registerUnknownCommand } from "../utils/registerUnknownCommand.js"
 ========================
 BUILDER ENTRY
 ========================
+- valideert input
+- faalt hard bij errors
+- GEEN executor statusbeheer
 */
-export async function runBuilder(payload = {}) {
-  let actionId = payload.actionId
 
-  // normaliseer
-  if (actionId) {
-    actionId = actionId
-      .toLowerCase()
-      .replace(/:/g, "_")
-      .replace(/__+/g, "_")
+function normalizeActionId(raw) {
+  if (!raw || typeof raw !== "string") return null
+  return raw
+    .toLowerCase()
+    .replace(/[^a-z0-9_]+/g, "_")
+    .replace(/^_|_$/g, "")
+}
+
+export async function runBuilder(payload = {}) {
+  if (!payload || typeof payload !== "object") {
+    throw new Error("BUILDER_INVALID_PAYLOAD")
+  }
+
+  const actionId = normalizeActionId(payload.actionId)
+
+  if (!actionId) {
+    throw new Error("BUILDER_ACTION_ID_MISSING")
   }
 
   try {
@@ -106,8 +118,8 @@ export async function runBuilder(payload = {}) {
 
       /*
       ========================
-      BACKEND / SYSTEM (NO-OP HIER)
-      – WORDEN IN EXECUTOR AFGEHANDELD
+      BACKEND / SYSTEM
+      – bewust NO-OP
       ========================
       */
       case "backend_run_initialization":
@@ -115,7 +127,7 @@ export async function runBuilder(payload = {}) {
       case "system_post_deploy_verify":
       case "system_status":
       case "system_health": {
-        return { status: "ok", actionId }
+        return { action: actionId, state: "SKIPPED" }
       }
 
       /*
@@ -125,9 +137,9 @@ export async function runBuilder(payload = {}) {
       */
       default:
         await registerUnknownCommand("builder", actionId)
-        return { status: "ignored", actionId }
+        return { action: actionId, state: "IGNORED" }
     }
   } catch (err) {
-    return { status: "error", actionId, error: err.message }
+    throw new Error(`BUILDER_ACTION_FAILED (${actionId}): ${err.message}`)
   }
 }
