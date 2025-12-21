@@ -10,18 +10,19 @@ export async function runInitialization({ project_id }) {
     throw new Error("PROJECT_ID_MISSING")
   }
 
-  // PROJECT SCAN
-  const { error: scanError } = await supabase
+  // 1. ALLEEN project scan starten
+  const { error } = await supabase
     .from("executor_tasks")
     .insert({
       project_id,
       action: "PROJECT_SCAN",
       status: "open",
-      assigned_to: "executor"
+      assigned_to: "executor",
+      payload: {}
     })
 
-  if (scanError) {
-    throw scanError
+  if (error) {
+    throw new Error("INIT_PROJECT_SCAN_FAILED: " + error.message)
   }
 
   return { ok: true }
