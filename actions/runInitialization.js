@@ -16,24 +16,12 @@ export async function runInitialization({ project_id }) {
     .insert({
       project_id,
       action: "PROJECT_SCAN",
-      status: "pending"
+      status: "open",
+      assigned_to: "executor"
     })
 
   if (scanError) {
     throw scanError
-  }
-
-  // REKENWOLK / CALCULATIE
-  const { error: calcError } = await supabase
-    .from("executor_tasks")
-    .insert({
-      project_id,
-      action: "START_REKENWOLK",
-      status: "pending"
-    })
-
-  if (calcError) {
-    throw calcError
   }
 
   return { ok: true }
