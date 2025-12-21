@@ -16,7 +16,10 @@ const STRICT_MODE = true
 const TELEGRAM_MODE = true
 
 async function updateExecutorTask(taskId, data) {
-  await supabase.from("executor_tasks").update(data).eq("id", taskId)
+  await supabase
+    .from("executor_tasks")
+    .update(data)
+    .eq("id", taskId)
 }
 
 async function telegramLog(chatId, message) {
@@ -46,50 +49,9 @@ export async function runAction(task) {
   ====================================================
   */
   try {
-    /*
-    ----------------------------------------------------
-    CREATE PROJECT ID (MINIMALE ACTIE)
-    ----------------------------------------------------
-    */
-    if (task.action === "CREATE_PROJECT_ID") {
-      console.log("SYSTEM ACTION: CREATE_PROJECT_ID", task.id)
-
-      await updateExecutorTask(task.id, {
-        status: "running",
-        started_at: new Date().toISOString()
-      })
-
-      // 🔑 Supabase maakt ID
-      const { data: project, error } = await supabase
-        .from("projecten")
-        .insert({})
-        .select("id")
-        .single()
-
-      if (error) {
-        throw new Error(error.message)
-      }
-
-      // 🔁 ID expliciet teruggeven aan frontend
-      await updateExecutorTask(task.id, {
-        status: "done",
-        finished_at: new Date().toISOString(),
-        result: {
-          project_id: project.id
-        }
-      })
-
-      await telegramLog(chatId, `🆔 Project ID aangemaakt: ${project.id}`)
-
-      return
-    }
-
-    /*
-    ----------------------------------------------------
-    BESTAANDE SYSTEM ACTIONS
-    ----------------------------------------------------
-    */
     if (task.action === "PROJECT_SCAN") {
+      console.log("SYSTEM ACTION: PROJECT_SCAN", task.id)
+
       await updateExecutorTask(task.id, {
         status: "running",
         started_at: new Date().toISOString()
@@ -109,6 +71,8 @@ export async function runAction(task) {
     }
 
     if (task.action === "START_REKENWOLK") {
+      console.log("SYSTEM ACTION: START_REKENWOLK", task.id)
+
       await updateExecutorTask(task.id, {
         status: "running",
         started_at: new Date().toISOString()
@@ -168,12 +132,15 @@ export async function runAction(task) {
   if (actionId === "architect_full_ui_pages_build") {
     try {
       await architectFullUiBuild(task)
+
       await updateExecutorTask(task.id, {
         status: "done",
         finished_at: new Date().toISOString()
       })
+
       await telegramLog(chatId, "✅ UI opgebouwd")
       return
+
     } catch (err) {
       await updateExecutorTask(task.id, {
         status: "failed",
