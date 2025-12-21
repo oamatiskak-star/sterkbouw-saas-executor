@@ -8,12 +8,16 @@ const supabase = createClient(
 /*
 ========================
 ARCHITECT SYSTEM SCAN
-– Scant Supabase + MAIN
+– Scant per project
 – Maakt ontbrekende taken aan
 ========================
 */
-export async function startArchitectSystemScan() {
-  console.log("ARCHITECT SYSTEM SCAN GESTART")
+export async function startArchitectSystemScan({ project_id }) {
+  if (!project_id) {
+    throw new Error("ARCHITECT_SYSTEM_SCAN_PROJECT_ID_MISSING")
+  }
+
+  console.log("ARCHITECT SYSTEM SCAN GESTART:", project_id)
 
   const tasks = [
     "calculaties:bouw",
@@ -34,20 +38,22 @@ export async function startArchitectSystemScan() {
     const { data } = await supabase
       .from("tasks")
       .select("id")
+      .eq("project_id", project_id)
       .eq("type", type)
       .eq("status", "open")
       .limit(1)
 
     if (!data || data.length === 0) {
       await supabase.from("tasks").insert({
+        project_id,
         type,
         status: "open",
         assigned_to: "executor"
       })
-
-      console.log("ARCHITECT TASK AANGEMAAKT:", type)
     }
   }
 
-  console.log("ARCHITECT SYSTEM SCAN KLAAR")
+  console.log("ARCHITECT SYSTEM SCAN KLAAR:", project_id)
+
+  return { ok: true }
 }
