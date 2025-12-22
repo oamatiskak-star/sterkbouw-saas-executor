@@ -5,18 +5,43 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 )
 
+/*
+========================
+PLANNING DOORLOOPTIJD – EINDPRODUCT
+========================
+- GEEN insert-spam
+- UPSERT per project
+- altijd overschrijfbaar
+*/
+
 export async function run({ project_id }) {
-  console.log("BUILDER PLANNING DOORLOOPTIJD START", project_id)
+  if (!project_id) {
+    throw new Error("PLANNING_DOORLOOPTIJD_MISSING_PROJECT_ID")
+  }
 
   const doorlooptijd_weken = 56
 
-  await supabase.from("planning").insert({
-    project_id,
-    type: "doorlooptijd",
-    data: { weken: doorlooptijd_weken },
-    created_at: new Date().toISOString()
-  })
+  const { error } = await supabase
+    .from("planning")
+    .upsert(
+      {
+        project_id,
+        type: "doorlooptijd",
+        data: { weken: doorlooptijd_weken },
+        updated_at: new Date().toISOString()
+      },
+      {
+        onConflict: "project_id,type"
+      }
+    )
 
-  console.log("BUILDER PLANNING DOORLOOPTIJD DONE")
-  return { weken: doorlooptijd_weken }
+  if (error) {
+    throw new Error("PLANNING_DOORLOOPTIJD_UPSERT_FAILED: " + error.message)
+  }
+
+  return {
+    state: "DONE",
+    project_id,
+    weken: doorlooptijd_weken
+  }
 }
