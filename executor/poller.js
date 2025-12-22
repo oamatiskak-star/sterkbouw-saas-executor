@@ -22,16 +22,19 @@ export async function pollExecutorTasks() {
         .select("*")
         .eq("status", "open")
         .order("created_at", { ascending: true })
-        .limit(1)
+        .limit(1) // Haal 1 taak op (of verhoog dit voor meerdere taken tegelijk)
 
       if (error || !tasks || tasks.length === 0) {
         isRunning = false
         return
       }
 
-      const task = tasks[0]
+      const task = tasks[0] // De eerste taak die we vinden
+      const projectId = task.project_id // Haal het project_id uit de taak
 
-      // markeer running
+      console.log(`[AO] Task found for project ${projectId}, starting execution`);
+
+      // Markeer taak als "running"
       const { error: lockErr } = await supabase
         .from("executor_tasks")
         .update({
@@ -47,12 +50,12 @@ export async function pollExecutorTasks() {
       }
 
       try {
-        // actie uitvoeren
-        await routeAction(task)
+        // Actie uitvoeren
+        await routeAction(task) // Hier wordt de taak daadwerkelijk uitgevoerd
 
-        // ⚠️ GEEN status update hier
-        // handlers zijn leidend
+        // ⚠️ GEEN status update hier, handlers zijn leidend
       } catch (err) {
+        console.error(`[AO] Task ${task.id} failed:`, err.message)
         await supabase
           .from("executor_tasks")
           .update({
