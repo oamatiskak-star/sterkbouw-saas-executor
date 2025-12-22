@@ -7,43 +7,70 @@ const supabase = createClient(
 
 /*
 ========================
-CALCULATIES E/W
+CALCULATIES E/W – EINDPRODUCT
 ========================
-– elektra
-– werktuigbouwkunde
-– installaties
+- GEEN insert
+- UPDATE bestaande calculatie
+- telt E + W op bij bestaande kostprijs
 */
 
 export async function run({ project_id }) {
-  console.log("BUILDER CALCULATIES E/W START", project_id)
-
-  const basis = {
-    elektra_per_m2: 220,
-    werktuigbouwkunde_per_m2: 280
+  if (!project_id) {
+    throw new Error("CALCULATIES_EW_MISSING_PROJECT_ID")
   }
 
   const oppervlak = 1000
 
-  const elektra = oppervlak * basis.elektra_per_m2
-  const werktuigbouwkunde = oppervlak * basis.werktuigbouwkunde_per_m2
+  const elektra_per_m2 = 220
+  const werktuigbouwkunde_per_m2 = 280
 
-  const totaal = elektra + werktuigbouwkunde
+  const elektra = oppervlak * elektra_per_m2
+  const werktuigbouwkunde = oppervlak * werktuigbouwkunde_per_m2
+  const ew_totaal = elektra + werktuigbouwkunde
 
-  const result = {
-    oppervlak,
-    elektra,
-    werktuigbouwkunde,
-    totaal
+  /*
+  ========================
+  HAAL HUIDIGE CALCULATIE OP
+  ========================
+  */
+  const { data: calc, error: fetchError } = await supabase
+    .from("calculaties")
+    .select("kostprijs, verkoopprijs")
+    .eq("project_id", project_id)
+    .single()
+
+  if (fetchError || !calc) {
+    throw new Error("CALCULATIES_EW_FETCH_FAILED")
   }
 
-  await supabase.from("calculaties").insert({
+  const nieuwe_kostprijs = Number(calc.kostprijs || 0) + ew_totaal
+  const marge = Number(calc.verkoopprijs || 0) - nieuwe_kostprijs
+
+  /*
+  ========================
+  UPDATE CALCULATIE
+  ========================
+  */
+  const { error: updateError } = await supabase
+    .from("calculaties")
+    .update({
+      kostprijs: nieuwe_kostprijs,
+      marge,
+      updated_at: new Date().toISOString()
+    })
+    .eq("project_id", project_id)
+
+  if (updateError) {
+    throw new Error("CALCULATIES_EW_UPDATE_FAILED: " + updateError.message)
+  }
+
+  return {
+    state: "DONE",
     project_id,
-    type: "ew",
-    data: result,
-    created_at: new Date().toISOString()
-  })
-
-  console.log("BUILDER CALCULATIES E/W DONE", totaal)
-
-  return result
+    elektra,
+    werktuigbouwkunde,
+    ew_totaal,
+    kostprijs: nieuwe_kostprijs,
+    marge
+  }
 }
