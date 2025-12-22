@@ -63,7 +63,7 @@ app.post("/telegram/webhook", async (req, res) => {
 
 /*
 ========================
-SUPABASE
+SUPABASE (SERVICE ROLE)
 ========================
 */
 const supabase = createClient(
@@ -78,6 +78,52 @@ BASIC ROUTES
 */
 app.get("/", (_req, res) => res.send("OK"))
 app.get("/ping", (_req, res) => res.send("AO LIVE : " + AO_ROLE))
+
+/*
+========================
+UPLOAD ENDPOINT (HARD, NO BUCKET FAIL)
+========================
+POST /upload/project-file
+Headers:
+- x-project-id
+- x-file-name
+Body:
+- raw file stream
+========================
+*/
+app.post("/upload/project-file", async (req, res) => {
+  try {
+    const projectId = req.headers["x-project-id"]
+    const fileName = req.headers["x-file-name"]
+
+    if (!projectId || !fileName) {
+      return res.status(400).json({ error: "PROJECT_ID_OF_FILENAME_ONTBREEKT" })
+    }
+
+    const filePath = `${projectId}/${Date.now()}_${fileName}`
+
+    const { error } = await supabase.storage
+      .from("sterkbouw")
+      .upload(filePath, req.body, {
+        contentType: req.headers["content-type"] || "application/octet-stream",
+        upsert: false
+      })
+
+    if (error) {
+      console.error("UPLOAD_FAILED", error)
+      return res.status(500).json({ error: error.message })
+    }
+
+    res.json({
+      ok: true,
+      bucket: "sterkbouw",
+      path: filePath
+    })
+  } catch (err) {
+    console.error("UPLOAD_FATAL", err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
 
 /*
 ========================
