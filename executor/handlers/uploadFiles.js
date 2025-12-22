@@ -1,5 +1,4 @@
 import fs from "fs"
-import path from "path"
 import { createClient } from "@supabase/supabase-js"
 
 const supabase = createClient(
@@ -10,51 +9,101 @@ const supabase = createClient(
 /*
 payload verwacht:
 {
-  bucket: "uploads",
+  project_id: "uuid",
   files: [
     {
       local_path: "/tmp/upload/abc.pdf",
-      target_path: "calculaties/abc.pdf",
+      filename: "abc.pdf",
       content_type: "application/pdf"
     }
   ]
 }
 */
 
+function assert(cond, msg) {
+  if (!cond) throw new Error(msg)
+}
+
 export async function handleUploadFiles(task) {
+  assert(task, "UPLOAD_NO_TASK")
+
   const payload = task.payload || {}
-  const bucket = payload.bucket
+  const project_id = task.project_id || payload.project_id
   const files = payload.files || []
 
-  if (!bucket) {
-    throw new Error("UPLOAD_NO_BUCKET")
-  }
+  assert(project_id, "UPLOAD_NO_PROJECT_ID")
+  assert(Array.isArray(files) && files.length > 0, "UPLOAD_NO_FILES")
 
-  if (!Array.isArray(files) || files.length === 0) {
-    throw new Error("UPLOAD_NO_FILES")
-  }
+  const bucket = "sterkcalc"
+  let uploaded = 0
 
-  for (const file of files) {
-    if (!file.local_path || !file.target_path) {
-      throw new Error("UPLOAD_FILE_INVALID_PAYLOAD")
-    }
+  for (const f of files) {
+    assert(f.local_path && f.filename, "UPLOAD_FILE_INVALID_PAYLOAD")
 
-    const buffer = fs.readFileSync(file.local_path)
+    const buffer = fs.readFileSync(f.local_path)
+    const target_path = `${project_id}/${Date.now()}_${f.filename}`
 
-    const { error } = await supabase.storage
+    const { error: uploadError } = await supabase.storage
       .from(bucket)
-      .upload(file.target_path, buffer, {
-        contentType: file.content_type || "application/octet-stream",
+      .upload(target_path, buffer, {
+        contentType: f.content_type || "application/octet-stream",
         upsert: false
       })
 
-    if (error) {
-      throw error
+    if (uploadError) {
+      throw new Error("UPLOAD_STORAGE_FAILED: " + uploadError.message)
     }
+
+    const { error: dbError } = await supabase
+      .from("project_files")
+      .insert({
+        project_id,
+        filename: f.filename,
+        path: target_path,
+        bucket
+      })
+
+    if (dbError) {
+      throw new Error("UPLOAD_DB_FAILED: " + dbError.message)
+    }
+
+    uploaded++
+  }
+
+  /*
+  ============================
+  SLUIT HUIDIGE TASK
+  ============================
+  */
+  if (task.id) {
+    await supabase
+      .from("executor_tasks")
+      .update({ status: "done" })
+      .eq("id", task.id)
+  }
+
+  /*
+  ============================
+  START PROJECT SCAN
+  ============================
+  */
+  const { error: nextErr } = await supabase
+    .from("executor_tasks")
+    .insert({
+      project_id,
+      action: "project_scan",
+      payload: { project_id },
+      status: "open",
+      assigned_to: "executor"
+    })
+
+  if (nextErr) {
+    throw new Error("UPLOAD_NEXT_TASK_FAILED: " + nextErr.message)
   }
 
   return {
-    status: "done",
-    uploaded: files.length
+    state: "DONE",
+    project_id,
+    uploaded
   }
 }
