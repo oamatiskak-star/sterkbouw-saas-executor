@@ -6,50 +6,64 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 )
 
-const POLL_INTERVAL = 5000
+const POLL_INTERVAL = 4000
+let isRunning = false
 
 export async function pollExecutorTasks() {
   console.log("[AO] Executor poller gestart")
 
   setInterval(async () => {
-    const { data: tasks, error } = await supabase
-      .from("executor_tasks")
-      .select("*")
-      .eq("status", "open")
-      .order("created_at", { ascending: true })
-      .limit(1)
-
-    if (error || !tasks || tasks.length === 0) return
-
-    const task = tasks[0]
-
-    await supabase
-      .from("executor_tasks")
-      .update({
-        status: "running",
-        started_at: new Date().toISOString()
-      })
-      .eq("id", task.id)
+    if (isRunning) return
+    isRunning = true
 
     try {
-      await routeAction(task)
+      const { data: tasks, error } = await supabase
+        .from("executor_tasks")
+        .select("*")
+        .eq("status", "open")
+        .order("created_at", { ascending: true })
+        .limit(1)
 
-      await supabase
+      if (error || !tasks || tasks.length === 0) {
+        isRunning = false
+        return
+      }
+
+      const task = tasks[0]
+
+      // markeer running
+      const { error: lockErr } = await supabase
         .from("executor_tasks")
         .update({
-          status: "done",
-          finished_at: new Date().toISOString()
+          status: "running",
+          started_at: new Date().toISOString()
         })
         .eq("id", task.id)
-    } catch (err) {
-      await supabase
-        .from("executor_tasks")
-        .update({
-          status: "failed",
-          error: err.message,
-          finished_at: new Date().toISOString()
-        })
-        .eq("id", task.id)
+        .eq("status", "open")
+
+      if (lockErr) {
+        isRunning = false
+        return
+      }
+
+      try {
+        // actie uitvoeren
+        await routeAction(task)
+
+        // ⚠️ GEEN status update hier
+        // handlers zijn leidend
+      } catch (err) {
+        await supabase
+          .from("executor_tasks")
+          .update({
+            status: "failed",
+            error: err.message,
+            finished_at: new Date().toISOString()
+          })
+          .eq("id", task.id)
+      }
+    } finally {
+      isRunning = false
     }
   }, POLL_INTERVAL)
 }
