@@ -1,3 +1,4 @@
+import fs from "fs"
 import { createClient } from "@supabase/supabase-js"
 import { runBuilder } from "../builder/index.js"
 import { architectFullUiBuild } from "../actions/architectFullUiBuild.js"
@@ -85,6 +86,48 @@ export async function runAction(task) {
 
     await telegramLog(chatId, "Rekenwolk afgerond")
     return { state: "DONE", action: actionId }
+  }
+
+  /*
+  ====================================================
+  UPLOAD ACTION  (NIEUW – EXECUTOR ONLY)
+  ====================================================
+  */
+  if (actionId === "upload_files") {
+    console.log("SYSTEM ACTION upload_files", task.id)
+    await telegramLog(chatId, "Upload gestart")
+
+    const { bucket, files } = payload
+
+    if (!bucket) {
+      throw new Error("UPLOAD_NO_BUCKET")
+    }
+
+    if (!Array.isArray(files) || files.length === 0) {
+      throw new Error("UPLOAD_NO_FILES")
+    }
+
+    for (const file of files) {
+      if (!file.local_path || !file.target_path) {
+        throw new Error("UPLOAD_INVALID_FILE_PAYLOAD")
+      }
+
+      const buffer = fs.readFileSync(file.local_path)
+
+      const { error } = await supabase.storage
+        .from(bucket)
+        .upload(file.target_path, buffer, {
+          contentType: file.content_type || "application/octet-stream",
+          upsert: false
+        })
+
+      if (error) {
+        throw error
+      }
+    }
+
+    await telegramLog(chatId, `Upload afgerond (${files.length})`)
+    return { state: "DONE", action: actionId, uploaded: files.length }
   }
 
   /*
