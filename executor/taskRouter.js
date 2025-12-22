@@ -10,42 +10,55 @@ import { handleGenerateAssumptionsReport } from "./handlers/generateAssumptionsR
 import { handleGenerateRiskReport } from "./handlers/generateRiskReport.js"
 import { handleFinalizeRekenwolk } from "./handlers/finalizeRekenwolk.js"
 
-export async function routeTask(task) {
-  switch (task.task_type) {
-    case "PROJECT_SCAN":
+function normalize(action) {
+  return String(action)
+    .toLowerCase()
+    .replace(/[^a-z0-9_]+/g, "_")
+    .replace(/^_|_$/g, "")
+}
+
+export async function routeAction(task) {
+  if (!task || !task.action) {
+    throw new Error("ROUTE_ACTION_MISSING_ACTION")
+  }
+
+  const action = normalize(task.action)
+
+  switch (action) {
+    case "project_scan":
       return handleProjectScan(task)
 
-    case "START_REKENWOLK":
+    case "start_rekenwolk":
       return handleStartRekenwolk(task)
 
-    case "GENERATE_STABU":
+    case "generate_stabu":
       return handleGenerateStabu(task)
 
-    case "DERIVE_QUANTITIES":
+    case "derive_quantities":
       return handleDeriveQuantities(task)
 
-    case "INSTALLATIES_E":
+    case "installaties_e":
       return handleInstallationsE(task)
 
-    case "INSTALLATIES_W":
+    case "installaties_w":
       return handleInstallationsW(task)
 
-    case "PLANNING":
+    case "planning":
       return handlePlanning(task)
 
-    case "GENERATE_REPORT_PDF":
+    case "generate_report_pdf":
       return handleGenerateReportPdf(task)
 
-    case "GENERATE_ASSUMPTIONS_REPORT":
+    case "generate_assumptions_report":
       return handleGenerateAssumptionsReport(task)
 
-    case "GENERATE_RISK_REPORT":
+    case "generate_risk_report":
       return handleGenerateRiskReport(task)
 
-    case "FINALIZE_REKENWOLK":
+    case "finalize_rekenwolk":
       return handleFinalizeRekenwolk(task)
 
     default:
-      throw new Error(`UNKNOWN_TASK_TYPE: ${task.task_type}`)
+      throw new Error(`UNKNOWN_ACTION: ${action}`)
   }
 }
