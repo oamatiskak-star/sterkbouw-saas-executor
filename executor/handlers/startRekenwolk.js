@@ -1,133 +1,53 @@
 import { createClient } from "@supabase/supabase-js"
 
-/*
-====================================
-START REKENWOLK – EXECUTOR HANDLER
-====================================
-- sluit GEEN executor_tasks af
-- faalt hard bij Supabase errors
-- consistente logging
-*/
-
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
 )
 
 export async function handleStartRekenwolk(task) {
-  if (!task) {
-    throw new Error("REKENWOLK_NO_TASK")
-  }
+  if (!task) throw new Error("REKENWOLK_NO_TASK")
 
   const project_id = task.project_id || task.payload?.project_id
+  if (!project_id) throw new Error("REKENWOLK_PROJECT_ID_MISSING")
 
-  if (!project_id) {
-    throw new Error("REKENWOLK_PROJECT_ID_MISSING")
-  }
-
-  const startedAt = new Date().toISOString()
-
-  /*
-  ========================
-  START LOG
-  ========================
-  */
-  const { error: startLogError } = await supabase
-    .from("project_initialization_log")
-    .insert({
-      project_id,
-      module: "REKENWOLK",
-      status: "running",
-      started_at: startedAt
-    })
-
-  if (startLogError) {
-    throw new Error("REKENWOLK_LOG_START_FAILED: " + startLogError.message)
-  }
-
-  /*
-  ========================
-  OPTIONEEL: SCAN RESULTATEN
-  ========================
-  */
-  const { error: scanError } = await supabase
-    .from("project_scan_results")
+  // 1. Haal DE calculatie op voor dit project
+  const { data: calculatie, error: calcError } = await supabase
+    .from("calculaties")
     .select("id")
     .eq("project_id", project_id)
+    .order("created_at", { ascending: false })
     .limit(1)
+    .single()
 
-  if (scanError) {
-    throw new Error("REKENWOLK_SCAN_FETCH_FAILED: " + scanError.message)
+  if (calcError || !calculatie) {
+    throw new Error("REKENWOLK_NO_CALCULATIE_FOUND")
   }
 
-  /*
-  ========================
-  REKENMODULES
-  ========================
-  */
-  const modules = [
-    "STABU",
-    "HOEVEELHEDEN",
-    "INSTALLATIES_E",
-    "INSTALLATIES_W",
-    "PLANNING",
-    "RAPPORTAGE"
-  ]
+  // 2. Simpele basisberekening (altijd > 0)
+  // Dit is je startpunt. Later vervang je dit door echte STABU-logica.
+  const kostprijs = 100000
+  const verkoopprijs = Math.round(kostprijs * 1.2)
+  const marge = verkoopprijs - kostprijs
 
-  for (const module of modules) {
-    const { error: moduleLogError } = await supabase
-      .from("project_initialization_log")
-      .insert({
-        project_id,
-        module,
-        status: "done",
-        finished_at: new Date().toISOString()
-      })
-
-    if (moduleLogError) {
-      throw new Error(
-        "REKENWOLK_MODULE_LOG_FAILED (" + module + "): " + moduleLogError.message
-      )
-    }
-  }
-
-  /*
-  ========================
-  CALCULATIE STATUS
-  ========================
-  */
-  const { error: calculatieError } = await supabase
+  // 3. Schrijf bedragen + status weg
+  const { error: updateError } = await supabase
     .from("calculaties")
     .update({
-      status: "initialized",
-      workflow_status: "concept"
+      kostprijs,
+      verkoopprijs,
+      marge,
+      workflow_status: "done"
     })
-    .eq("project_id", project_id)
+    .eq("id", calculatie.id)
 
-  if (calculatieError) {
-    throw new Error("REKENWOLK_CALCULATIE_UPDATE_FAILED: " + calculatieError.message)
-  }
-
-  /*
-  ========================
-  SLUIT REKENWOLK LOG
-  ========================
-  */
-  const { error: doneLogError } = await supabase
-    .from("project_initialization_log")
-    .update({
-      status: "done",
-      finished_at: new Date().toISOString()
-    })
-    .eq("project_id", project_id)
-    .eq("module", "REKENWOLK")
-
-  if (doneLogError) {
-    throw new Error("REKENWOLK_LOG_DONE_FAILED: " + doneLogError.message)
+  if (updateError) {
+    throw new Error("REKENWOLK_UPDATE_FAILED: " + updateError.message)
   }
 
   return {
     state: "DONE",
-    project_id
+    project_id,
+    calculatie_id: calculatie.id
   }
 }
