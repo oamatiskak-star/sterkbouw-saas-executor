@@ -5,62 +5,135 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 )
 
+function assert(cond, msg) {
+  if (!cond) throw new Error(msg)
+}
+
+/*
+========================
+START REKENWOLK – EINDPRODUCT
+========================
+- start echte keten
+- geen placeholders
+- forceert volledige calculatieflow
+*/
+
 export default async function startRekenwolk(payload = {}) {
-  const { project_id } = payload
-
-  if (!project_id) {
-    throw new Error("START_REKENWOLK_MISSING_PROJECT_ID")
-  }
-
+  assert(payload.project_id, "START_REKENWOLK_MISSING_PROJECT_ID")
+  const project_id = payload.project_id
   const now = new Date().toISOString()
 
-  // 1. START LOG
-  await supabase.from("project_initialization_log").insert({
-    project_id,
-    module: "REKENWOLK",
-    status: "running",
-    started_at: now
-  })
-
-  // 2. EXECUTIE (simulatie / placeholder)
-  const { error } = await supabase
-    .from("rekenwolk_results")
+  /*
+  ========================
+  START LOG
+  ========================
+  */
+  const { error: logErr } = await supabase
+    .from("project_initialization_log")
     .insert({
       project_id,
-      status: "started",
-      created_at: now
-    })
-
-  if (error) {
-    await supabase.from("project_initialization_log").insert({
-      project_id,
       module: "REKENWOLK",
-      status: "error",
-      finished_at: new Date().toISOString(),
-      output_ref: error.message
+      status: "running",
+      started_at: now
     })
 
-    throw new Error("START_REKENWOLK_INSERT_FAILED: " + error.message)
-  }
+  assert(!logErr, "REKENWOLK_LOG_START_FAILED")
 
-  // 3. DONE LOG
-  await supabase.from("project_initialization_log").insert({
+  /*
+  ========================
+  TASK 1: STABU
+  ========================
+  */
+  await supabase.from("executor_tasks").insert({
     project_id,
-    module: "REKENWOLK",
-    status: "done",
-    finished_at: new Date().toISOString()
+    task_type: "GENERATE_STABU",
+    payload: { project_id },
+    status: "open",
+    assigned_to: "executor"
   })
 
-  // 4. CALCULATIE UIT INITIALISATIE HALEN
-  await supabase
+  /*
+  ========================
+  TASK 2: HOEVEELHEDEN
+  ========================
+  */
+  await supabase.from("executor_tasks").insert({
+    project_id,
+    task_type: "DERIVE_QUANTITIES",
+    payload: { project_id },
+    status: "open",
+    assigned_to: "executor"
+  })
+
+  /*
+  ========================
+  TASK 3: INSTALLATIES E
+  ========================
+  */
+  await supabase.from("executor_tasks").insert({
+    project_id,
+    task_type: "INSTALLATIES_E",
+    payload: { project_id },
+    status: "open",
+    assigned_to: "executor"
+  })
+
+  /*
+  ========================
+  TASK 4: INSTALLATIES W
+  ========================
+  */
+  await supabase.from("executor_tasks").insert({
+    project_id,
+    task_type: "INSTALLATIES_W",
+    payload: { project_id },
+    status: "open",
+    assigned_to: "executor"
+  })
+
+  /*
+  ========================
+  TASK 5: PLANNING
+  ========================
+  */
+  await supabase.from("executor_tasks").insert({
+    project_id,
+    task_type: "PLANNING",
+    payload: { project_id },
+    status: "open",
+    assigned_to: "executor"
+  })
+
+  /*
+  ========================
+  TASK 6: RAPPORTAGE (EIND)
+  ========================
+  */
+  await supabase.from("executor_tasks").insert({
+    project_id,
+    task_type: "RAPPORTAGE",
+    payload: { project_id },
+    status: "open",
+    assigned_to: "executor"
+  })
+
+  /*
+  ========================
+  CALCULATIE STATUS
+  ========================
+  */
+  const { error: calcErr } = await supabase
     .from("calculaties")
     .update({
-      workflow_status: "concept"
+      workflow_status: "running",
+      status: "running"
     })
     .eq("project_id", project_id)
 
+  assert(!calcErr, "REKENWOLK_CALCULATIE_UPDATE_FAILED")
+
   return {
-    state: "DONE",
+    state: "STARTED",
     project_id
   }
 }
