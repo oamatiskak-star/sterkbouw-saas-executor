@@ -1,17 +1,5 @@
 import { createClient } from "@supabase/supabase-js"
-
-/*
-=====================================================================
-REKENWOLK – VOLLEDIGE CALCULATIE ENGINE
-=====================================================================
-- Enige input: project_id
-- Leest STABU regels
-- Leest hoeveelheden
-- Rekent regels door
-- Schrijft calculatie totalen
-- Zet workflow_status = done
-=====================================================================
-*/
+import { PDFDocument, rgb, StandardFonts } from "pdf-lib"
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -19,28 +7,25 @@ const supabase = createClient(
 )
 
 /*
----------------------------------------------------------------------
-HULPFUNCTIES
----------------------------------------------------------------------
+===========================================================
+REKENWOLK – EINDPRODUCT ENGINE (2JOURS PDF)
+===========================================================
+INPUT: project_id
+OUTPUT:
+- calculaties bijgewerkt
+- calculatie_regels gevuld
+- PDF gegenereerd (2jours)
+- workflow_status = done
+===========================================================
 */
 
-function assert(condition, code) {
-  if (!condition) throw new Error(code)
+function assert(cond, msg) {
+  if (!cond) throw new Error(msg)
 }
 
-function round2(v) {
-  return Math.round(v * 100) / 100
+function round2(n) {
+  return Math.round(n * 100) / 100
 }
-
-function sum(arr) {
-  return round2(arr.reduce((a, b) => a + b, 0))
-}
-
-/*
----------------------------------------------------------------------
-STAP 1 – HAAL ACTIEVE CALCULATIE OP
----------------------------------------------------------------------
-*/
 
 async function getActiveCalculatie(project_id) {
   const { data, error } = await supabase
@@ -51,106 +36,58 @@ async function getActiveCalculatie(project_id) {
     .limit(1)
     .single()
 
-  assert(!error && data, "REKENWOLK_NO_CALCULATIE")
+  assert(!error && data, "NO_CALCULATIE")
   return data
 }
 
-/*
----------------------------------------------------------------------
-STAP 2 – HAAL STABU REGELS OP
----------------------------------------------------------------------
-Verwacht tabel:
-stabu_regels
-- id
-- code
-- omschrijving
-- eenheid
-- prijs
----------------------------------------------------------------------
-*/
-
-async function getStabuRegels() {
+async function getStabu() {
   const { data, error } = await supabase
     .from("stabu_regels")
-    .select("*")
+    .select("code, omschrijving, eenheid, prijs")
 
-  assert(!error, "REKENWOLK_STABU_FETCH_FAILED")
-  return data || []
+  assert(!error && data?.length, "NO_STABU")
+  return data
 }
-
-/*
----------------------------------------------------------------------
-STAP 3 – HAAL HOEVEELHEDEN OP
----------------------------------------------------------------------
-Verwacht tabel:
-project_hoeveelheden
-- project_id
-- stabu_code
-- hoeveelheid
----------------------------------------------------------------------
-*/
 
 async function getHoeveelheden(project_id) {
   const { data, error } = await supabase
     .from("project_hoeveelheden")
-    .select("*")
+    .select("stabu_code, hoeveelheid")
     .eq("project_id", project_id)
 
-  assert(!error, "REKENWOLK_HOEVEELHEDEN_FETCH_FAILED")
+  assert(!error, "NO_HOEVEELHEDEN")
   return data || []
 }
 
-/*
----------------------------------------------------------------------
-STAP 4 – BOUW CALCULATIE REGELS
----------------------------------------------------------------------
-Resultaat:
-- stabu_code
-- hoeveelheid
-- prijs
-- regel_totaal
----------------------------------------------------------------------
-*/
-
-function buildCalculatieRegels(stabu, hoeveelheden) {
+function buildRegels(stabu, qty) {
   const qtyMap = {}
-  for (const h of hoeveelheden) {
-    qtyMap[h.stabu_code] = Number(h.hoeveelheid || 0)
-  }
+  for (const q of qty) qtyMap[q.stabu_code] = Number(q.hoeveelheid || 0)
 
   const regels = []
 
   for (const s of stabu) {
-    const qty = Number(qtyMap[s.code] || 0)
-    if (qty <= 0) continue
-
-    const prijs = Number(s.prijs || 0)
-    const totaal = round2(qty * prijs)
-
+    const h = qtyMap[s.code]
+    if (!h || h <= 0) continue
+    const totaal = round2(h * Number(s.prijs))
     regels.push({
       stabu_code: s.code,
       omschrijving: s.omschrijving,
       eenheid: s.eenheid,
-      hoeveelheid: qty,
-      prijs,
+      hoeveelheid: h,
+      prijs: Number(s.prijs),
       totaal
     })
   }
 
+  assert(regels.length, "NO_REGELS")
   return regels
 }
 
-/*
----------------------------------------------------------------------
-STAP 5 – SCHRIJF REGELS WEG
----------------------------------------------------------------------
-Tabel:
-calculatie_regels
----------------------------------------------------------------------
-*/
-
-async function writeCalculatieRegels(calculatie_id, regels) {
-  if (regels.length === 0) return
+async function writeRegels(calculatie_id, regels) {
+  await supabase
+    .from("calculatie_regels")
+    .delete()
+    .eq("calculatie_id", calculatie_id)
 
   const rows = regels.map(r => ({
     calculatie_id,
@@ -166,33 +103,16 @@ async function writeCalculatieRegels(calculatie_id, regels) {
     .from("calculatie_regels")
     .insert(rows)
 
-  assert(!error, "REKENWOLK_WRITE_REGELS_FAILED")
+  assert(!error, "WRITE_REGELS_FAILED")
 }
 
-/*
----------------------------------------------------------------------
-STAP 6 – BEREKEN TOTALEN
----------------------------------------------------------------------
-*/
-
-function calculateTotals(regels) {
-  const kostprijs = sum(regels.map(r => r.totaal))
+function calcTotals(regels) {
+  const kostprijs = round2(regels.reduce((s, r) => s + r.totaal, 0))
   const opslag = 0.15
   const verkoopprijs = round2(kostprijs * (1 + opslag))
   const marge = round2(verkoopprijs - kostprijs)
-
-  return {
-    kostprijs,
-    verkoopprijs,
-    marge
-  }
+  return { kostprijs, verkoopprijs, marge }
 }
-
-/*
----------------------------------------------------------------------
-STAP 7 – UPDATE CALCULATIE
----------------------------------------------------------------------
-*/
 
 async function updateCalculatie(calculatie_id, totals) {
   const { error } = await supabase
@@ -205,55 +125,101 @@ async function updateCalculatie(calculatie_id, totals) {
     })
     .eq("id", calculatie_id)
 
-  assert(!error, "REKENWOLK_UPDATE_CALCULATIE_FAILED")
+  assert(!error, "UPDATE_CALCULATIE_FAILED")
 }
 
 /*
----------------------------------------------------------------------
-HOOFDFUNCTIE
----------------------------------------------------------------------
+========================
+2JOURS PDF GENERATOR
+========================
+*/
+
+async function generate2JoursPdf(calculatie, regels, totals) {
+  const pdf = await PDFDocument.create()
+  const page = pdf.addPage([595, 842])
+  const font = await pdf.embedFont(StandardFonts.Helvetica)
+
+  let y = 800
+  const line = (t, size = 10) => {
+    page.drawText(t, { x: 40, y, size, font, color: rgb(0, 0, 0) })
+    y -= size + 6
+  }
+
+  line("CALCULATIE – 2JOURS", 16)
+  y -= 10
+
+  line(`Project: ${calculatie.project_id}`)
+  line(`Calculatie: ${calculatie.id}`)
+  y -= 10
+
+  line("REGELS:", 12)
+  y -= 6
+
+  for (const r of regels) {
+    line(
+      `${r.stabu_code} | ${r.omschrijving} | ${r.hoeveelheid} ${r.eenheid} x €${r.prijs} = €${r.totaal}`
+    )
+    if (y < 80) {
+      y = 800
+      pdf.addPage([595, 842])
+    }
+  }
+
+  y -= 10
+  line(`Kostprijs: € ${totals.kostprijs}`, 12)
+  line(`Verkoopprijs: € ${totals.verkoopprijs}`, 12)
+  line(`Marge: € ${totals.marge}`, 12)
+
+  return await pdf.save()
+}
+
+async function uploadPdf(project_id, pdfBytes) {
+  const path = `${project_id}/calculatie_2jours.pdf`
+  const { error } = await supabase.storage
+    .from("sterkcalc")
+    .upload(path, pdfBytes, {
+      contentType: "application/pdf",
+      upsert: true
+    })
+
+  assert(!error, "PDF_UPLOAD_FAILED")
+  return path
+}
+
+/*
+========================
+ENTRYPOINT
+========================
 */
 
 export async function handleStartRekenwolk(task) {
-  assert(task, "REKENWOLK_NO_TASK")
+  assert(task, "NO_TASK")
 
   const project_id = task.project_id || task.payload?.project_id
-  assert(project_id, "REKENWOLK_PROJECT_ID_MISSING")
+  assert(project_id, "NO_PROJECT_ID")
 
-  // 1. Calculatie
   const calculatie = await getActiveCalculatie(project_id)
-
-  // 2. STABU
-  const stabu = await getStabuRegels()
-  assert(stabu.length > 0, "REKENWOLK_NO_STABU")
-
-  // 3. Hoeveelheden
+  const stabu = await getStabu()
   const hoeveelheden = await getHoeveelheden(project_id)
 
-  // 4. Regels bouwen
-  const regels = buildCalculatieRegels(stabu, hoeveelheden)
-  assert(regels.length > 0, "REKENWOLK_NO_REGELS")
+  const regels = buildRegels(stabu, hoeveelheden)
+  await writeRegels(calculatie.id, regels)
 
-  // 5. Oude regels opschonen
-  await supabase
-    .from("calculatie_regels")
-    .delete()
-    .eq("calculatie_id", calculatie.id)
-
-  // 6. Regels schrijven
-  await writeCalculatieRegels(calculatie.id, regels)
-
-  // 7. Totalen
-  const totals = calculateTotals(regels)
-
-  // 8. Calculatie updaten
+  const totals = calcTotals(regels)
   await updateCalculatie(calculatie.id, totals)
+
+  const pdfBytes = await generate2JoursPdf(calculatie, regels, totals)
+  const pdfPath = await uploadPdf(project_id, pdfBytes)
+
+  await supabase
+    .from("calculaties")
+    .update({ pdf_path: pdfPath })
+    .eq("id", calculatie.id)
 
   return {
     state: "DONE",
     project_id,
     calculatie_id: calculatie.id,
-    regels: regels.length,
-    totals
+    pdf: pdfPath
   }
 }
