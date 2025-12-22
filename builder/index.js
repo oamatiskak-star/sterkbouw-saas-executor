@@ -2,14 +2,14 @@ import { registerUnknownCommand } from "../utils/registerUnknownCommand.js"
 
 /*
 ========================
-BUILDER ENTRY
+BUILDER ENTRY – DEFINITIEF
 ========================
-- valideert input
-- faalt hard bij errors
-- GEEN executor statusbeheer
+- gebruikt action (niet actionId)
+- valideert payload hard
+- geen executor statusbeheer
 */
 
-function normalizeActionId(raw) {
+function normalize(raw) {
   if (!raw || typeof raw !== "string") return null
   return raw
     .toLowerCase()
@@ -22,14 +22,15 @@ export async function runBuilder(payload = {}) {
     throw new Error("BUILDER_INVALID_PAYLOAD")
   }
 
-  const actionId = normalizeActionId(payload.actionId)
+  const rawAction = payload.action || payload.actionId
+  const action = normalize(rawAction)
 
-  if (!actionId) {
-    throw new Error("BUILDER_ACTION_ID_MISSING")
+  if (!action) {
+    throw new Error("BUILDER_ACTION_MISSING")
   }
 
   try {
-    switch (actionId) {
+    switch (action) {
 
       /*
       ========================
@@ -101,11 +102,6 @@ export async function runBuilder(payload = {}) {
         return await m.generateTablerLogin(payload)
       }
 
-      case "frontend_write_file": {
-        const m = await import("./frontend/generatePage.js")
-        return await m.generatePage(payload)
-      }
-
       case "frontend_generate_standard_page": {
         const m = await import("./frontend/generateStandardPage.js")
         return await m.generateStandardPage(payload)
@@ -119,7 +115,6 @@ export async function runBuilder(payload = {}) {
       /*
       ========================
       BACKEND / SYSTEM
-      – bewust NO-OP
       ========================
       */
       case "backend_run_initialization":
@@ -127,7 +122,7 @@ export async function runBuilder(payload = {}) {
       case "system_post_deploy_verify":
       case "system_status":
       case "system_health": {
-        return { action: actionId, state: "SKIPPED" }
+        return { action, state: "SKIPPED" }
       }
 
       /*
@@ -136,10 +131,10 @@ export async function runBuilder(payload = {}) {
       ========================
       */
       default:
-        await registerUnknownCommand("builder", actionId)
-        return { action: actionId, state: "IGNORED" }
+        await registerUnknownCommand("builder", action)
+        return { action, state: "IGNORED" }
     }
   } catch (err) {
-    throw new Error(`BUILDER_ACTION_FAILED (${actionId}): ${err.message}`)
+    throw new Error(`BUILDER_ACTION_FAILED (${action}): ${err.message}`)
   }
 }
