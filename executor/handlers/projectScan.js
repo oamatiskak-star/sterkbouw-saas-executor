@@ -7,10 +7,14 @@ const supabase = createClient(
 )
 
 export async function handleProjectScan(task) {
-  if (!task || !task.project_id) {
-    throw new Error("PROJECT_SCAN_NO_PROJECT_ID")
+  console.log("[PROJECT_SCAN] START", task)
+
+  if (!task || !task.id || !task.project_id) {
+    console.error("[PROJECT_SCAN] INVALID_TASK")
+    return
   }
 
+  const taskId = task.id
   const project_id = task.project_id
   const payload =
     task.payload && typeof task.payload === "object" ? task.payload : {}
@@ -19,9 +23,7 @@ export async function handleProjectScan(task) {
 
   try {
     /*
-    ========================
     VALIDATIE: PROJECT BESTAAT
-    ========================
     */
     const { data: project, error: projectError } = await supabase
       .from("projects")
@@ -34,9 +36,7 @@ export async function handleProjectScan(task) {
     }
 
     /*
-    ========================
     STATUS → RUNNING
-    ========================
     */
     await supabase
       .from("projects")
@@ -46,11 +46,6 @@ export async function handleProjectScan(task) {
       })
       .eq("id", project_id)
 
-    /*
-    ========================
-    START LOG
-    ========================
-    */
     await supabase
       .from("project_initialization_log")
       .insert({
@@ -67,9 +62,7 @@ export async function handleProjectScan(task) {
     }
 
     /*
-    ========================
     BESTANDEN OPHALEN
-    ========================
     */
     const { data: files, error: filesError } = await supabase
       .from("project_files")
@@ -85,9 +78,7 @@ export async function handleProjectScan(task) {
     }
 
     /*
-    ========================
-    SCAN RESULTAAT OPSLAAN
-    ========================
+    SCAN RESULTAAT
     */
     const scanResult = {
       files: files.map(f => ({
@@ -106,9 +97,7 @@ export async function handleProjectScan(task) {
       })
 
     /*
-    ========================
     STATUS → COMPLETED
-    ========================
     */
     await supabase
       .from("projects")
@@ -118,11 +107,6 @@ export async function handleProjectScan(task) {
       })
       .eq("id", project_id)
 
-    /*
-    ========================
-    LOG → DONE
-    ========================
-    */
     await supabase
       .from("project_initialization_log")
       .update({
@@ -132,23 +116,24 @@ export async function handleProjectScan(task) {
       .eq("project_id", project_id)
       .eq("module", "PROJECT_SCAN")
 
+    await supabase
+      .from("executor_tasks")
+      .update({
+        status: "completed",
+        finished_at: new Date().toISOString()
+      })
+      .eq("id", taskId)
+
     if (chatId) {
       try {
         await sendTelegram(chatId, "Projectscan afgerond")
       } catch (_) {}
     }
 
-    return {
-      state: "DONE",
-      project_id,
-      scan: scanResult
-    }
+    console.log("[PROJECT_SCAN] DONE", project_id)
   } catch (err) {
-    /*
-    ========================
-    STATUS → FAILED
-    ========================
-    */
+    console.error("[PROJECT_SCAN] FAILED", err.message)
+
     await supabase
       .from("projects")
       .update({
@@ -166,6 +151,13 @@ export async function handleProjectScan(task) {
       .eq("project_id", project_id)
       .eq("module", "PROJECT_SCAN")
 
-    throw err
+    await supabase
+      .from("executor_tasks")
+      .update({
+        status: "failed",
+        error: err.message,
+        finished_at: new Date().toISOString()
+      })
+      .eq("id", taskId)
   }
 }
