@@ -1,0 +1,44 @@
+name: Hourly Executor Backup
+
+on:
+  schedule:
+    - cron: "0 * * * *"
+  workflow_dispatch:
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout executor repo
+        uses: actions/checkout@v4
+
+      - name: Set timestamp
+        run: |
+          echo "TS=$(date -u +'%Y-%m-%d-%H')" >> $GITHUB_ENV
+
+      - name: Create executor archive
+        run: |
+          mkdir -p backup/executor
+          git archive --format=tar.gz -o backup/executor/executor_${TS}.tar.gz HEAD
+
+      - name: Checkout backup repository
+        uses: actions/checkout@v4
+        with:
+          repository: oamatiskak-star/sterkcalc-backups
+          path: backups
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Copy executor backup
+        run: |
+          mkdir -p backups/github/executor
+          cp backup/executor/executor_${TS}.tar.gz backups/github/executor/
+
+      - name: Commit and push backup
+        run: |
+          cd backups
+          git config user.name "SterkCalc Backup Bot"
+          git config user.email "backup@sterkcalc"
+          git add .
+          git commit -m "executor backup ${TS}" || echo "no changes"
+          git push
