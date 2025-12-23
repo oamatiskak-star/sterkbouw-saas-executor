@@ -73,7 +73,7 @@ export async function handleProjectScan(task) {
     */
     const { data: files, error: filesError } = await supabase
       .from("project_files")
-      .select("id")
+      .select("id, file_name, storage_path")
       .eq("project_id", project_id)
 
     if (filesError) {
@@ -86,25 +86,15 @@ export async function handleProjectScan(task) {
 
     /*
     ========================
-    VALIDATIE: STABU
-    ========================
-    */
-    const { count: stabuCount, error: stabuError } = await supabase
-      .from("stabu_regels")
-      .select("*", { count: "exact", head: true })
-
-    if (stabuError || !stabuCount || stabuCount === 0) {
-      throw new Error("PROJECT_SCAN_NO_STABU_DATA")
-    }
-
-    /*
-    ========================
     SCAN RESULTAAT OPSLAAN
     ========================
     */
     const scanResult = {
       uploads: files.length,
-      stabu_rules: stabuCount,
+      files: files.map(f => ({
+        name: f.file_name,
+        path: f.storage_path
+      })),
       scanned_at: new Date().toISOString()
     }
 
@@ -157,27 +147,9 @@ export async function handleProjectScan(task) {
         .eq("id", task.id)
     }
 
-    /*
-    ========================
-    START REKENWOLK
-    ========================
-    */
-    await supabase
-      .from("executor_tasks")
-      .insert({
-        project_id,
-        action: "start_rekenwolk",
-        payload: { project_id, chat_id: chatId },
-        status: "open",
-        assigned_to: "executor"
-      })
-
     if (chatId) {
       try {
-        await sendTelegram(
-          chatId,
-          "Projectscan afgerond. Rekenwolk gestart."
-        )
+        await sendTelegram(chatId, "Projectscan afgerond")
       } catch (_) {}
     }
 
