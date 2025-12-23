@@ -116,8 +116,7 @@ app.post("/upload-files", upload.array("files"), async (req, res) => {
       if (dbError) throw dbError
 
       analysisLog.push({
-        file: file.originalname,
-        path: storagePath,
+        file_name: file.originalname,
         status: "queued"
       })
     }
@@ -143,7 +142,7 @@ app.post("/upload-files", upload.array("files"), async (req, res) => {
     res.json({
       ok: true,
       project_id: projectId,
-      files: analysisLog.map(f => f.file),
+      files: analysisLog.map(f => f.file_name),
       next: "project_scan"
     })
   } catch (e) {
@@ -180,6 +179,13 @@ async function pollExecutorTasks() {
       })
       .eq("id", task.id)
 
+    if (task.action === "project_scan") {
+      await supabase
+        .from("project_files")
+        .update({ status: "analysing" })
+        .eq("project_id", task.project_id)
+    }
+
     await runAction(task)
 
     if (task.action === "project_scan") {
@@ -196,6 +202,11 @@ async function pollExecutorTasks() {
           created_at: new Date().toISOString()
         })
       }
+
+      await supabase
+        .from("project_files")
+        .update({ status: "done" })
+        .eq("project_id", task.project_id)
 
       await supabase
         .from("projects")
@@ -216,6 +227,11 @@ async function pollExecutorTasks() {
 
   } catch (e) {
     console.error("EXECUTOR_TASK_ERROR", e.message)
+
+    await supabase
+      .from("project_files")
+      .update({ status: "failed" })
+      .eq("project_id", task.project_id)
 
     await supabase
       .from("executor_tasks")
