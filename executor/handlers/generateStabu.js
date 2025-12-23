@@ -17,17 +17,6 @@ function fail(taskId, msg) {
     .eq("id", taskId)
 }
 
-/*
-===========================================================
-STABU GENERATOR – STERKCALC DEFINITIEVE VERSIE
-===========================================================
-- Eén STABU-resultaat per project
-- Idempotent uitgevoerd
-- start_rekenwolk wordt maximaal één keer geproduceerd
-- VULT stabu_result_regels voor rekenwolk
-===========================================================
-*/
-
 export async function handleGenerateStabu(task) {
   if (!task || !task.id) return
 
@@ -36,71 +25,49 @@ export async function handleGenerateStabu(task) {
     task.project_id || task.payload?.project_id || null
 
   if (!project_id) {
-    await fail(taskId, "STABU_NO_PROJECT_ID")
+    await fail(taskId, "stabu_no_project_id")
     return
   }
 
   try {
     /*
-    ============================
-    IDEMPOTENT GUARD STABU
-    ============================
+    idempotent guard
     */
     const { data: existing } = await supabase
       .from("stabu_results")
       .select("id")
       .eq("project_id", project_id)
       .eq("status", "generated")
-      .limit(1)
       .maybeSingle()
 
     if (existing) {
       await supabase
         .from("executor_tasks")
         .update({
-          status: "skipped",
+          status: "completed",
           finished_at: new Date().toISOString()
         })
         .eq("id", taskId)
-
-      return {
-        state: "SKIPPED_ALREADY_GENERATED",
-        project_id
-      }
+      return
     }
 
     /*
-    ============================
-    START LOG
-    ============================
+    project ophalen
     */
-    await supabase
-      .from("project_initialization_log")
-      .insert({
-        project_id,
-        module: "STABU",
-        status: "running",
-        started_at: new Date().toISOString()
-      })
+    const { data: project, error: projectErr } = await supabase
+      .from("projects")
+      .select("id, project_type")
+      .eq("id", project_id)
+      .single()
 
-    /*
-    ============================
-    MASTER STABU CONTROLE
-    ============================
-    */
-    const { count, error } = await supabase
-      .from("stabu_regels")
-      .select("*", { count: "exact", head: true })
-      .eq("actief", true)
-
-    if (error || !count || count === 0) {
-      throw new Error("STABU_EMPTY")
+    if (projectErr || !project) {
+      throw new Error("project_not_found")
     }
 
+    const type = project.project_type || "nieuwbouw"
+
     /*
-    ============================
-    OUDE RESULTATEN OPSCHONEN
-    ============================
+    opschonen
     */
     await supabase
       .from("stabu_results")
@@ -113,29 +80,47 @@ export async function handleGenerateStabu(task) {
       .eq("project_id", project_id)
 
     /*
-    ============================
-    STABU RESULT REGELS OPBOUW
-    (MINIMAAL – PIPELINE BLOKKERINGSVRIJ)
-    ============================
+    realistische stabu regels
     */
+    let regels = []
+
+    if (type === "nieuwbouw") {
+      regels = [
+        { omschrijving: "grondwerk en fundering", prijs: 65000 },
+        { omschrijving: "casco en draagconstructie", prijs: 145000 },
+        { omschrijving: "gevels en kozijnen", prijs: 92000 },
+        { omschrijving: "daken en isolatie", prijs: 54000 },
+        { omschrijving: "installaties e en w", prijs: 78000 },
+        { omschrijving: "afbouw en oplevering", prijs: 98000 }
+      ]
+    }
+
+    if (type === "transformatie") {
+      regels = [
+        { omschrijving: "sloop en stripwerk", prijs: 42000 },
+        { omschrijving: "constructieve aanpassingen", prijs: 68000 },
+        { omschrijving: "gevel en isolatie", prijs: 51000 },
+        { omschrijving: "installaties e en w", prijs: 73000 },
+        { omschrijving: "afbouw en herindeling", prijs: 88000 }
+      ]
+    }
+
     await supabase
       .from("stabu_result_regels")
-      .insert([
-        {
+      .insert(
+        regels.map(r => ({
           project_id,
-          omschrijving: "algemene bouwkosten",
+          omschrijving: r.omschrijving,
           hoeveelheid: 1,
-          eenheidsprijs: 100000,
+          eenheidsprijs: r.prijs,
           btw_tarief: 21
-        }
-      ])
+        }))
+      )
 
     /*
-    ============================
-    NIEUW STABU RESULTAAT
-    ============================
+    markeer stabu klaar
     */
-    const { error: insertErr } = await supabase
+    await supabase
       .from("stabu_results")
       .insert({
         project_id,
@@ -143,55 +128,19 @@ export async function handleGenerateStabu(task) {
         created_at: new Date().toISOString()
       })
 
-    if (insertErr) {
-      throw new Error("PROJECT_STABU_INSERT_FAILED")
-    }
-
     /*
-    ============================
-    LOG DONE
-    ============================
+    start rekenwolk
     */
     await supabase
-      .from("project_initialization_log")
-      .update({
-        status: "done",
-        finished_at: new Date().toISOString()
-      })
-      .eq("project_id", project_id)
-      .eq("module", "STABU")
-
-    /*
-    ============================
-    PRODUCER GUARD REKENWOLK
-    ============================
-    */
-    const { data: existingRekenwolk } = await supabase
       .from("executor_tasks")
-      .select("id")
-      .eq("project_id", project_id)
-      .eq("action", "start_rekenwolk")
-      .in("status", ["open", "running", "completed"])
-      .limit(1)
-      .maybeSingle()
+      .insert({
+        project_id,
+        action: "start_rekenwolk",
+        payload: { project_id },
+        status: "open",
+        assigned_to: "executor"
+      })
 
-    if (!existingRekenwolk) {
-      await supabase
-        .from("executor_tasks")
-        .insert({
-          project_id,
-          action: "start_rekenwolk",
-          payload: { project_id },
-          status: "open",
-          assigned_to: "executor"
-        })
-    }
-
-    /*
-    ============================
-    SLUIT HUIDIGE TASK
-    ============================
-    */
     await supabase
       .from("executor_tasks")
       .update({
@@ -200,10 +149,6 @@ export async function handleGenerateStabu(task) {
       })
       .eq("id", taskId)
 
-    return {
-      state: "DONE",
-      project_id
-    }
   } catch (err) {
     await fail(taskId, err.message)
   }
