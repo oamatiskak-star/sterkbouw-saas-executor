@@ -3,9 +3,10 @@ import { runBuilder } from "../builder/index.js"
 import { architectFullUiBuild } from "../actions/architectFullUiBuild.js"
 import { sendTelegram } from "../integrations/telegramSender.js"
 
-// SYSTEM HANDLERS
+// HANDLERS
 import { handleProjectScan } from "./handlers/projectScan.js"
 import { handleStartRekenwolk } from "./handlers/startRekenwolk.js"
+import { handleGenerateStabu } from "./handlers/generateStabu.js"
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -16,8 +17,7 @@ const STRICT_MODE = true
 const TELEGRAM_MODE = true
 
 async function telegramLog(chatId, message) {
-  if (!TELEGRAM_MODE) return
-  if (!chatId) return
+  if (!TELEGRAM_MODE || !chatId) return
   try {
     await sendTelegram(chatId, message)
   } catch (_) {}
@@ -56,12 +56,12 @@ export async function runAction(task) {
 
   const project_id =
     task.project_id ||
-    (payload && payload.project_id) ||
+    payload.project_id ||
     null
 
   /*
   ====================================================
-  ACTIONS DIE GEEN PROJECT NODIG HEBBEN
+  ACTIES ZONDER PROJECT
   ====================================================
   */
 
@@ -74,7 +74,7 @@ export async function runAction(task) {
 
   /*
   ====================================================
-  PROJECT IS VERPLICHT VANAF HIER
+  PROJECT IS VERPLICHT
   ====================================================
   */
 
@@ -84,12 +84,12 @@ export async function runAction(task) {
 
   /*
   ====================================================
-  SYSTEM ACTIONS
+  1. PROJECT SCAN (ANALYSE)
   ====================================================
   */
 
-  if (actionId === "project_scan") {
-    await telegramLog(chatId, "Projectscan gestart")
+  if (actionId === "project_scan" || actionId === "analysis") {
+    await telegramLog(chatId, "Analyse gestart")
 
     await handleProjectScan({
       id: task.id,
@@ -97,9 +97,63 @@ export async function runAction(task) {
       payload
     })
 
-    await telegramLog(chatId, "Projectscan afgerond")
+    // Zet expliciet status
+    await supabase
+      .from("projects")
+      .update({
+        analysis_status: "analyzed",
+        updated_at: new Date().toISOString()
+      })
+      .eq("id", project_id)
+
+    // Start STABU generatie
+    await supabase.from("executor_tasks").insert({
+      project_id,
+      action: "generate_stabu",
+      payload: { project_id, chat_id: chatId },
+      status: "open",
+      assigned_to: "executor"
+    })
+
+    await telegramLog(chatId, "Analyse afgerond, STABU generatie gestart")
+
     return { state: "DONE", action: actionId }
   }
+
+  /*
+  ====================================================
+  2. STABU GENEREREN
+  ====================================================
+  */
+
+  if (actionId === "generate_stabu") {
+    await telegramLog(chatId, "STABU generatie gestart")
+
+    await handleGenerateStabu({
+      id: task.id,
+      project_id,
+      payload
+    })
+
+    // Start rekenen
+    await supabase.from("executor_tasks").insert({
+      project_id,
+      action: "start_rekenwolk",
+      payload: { project_id, chat_id: chatId },
+      status: "open",
+      assigned_to: "executor"
+    })
+
+    await telegramLog(chatId, "STABU gegenereerd, rekenen gestart")
+
+    return { state: "DONE", action: actionId }
+  }
+
+  /*
+  ====================================================
+  3. REKENWOLK / CALCULATIE
+  ====================================================
+  */
 
   if (actionId === "start_rekenwolk") {
     await telegramLog(chatId, "Rekenwolk gestart")
@@ -110,32 +164,23 @@ export async function runAction(task) {
       payload
     })
 
-    await telegramLog(chatId, "Rekenwolk afgerond")
+    // Calculatie is klaar
+    await supabase
+      .from("projects")
+      .update({
+        analysis_status: "completed",
+        updated_at: new Date().toISOString()
+      })
+      .eq("id", project_id)
+
+    await telegramLog(chatId, "Calculatie afgerond")
+
     return { state: "DONE", action: actionId }
   }
 
   /*
   ====================================================
-  ANALYSIS ALIAS
-  ====================================================
-  */
-
-  if (actionId === "analysis") {
-    await telegramLog(chatId, "Analyse gestart")
-
-    await handleProjectScan({
-      id: task.id,
-      project_id,
-      payload
-    })
-
-    await telegramLog(chatId, "Analyse afgerond")
-    return { state: "DONE", action: actionId }
-  }
-
-  /*
-  ====================================================
-  UPLOAD TASK (ALLEEN REGISTRATIE)
+  UPLOAD REGISTRATIE
   ====================================================
   */
 
