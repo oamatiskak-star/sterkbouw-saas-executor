@@ -174,10 +174,12 @@ OPTIE B – EXPLICIET
 ========================
 */
 if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
-  console.log("AO EXECUTOR STARTED (TASK LOOP DISABLED)")
-}
+  console.log("AO EXECUTOR STARTED")
 
-/*
+  setInterval(async () => {
+    await pollExecutorTasks()
+  }, 3000)
+}*
 ========================
 SERVER START
 ========================
