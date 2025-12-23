@@ -27,7 +27,6 @@ APP INIT
 ========================
 */
 const app = express()
-
 app.use(express.json({ limit: "2mb" }))
 
 app.use((req, _res, next) => {
@@ -37,7 +36,7 @@ app.use((req, _res, next) => {
 
 /*
 ========================
-MULTER SETUP
+MULTER
 ========================
 */
 const upload = multer({
@@ -47,7 +46,7 @@ const upload = multer({
 
 /*
 ========================
-SUPABASE CLIENT
+SUPABASE
 ========================
 */
 const supabase = createClient(
@@ -65,7 +64,7 @@ app.get("/ping", (_req, res) => res.send("AO LIVE " + AO_ROLE))
 
 /*
 ========================
-TELEGRAM WEBHOOK
+TELEGRAM
 ========================
 */
 app.post("/telegram/webhook", async (req, res) => {
@@ -79,11 +78,7 @@ app.post("/telegram/webhook", async (req, res) => {
 
 /*
 ========================
-UPLOAD FILES
-POST /upload-files
-FormData:
-- project_id
-- files[]
+UPLOAD + START FLOW
 ========================
 */
 app.post("/upload-files", upload.array("files"), async (req, res) => {
@@ -91,15 +86,8 @@ app.post("/upload-files", upload.array("files"), async (req, res) => {
     const projectId = req.body.project_id
     const files = req.files || []
 
-    if (!projectId) {
-      return res.status(400).json({ error: "NO_PROJECT_ID" })
-    }
-
-    if (!files.length) {
-      return res.status(400).json({ error: "NO_FILES" })
-    }
-
-    let uploadedCount = 0
+    if (!projectId) return res.status(400).json({ error: "NO_PROJECT_ID" })
+    if (!files.length) return res.status(400).json({ error: "NO_FILES" })
 
     for (const file of files) {
       const storagePath = `${projectId}/${Date.now()}_${file.originalname}`
@@ -124,15 +112,9 @@ app.post("/upload-files", upload.array("files"), async (req, res) => {
         })
 
       if (dbError) throw dbError
-
-      uploadedCount++
     }
 
-    /*
-    ========================
-    PROJECT STATUS UPDATE
-    ========================
-    */
+    // project status
     await supabase
       .from("projects")
       .update({
@@ -142,11 +124,7 @@ app.post("/upload-files", upload.array("files"), async (req, res) => {
       })
       .eq("id", projectId)
 
-    /*
-    ========================
-    START PROJECT SCAN TASK
-    ========================
-    */
+    // scan task
     await supabase.from("executor_tasks").insert({
       project_id: projectId,
       action: "project_scan",
@@ -157,7 +135,9 @@ app.post("/upload-files", upload.array("files"), async (req, res) => {
 
     res.json({
       ok: true,
-      uploaded: uploadedCount
+      project_id: projectId,
+      files: files.map(f => f.originalname),
+      next: "project_scan"
     })
   } catch (e) {
     console.error("UPLOAD_FATAL", e.message)
@@ -167,7 +147,7 @@ app.post("/upload-files", upload.array("files"), async (req, res) => {
 
 /*
 ========================
-EXECUTOR TASK POLLER
+EXECUTOR POLLER
 ========================
 */
 async function pollExecutorTasks() {
@@ -182,7 +162,6 @@ async function pollExecutorTasks() {
   if (!tasks || !tasks.length) return
 
   const task = tasks[0]
-
   console.log("EXECUTOR_TASK_PICKED", task.action, task.id)
 
   try {
@@ -196,6 +175,31 @@ async function pollExecutorTasks() {
 
     await runAction(task)
 
+    // 🔒 HARD GARANTIE: na project_scan bestaat ALTIJD calculatie
+    if (task.action === "project_scan") {
+      const { data: existing } = await supabase
+        .from("calculaties")
+        .select("id")
+        .eq("project_id", task.project_id)
+        .maybeSingle()
+
+      if (!existing) {
+        await supabase.from("calculaties").insert({
+          project_id: task.project_id,
+          workflow_status: "ready",
+          created_at: new Date().toISOString()
+        })
+      }
+
+      await supabase
+        .from("projects")
+        .update({
+          analysis_status: "completed",
+          updated_at: new Date().toISOString()
+        })
+        .eq("id", task.project_id)
+    }
+
     await supabase
       .from("executor_tasks")
       .update({
@@ -203,6 +207,7 @@ async function pollExecutorTasks() {
         finished_at: new Date().toISOString()
       })
       .eq("id", task.id)
+
   } catch (e) {
     console.error("EXECUTOR_TASK_ERROR", e.message)
 
@@ -224,15 +229,12 @@ EXECUTOR LOOP
 */
 if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
   console.log("AO EXECUTOR STARTED")
-
-  setInterval(async () => {
-    await pollExecutorTasks()
-  }, 3000)
+  setInterval(pollExecutorTasks, 3000)
 }
 
 /*
 ========================
-SERVER START
+SERVER
 ========================
 */
 app.listen(PORT, "0.0.0.0", async () => {
