@@ -28,7 +28,6 @@ APP INIT
 */
 const app = express()
 
-// JSON alleen voor JSON requests, uploads gaan via multer
 app.use(express.json({ limit: "2mb" }))
 
 app.use((req, _res, next) => {
@@ -82,7 +81,7 @@ app.post("/telegram/webhook", async (req, res) => {
 
 /*
 ========================
-UPLOAD FILES
+UPLOAD FILES + START ANALYSE
 POST /upload-files
 FormData:
 - project_id
@@ -108,7 +107,7 @@ app.post("/upload-files", upload.array("files"), async (req, res) => {
       const storagePath = `${projectId}/${Date.now()}_${file.originalname}`
 
       const { error: uploadError } = await supabase.storage
-        .from("sterkbouw")
+        .from("sterkcalc")
         .upload(storagePath, file.buffer, {
           contentType: file.mimetype,
           upsert: false
@@ -122,13 +121,14 @@ app.post("/upload-files", upload.array("files"), async (req, res) => {
         .from("project_files")
         .insert({
           project_id: projectId,
-          filename: file.originalname,
-          path: storagePath,
-          bucket: "sterkbouw"
+          file_name: file.originalname,
+          storage_path: storagePath,
+          bucket: "sterkcalc",
+          status: "uploaded"
         })
 
       if (dbError) {
-        throw new Error(dbError.message)
+        throw dbError
       }
 
       uploadedCount++
@@ -136,7 +136,7 @@ app.post("/upload-files", upload.array("files"), async (req, res) => {
 
     /*
     ========================
-    MARK FILES UPLOADED
+    UPDATE PROJECT STATUS
     ========================
     */
     await supabase
@@ -150,7 +150,7 @@ app.post("/upload-files", upload.array("files"), async (req, res) => {
 
     /*
     ========================
-    START PROJECT SCAN TASK
+    START PROJECT SCAN
     ========================
     */
     await supabase.from("executor_tasks").insert({
