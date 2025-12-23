@@ -8,12 +8,11 @@ const supabase = createClient(
 
 /*
 ===========================================================
-REKENWOLK – STABIELE BASISVERSIE (ZONDER STABU)
+REKENWOLK – STERKCALC DEFINITIEVE BASISVERSIE
 ===========================================================
-- STABU is optioneel
-- Calculatie wordt altijd aangemaakt
-- PDF wordt altijd gegenereerd
-- Executor task wordt altijd correct afgesloten
+- Eén rekenwolk per project
+- Idempotent uitgevoerd
+- Executor task wordt altijd afgerond
 ===========================================================
 */
 
@@ -102,78 +101,128 @@ ENTRYPOINT
 ========================
 */
 export async function handleStartRekenwolk(task) {
-  assert(task, "NO_TASK")
+  if (!task || !task.id) return
 
   const project_id =
     task.project_id ||
     task.payload?.project_id ||
     null
 
-  assert(project_id, "NO_PROJECT_ID")
-
-  /*
-  ========================
-  CALCULATIE GARANTEREN
-  ========================
-  */
-  const calculatie = await getOrCreateCalculatie(project_id)
-
-  /*
-  ========================
-  PDF GENEREREN
-  ========================
-  */
-  const pdfBytes = await generateEmpty2JoursPdf(calculatie)
-  const pdfPath = await uploadPdf(project_id, pdfBytes)
-
-  /*
-  ========================
-  CALCULATIE AFRONDEN
-  ========================
-  */
-  await supabase
-    .from("calculaties")
-    .update({
-      workflow_status: "done",
-      pdf_path: pdfPath,
-      kostprijs: 0,
-      verkoopprijs: 0,
-      marge: 0
-    })
-    .eq("id", calculatie.id)
-
-  /*
-  ========================
-  PROJECT STATUS AFRONDEN
-  ========================
-  */
-  await supabase
-    .from("projects")
-    .update({
-      analysis_status: "completed",
-      updated_at: new Date().toISOString()
-    })
-    .eq("id", project_id)
-
-  /*
-  ========================
-  EXECUTOR TASK AFRONDEN
-  ========================
-  */
-  if (task.id) {
+  if (!project_id) {
     await supabase
       .from("executor_tasks")
       .update({
-        status: "done",
+        status: "failed",
+        error: "NO_PROJECT_ID",
         finished_at: new Date().toISOString()
       })
       .eq("id", task.id)
+    return
   }
 
-  return {
-    state: "DONE",
-    project_id,
-    calculatie_id: calculatie.id,
-    pdf: pdfPath
+  /*
+  ========================
+  IDEMPOTENT GUARD
+  ========================
+  */
+  const { data: existingDone } = await supabase
+    .from("calculaties")
+    .select("id")
+    .eq("project_id", project_id)
+    .eq("workflow_status", "done")
+    .limit(1)
+    .maybeSingle()
+
+  if (existingDone) {
+    await supabase
+      .from("executor_tasks")
+      .update({
+        status: "skipped",
+        finished_at: new Date().toISOString()
+      })
+      .eq("id", task.id)
+
+    return {
+      state: "SKIPPED_ALREADY_DONE",
+      project_id,
+      calculatie_id: existingDone.id
+    }
+  }
+
+  try {
+    /*
+    ========================
+    CALCULATIE GARANTEREN
+    ========================
+    */
+    const calculatie = await getOrCreateCalculatie(project_id)
+
+    /*
+    ========================
+    PDF GENEREREN
+    ========================
+    */
+    const pdfBytes = await generateEmpty2JoursPdf(calculatie)
+    const pdfPath = await uploadPdf(project_id, pdfBytes)
+
+    /*
+    ========================
+    CALCULATIE AFRONDEN
+    ========================
+    */
+    await supabase
+      .from("calculaties")
+      .update({
+        workflow_status: "done",
+        pdf_path: pdfPath,
+        kostprijs: 0,
+        verkoopprijs: 0,
+        marge: 0
+      })
+      .eq("id", calculatie.id)
+
+    /*
+    ========================
+    PROJECT STATUS
+    ========================
+    */
+    await supabase
+      .from("projects")
+      .update({
+        analysis_status: "completed",
+        updated_at: new Date().toISOString()
+      })
+      .eq("id", project_id)
+
+    /*
+    ========================
+    EXECUTOR TASK AFRONDEN
+    ========================
+    */
+    await supabase
+      .from("executor_tasks")
+      .update({
+        status: "completed",
+        finished_at: new Date().toISOString()
+      })
+      .eq("id", task.id)
+
+    return {
+      state: "DONE",
+      project_id,
+      calculatie_id: calculatie.id,
+      pdf: pdfPath
+    }
+  } catch (err) {
+    await supabase
+      .from("executor_tasks")
+      .update({
+        status: "failed",
+        error: err.message,
+        finished_at: new Date().toISOString()
+      })
+      .eq("id", task.id)
+
+    throw err
   }
 }
