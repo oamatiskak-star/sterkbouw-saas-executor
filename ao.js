@@ -131,13 +131,25 @@ app.post("/upload-files", upload.array("files"), async (req, res) => {
       })
       .eq("id", projectId)
 
-    await supabase.from("executor_tasks").insert({
-      project_id: projectId,
-      action: "project_scan",
-      payload: { project_id: projectId },
-      status: "open",
-      assigned_to: "executor"
-    })
+    // PRODUCER GUARD: project_scan
+    const { data: existingScan } = await supabase
+      .from("executor_tasks")
+      .select("id")
+      .eq("project_id", projectId)
+      .eq("action", "project_scan")
+      .in("status", ["open", "running", "completed"])
+      .limit(1)
+      .maybeSingle()
+
+    if (!existingScan) {
+      await supabase.from("executor_tasks").insert({
+        project_id: projectId,
+        action: "project_scan",
+        payload: { project_id: projectId },
+        status: "open",
+        assigned_to: "executor"
+      })
+    }
 
     res.json({
       ok: true,
@@ -153,10 +165,11 @@ app.post("/upload-files", upload.array("files"), async (req, res) => {
 
 /*
 ========================
-EXECUTOR POLLER
+EXECUTOR POLLER (STERKCALC)
 ========================
 */
 async function pollExecutorTasks() {
+  // haal oudste open task
   const { data: tasks } = await supabase
     .from("executor_tasks")
     .select("*")
@@ -168,6 +181,19 @@ async function pollExecutorTasks() {
   if (!tasks || !tasks.length) return
 
   const task = tasks[0]
+
+  // DEDUPLICATIE: annuleer andere open tasks met zelfde project + action
+  await supabase
+    .from("executor_tasks")
+    .update({
+      status: "cancelled",
+      finished_at: new Date().toISOString()
+    })
+    .eq("project_id", task.project_id)
+    .eq("action", task.action)
+    .eq("status", "open")
+    .neq("id", task.id)
+
   console.log("EXECUTOR_TASK_PICKED", task.action, task.id)
 
   try {
@@ -179,59 +205,18 @@ async function pollExecutorTasks() {
       })
       .eq("id", task.id)
 
-    if (task.action === "project_scan") {
-      await supabase
-        .from("project_files")
-        .update({ status: "analysing" })
-        .eq("project_id", task.project_id)
-    }
-
     await runAction(task)
-
-    if (task.action === "project_scan") {
-      const { data: existing } = await supabase
-        .from("calculaties")
-        .select("id")
-        .eq("project_id", task.project_id)
-        .maybeSingle()
-
-      if (!existing) {
-        await supabase.from("calculaties").insert({
-          project_id: task.project_id,
-          workflow_status: "ready",
-          created_at: new Date().toISOString()
-        })
-      }
-
-      await supabase
-        .from("project_files")
-        .update({ status: "done" })
-        .eq("project_id", task.project_id)
-
-      await supabase
-        .from("projects")
-        .update({
-          analysis_status: "completed",
-          updated_at: new Date().toISOString()
-        })
-        .eq("id", task.project_id)
-    }
 
     await supabase
       .from("executor_tasks")
       .update({
-        status: "done",
+        status: "completed",
         finished_at: new Date().toISOString()
       })
       .eq("id", task.id)
 
   } catch (e) {
     console.error("EXECUTOR_TASK_ERROR", e.message)
-
-    await supabase
-      .from("project_files")
-      .update({ status: "failed" })
-      .eq("project_id", task.project_id)
 
     await supabase
       .from("executor_tasks")
