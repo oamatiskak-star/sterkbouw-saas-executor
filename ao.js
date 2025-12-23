@@ -28,7 +28,7 @@ APP INIT
 */
 const app = express()
 
-// JSON alleen voor echte JSON requests, NIET voor uploads
+// JSON alleen voor JSON requests, uploads gaan via multer
 app.use(express.json({ limit: "2mb" }))
 
 app.use((req, _res, next) => {
@@ -44,13 +44,13 @@ MULTER SETUP
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
-    fileSize: 50 * 1024 * 1024 // 50 MB per bestand
+    fileSize: 50 * 1024 * 1024
   }
 })
 
 /*
 ========================
-SUPABASE
+SUPABASE CLIENT
 ========================
 */
 const supabase = createClient(
@@ -82,7 +82,7 @@ app.post("/telegram/webhook", async (req, res) => {
 
 /*
 ========================
-UPLOAD FILES + START ANALYSE
+UPLOAD FILES
 POST /upload-files
 FormData:
 - project_id
@@ -114,7 +114,9 @@ app.post("/upload-files", upload.array("files"), async (req, res) => {
           upsert: false
         })
 
-      if (uploadError) throw uploadError
+      if (uploadError) {
+        throw new Error(uploadError.message)
+      }
 
       const { error: dbError } = await supabase
         .from("project_files")
@@ -125,27 +127,30 @@ app.post("/upload-files", upload.array("files"), async (req, res) => {
           bucket: "sterkbouw"
         })
 
-      if (dbError) throw dbError
+      if (dbError) {
+        throw new Error(dbError.message)
+      }
 
       uploadedCount++
     }
 
     /*
     ========================
-    PROJECT STATUS UPDATE
+    MARK FILES UPLOADED
     ========================
     */
     await supabase
       .from("projects")
       .update({
         files_uploaded: true,
-        analysis_status: "running"
+        analysis_status: "running",
+        updated_at: new Date().toISOString()
       })
       .eq("id", projectId)
 
     /*
     ========================
-    START PROJECT SCAN
+    START PROJECT SCAN TASK
     ========================
     */
     await supabase.from("executor_tasks").insert({
@@ -168,7 +173,7 @@ app.post("/upload-files", upload.array("files"), async (req, res) => {
 
 /*
 ========================
-EXECUTOR TASK LOOP
+EXECUTOR TASK POLLER
 ========================
 */
 async function pollExecutorTasks() {
@@ -223,7 +228,6 @@ EXECUTOR LOOP
 */
 if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
   console.log("AO EXECUTOR STARTED")
-
   setInterval(pollExecutorTasks, 3000)
 }
 
