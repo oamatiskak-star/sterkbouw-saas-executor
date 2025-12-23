@@ -8,16 +8,26 @@ const supabase = createClient(
 
 /*
 ===========================================================
-REKENWOLK – STERKCALC DEFINITIEVE BASISVERSIE
+REKENWOLK – STERKCALC DEFINITIEVE VERSIE
 ===========================================================
 - Eén rekenwolk per project
 - Idempotent uitgevoerd
-- Executor task wordt altijd afgerond
+- Echte bedragen
+- AK 8%, ABK 6%, W&R 8%
+- BTW 9% / 21% per regel
 ===========================================================
 */
 
+const AK = 0.08
+const ABK = 0.06
+const WR = 0.08
+
 function assert(cond, msg) {
   if (!cond) throw new Error(msg)
+}
+
+function euro(n) {
+  return `€ ${Number(n || 0).toFixed(2)}`
 }
 
 async function getOrCreateCalculatie(project_id) {
@@ -47,10 +57,31 @@ async function getOrCreateCalculatie(project_id) {
 
 /*
 ========================
-LEGE 2JOURS PDF
+STABU RESULT REGELS
+Verwacht:
+- omschrijving
+- hoeveelheid
+- eenheidsprijs
+- btw_tarief (9 of 21)
 ========================
 */
-async function generateEmpty2JoursPdf(calculatie) {
+async function fetchStabuResultRegels(project_id) {
+  const { data, error } = await supabase
+    .from("stabu_result_regels")
+    .select("omschrijving, hoeveelheid, eenheidsprijs, btw_tarief")
+    .eq("project_id", project_id)
+
+  assert(!error, "STABU_FETCH_FAILED")
+  assert(data && data.length > 0, "STABU_EMPTY")
+  return data
+}
+
+/*
+========================
+2JOURS PDF
+========================
+*/
+async function generate2JoursPdf(calculatie, regels, totals) {
   const pdf = await PDFDocument.create()
   const page = pdf.addPage([595, 842])
   const font = await pdf.embedFont(StandardFonts.Helvetica)
@@ -62,35 +93,44 @@ async function generateEmpty2JoursPdf(calculatie) {
   }
 
   line("CALCULATIE – 2JOURS", 16)
-  y -= 20
-
+  y -= 10
   line(`Project ID: ${calculatie.project_id}`)
   line(`Calculatie ID: ${calculatie.id}`)
-  y -= 20
+  y -= 14
 
-  line("STATUS", 12)
-  line("Analyse afgerond.")
-  line("STABU en hoeveelheden volgen na verdere analyse.")
-  y -= 20
+  line("POSTEN", 12)
+  regels.forEach(r => {
+    const sub = Number(r.hoeveelheid) * Number(r.eenheidsprijs)
+    line(
+      `${r.omschrijving} | ${r.hoeveelheid} x ${euro(
+        r.eenheidsprijs
+      )} = ${euro(sub)} | BTW ${r.btw_tarief}%`
+    )
+  })
 
-  line("RESULTAAT", 12)
-  line("Kostprijs: € 0,00")
-  line("Verkoopprijs: € 0,00")
-  line("Marge: € 0,00")
+  y -= 14
+  line("TOTAAL", 12)
+  line(`Kostprijs: ${euro(totals.kostprijs)}`)
+  line(`AK (8%): ${euro(totals.ak)}`)
+  line(`ABK (6%): ${euro(totals.abk)}`)
+  line(`W&R (8%): ${euro(totals.wr)}`)
+  y -= 8
+  line(`Verkoopprijs excl. btw: ${euro(totals.verkoop_ex)}`)
+  line(`BTW 9%: ${euro(totals.btw9)}`)
+  line(`BTW 21%: ${euro(totals.btw21)}`)
+  line(`Verkoopprijs incl. btw: ${euro(totals.verkoop_inc)}`)
 
-  return await pdf.save()
+  return pdf.save()
 }
 
 async function uploadPdf(project_id, pdfBytes) {
   const path = `${project_id}/calculatie_2jours.pdf`
-
   const { error } = await supabase.storage
     .from("sterkcalc")
     .upload(path, pdfBytes, {
       contentType: "application/pdf",
       upsert: true
     })
-
   assert(!error, "PDF_UPLOAD_FAILED")
   return path
 }
@@ -121,9 +161,7 @@ export async function handleStartRekenwolk(task) {
   }
 
   /*
-  ========================
   IDEMPOTENT GUARD
-  ========================
   */
   const { data: existingDone } = await supabase
     .from("calculaties")
@@ -150,42 +188,63 @@ export async function handleStartRekenwolk(task) {
   }
 
   try {
-    /*
-    ========================
-    CALCULATIE GARANTEREN
-    ========================
-    */
     const calculatie = await getOrCreateCalculatie(project_id)
 
     /*
-    ========================
-    PDF GENEREREN
-    ========================
+    STABU → BEREKENEN
     */
-    const pdfBytes = await generateEmpty2JoursPdf(calculatie)
+    const regels = await fetchStabuResultRegels(project_id)
+
+    let kostprijs = 0
+    let btw9 = 0
+    let btw21 = 0
+
+    regels.forEach(r => {
+      const sub = Number(r.hoeveelheid) * Number(r.eenheidsprijs)
+      kostprijs += sub
+      if (Number(r.btw_tarief) === 9) btw9 += sub * 0.09
+      if (Number(r.btw_tarief) === 21) btw21 += sub * 0.21
+    })
+
+    const ak = kostprijs * AK
+    const abk = kostprijs * ABK
+    const wr = kostprijs * WR
+
+    const verkoop_ex = kostprijs + ak + abk + wr
+    const btw = btw9 + btw21
+    const verkoop_inc = verkoop_ex + btw
+
+    /*
+    PDF
+    */
+    const pdfBytes = await generate2JoursPdf(calculatie, regels, {
+      kostprijs,
+      ak,
+      abk,
+      wr,
+      verkoop_ex,
+      btw9,
+      btw21,
+      verkoop_inc
+    })
+
     const pdfPath = await uploadPdf(project_id, pdfBytes)
 
     /*
-    ========================
-    CALCULATIE AFRONDEN
-    ========================
+    OPSLAAN
     */
     await supabase
       .from("calculaties")
       .update({
         workflow_status: "done",
+        kostprijs,
+        verkoopprijs: verkoop_ex,
+        marge: verkoop_ex - kostprijs,
         pdf_path: pdfPath,
-        kostprijs: 0,
-        verkoopprijs: 0,
-        marge: 0
+        updated_at: new Date().toISOString()
       })
       .eq("id", calculatie.id)
 
-    /*
-    ========================
-    PROJECT STATUS
-    ========================
-    */
     await supabase
       .from("projects")
       .update({
@@ -194,11 +253,6 @@ export async function handleStartRekenwolk(task) {
       })
       .eq("id", project_id)
 
-    /*
-    ========================
-    EXECUTOR TASK AFRONDEN
-    ========================
-    */
     await supabase
       .from("executor_tasks")
       .update({
