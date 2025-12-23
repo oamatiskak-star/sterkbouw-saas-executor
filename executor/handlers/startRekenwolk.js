@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js"
-import { pdfDocument, rgb, standardFonts } from "pdf-lib"
+import pkg from "pdf-lib"
+const { PDFDocument, rgb, StandardFonts } = pkg
 
 /*
 ===========================================================
@@ -16,8 +17,8 @@ rekenwolk – sterkcalc definitieve productieversie
 */
 
 const supabase = createClient(
-  process.env.supabase_url,
-  process.env.supabase_service_role_key
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
 )
 
 /*
@@ -104,9 +105,9 @@ pdf 2jours
 ========================
 */
 async function generate2jourspdf(calculatie, regels, totals) {
-  const pdf = await pdfDocument.create()
+  const pdf = await PDFDocument.create()
   const page = pdf.addPage([595, 842])
-  const font = await pdf.embedFont(standardFonts.Helvetica)
+  const font = await pdf.embedFont(StandardFonts.Helvetica)
 
   let y = 800
   const line = (t, size = 10) => {
