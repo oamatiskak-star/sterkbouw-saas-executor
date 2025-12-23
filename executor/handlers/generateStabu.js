@@ -23,7 +23,7 @@ STABU GENERATOR – STERKCALC DEFINITIEVE VERSIE
 ===========================================================
 - Eén STABU-resultaat per project
 - Idempotent uitgevoerd
-- Volgende stap alleen bij eerste succesvolle run
+- start_rekenwolk wordt maximaal één keer geproduceerd
 ===========================================================
 */
 
@@ -42,7 +42,7 @@ export async function handleGenerateStabu(task) {
   try {
     /*
     ============================
-    IDEMPOTENT GUARD
+    IDEMPOTENT GUARD STABU
     ============================
     */
     const { data: existing } = await supabase
@@ -139,18 +139,29 @@ export async function handleGenerateStabu(task) {
 
     /*
     ============================
-    VOLGENDE STAP: REKENWOLK
+    PRODUCER GUARD REKENWOLK
     ============================
     */
-    await supabase
+    const { data: existingRekenwolk } = await supabase
       .from("executor_tasks")
-      .insert({
-        project_id,
-        action: "start_rekenwolk",
-        payload: { project_id },
-        status: "open",
-        assigned_to: "executor"
-      })
+      .select("id")
+      .eq("project_id", project_id)
+      .eq("action", "start_rekenwolk")
+      .in("status", ["open", "running", "completed"])
+      .limit(1)
+      .maybeSingle()
+
+    if (!existingRekenwolk) {
+      await supabase
+        .from("executor_tasks")
+        .insert({
+          project_id,
+          action: "start_rekenwolk",
+          payload: { project_id },
+          status: "open",
+          assigned_to: "executor"
+        })
+    }
 
     /*
     ============================
