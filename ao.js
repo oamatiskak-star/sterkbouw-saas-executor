@@ -1,5 +1,4 @@
 import express from "express"
-import cors from "cors"
 import multer from "multer"
 import { createClient } from "@supabase/supabase-js"
 
@@ -29,17 +28,25 @@ APP INIT
 */
 const app = express()
 
-/* 🔴 DIT WAS DE BLOKKADE */
-app.use(cors())
-
-app.use(express.json({ type: "*/*" }))
+// JSON alleen voor echte JSON requests, NIET voor uploads
+app.use(express.json({ limit: "2mb" }))
 
 app.use((req, _res, next) => {
-  console.log("INCOMING", req.method, req.path)
+  console.log("INCOMING_REQUEST", req.method, req.path)
   next()
 })
 
-const upload = multer({ storage: multer.memoryStorage() })
+/*
+========================
+MULTER SETUP
+========================
+*/
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 50 * 1024 * 1024 // 50 MB per bestand
+  }
+})
 
 /*
 ========================
@@ -68,7 +75,7 @@ app.post("/telegram/webhook", async (req, res) => {
   try {
     await handleTelegramWebhook(req.body)
   } catch (e) {
-    console.error(e.message)
+    console.error("TELEGRAM_WEBHOOK_ERROR", e.message)
   }
   res.sendStatus(200)
 })
@@ -83,21 +90,26 @@ FormData:
 ========================
 */
 app.post("/upload-files", upload.array("files"), async (req, res) => {
-  console.log("UPLOAD_FILES_ENDPOINT_HIT")
-
   try {
     const projectId = req.body.project_id
     const files = req.files || []
 
-    if (!projectId) return res.status(400).json({ error: "NO_PROJECT_ID" })
-    if (!files.length) return res.status(400).json({ error: "NO_FILES" })
+    if (!projectId) {
+      return res.status(400).json({ error: "NO_PROJECT_ID" })
+    }
+
+    if (!files.length) {
+      return res.status(400).json({ error: "NO_FILES" })
+    }
+
+    let uploadedCount = 0
 
     for (const file of files) {
-      const path = `${projectId}/${Date.now()}_${file.originalname}`
+      const storagePath = `${projectId}/${Date.now()}_${file.originalname}`
 
       const { error: uploadError } = await supabase.storage
         .from("sterkbouw")
-        .upload(path, file.buffer, {
+        .upload(storagePath, file.buffer, {
           contentType: file.mimetype,
           upsert: false
         })
@@ -109,13 +121,20 @@ app.post("/upload-files", upload.array("files"), async (req, res) => {
         .insert({
           project_id: projectId,
           filename: file.originalname,
-          path,
+          path: storagePath,
           bucket: "sterkbouw"
         })
 
       if (dbError) throw dbError
+
+      uploadedCount++
     }
 
+    /*
+    ========================
+    PROJECT STATUS UPDATE
+    ========================
+    */
     await supabase
       .from("projects")
       .update({
@@ -124,6 +143,11 @@ app.post("/upload-files", upload.array("files"), async (req, res) => {
       })
       .eq("id", projectId)
 
+    /*
+    ========================
+    START PROJECT SCAN
+    ========================
+    */
     await supabase.from("executor_tasks").insert({
       project_id: projectId,
       action: "project_scan",
@@ -132,7 +156,10 @@ app.post("/upload-files", upload.array("files"), async (req, res) => {
       assigned_to: "executor"
     })
 
-    res.json({ ok: true, uploaded: files.length })
+    res.json({
+      ok: true,
+      uploaded: uploadedCount
+    })
   } catch (e) {
     console.error("UPLOAD_FATAL", e.message)
     res.status(500).json({ error: e.message })
@@ -160,27 +187,60 @@ async function pollExecutorTasks() {
   try {
     await supabase
       .from("executor_tasks")
-      .update({ status: "running" })
+      .update({
+        status: "running",
+        started_at: new Date().toISOString()
+      })
       .eq("id", task.id)
 
     await runAction(task)
 
     await supabase
       .from("executor_tasks")
-      .update({ status: "done" })
+      .update({
+        status: "done",
+        finished_at: new Date().toISOString()
+      })
       .eq("id", task.id)
   } catch (e) {
+    console.error("EXECUTOR_TASK_ERROR", e.message)
+
     await supabase
       .from("executor_tasks")
-      .update({ status: "failed", error: e.message })
+      .update({
+        status: "failed",
+        error: e.message,
+        finished_at: new Date().toISOString()
+      })
       .eq("id", task.id)
   }
 }
 
-if (AO_ROLE === "EXECUTOR") {
+/*
+========================
+EXECUTOR LOOP
+========================
+*/
+if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
+  console.log("AO EXECUTOR STARTED")
+
   setInterval(pollExecutorTasks, 3000)
 }
 
-app.listen(PORT, "0.0.0.0", () => {
+/*
+========================
+SERVER START
+========================
+*/
+app.listen(PORT, "0.0.0.0", async () => {
   console.log("AO SERVICE LIVE", AO_ROLE, PORT)
+
+  if (process.env.TELEGRAM_CHAT_ID) {
+    try {
+      await sendTelegram(
+        process.env.TELEGRAM_CHAT_ID,
+        `AO LIVE\nRole: ${AO_ROLE}\nPort: ${PORT}`
+      )
+    } catch (_) {}
+  }
 })
