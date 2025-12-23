@@ -1,4 +1,5 @@
 import express from "express"
+import cors from "cors"
 import multer from "multer"
 import { createClient } from "@supabase/supabase-js"
 
@@ -27,6 +28,10 @@ APP INIT
 ========================
 */
 const app = express()
+
+/* 🔴 DIT WAS DE BLOKKADE */
+app.use(cors())
+
 app.use(express.json({ type: "*/*" }))
 
 app.use((req, _res, next) => {
@@ -78,6 +83,8 @@ FormData:
 ========================
 */
 app.post("/upload-files", upload.array("files"), async (req, res) => {
+  console.log("UPLOAD_FILES_ENDPOINT_HIT")
+
   try {
     const projectId = req.body.project_id
     const files = req.files || []
