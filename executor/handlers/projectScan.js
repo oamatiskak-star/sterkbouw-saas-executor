@@ -68,12 +68,12 @@ export async function handleProjectScan(task) {
 
     /*
     ========================
-    VALIDATIE: UPLOADS
+    BESTANDEN OPHALEN
     ========================
     */
     const { data: files, error: filesError } = await supabase
       .from("project_files")
-      .select("id, file_name, storage_path")
+      .select("file_name, storage_path")
       .eq("project_id", project_id)
 
     if (filesError) {
@@ -90,11 +90,11 @@ export async function handleProjectScan(task) {
     ========================
     */
     const scanResult = {
-      uploads: files.length,
       files: files.map(f => ({
         name: f.file_name,
         path: f.storage_path
       })),
+      file_count: files.length,
       scanned_at: new Date().toISOString()
     }
 
@@ -132,21 +132,6 @@ export async function handleProjectScan(task) {
       .eq("project_id", project_id)
       .eq("module", "PROJECT_SCAN")
 
-    /*
-    ========================
-    EXECUTOR TASK → DONE
-    ========================
-    */
-    if (task.id) {
-      await supabase
-        .from("executor_tasks")
-        .update({
-          status: "done",
-          finished_at: new Date().toISOString()
-        })
-        .eq("id", task.id)
-    }
-
     if (chatId) {
       try {
         await sendTelegram(chatId, "Projectscan afgerond")
@@ -172,16 +157,14 @@ export async function handleProjectScan(task) {
       })
       .eq("id", project_id)
 
-    if (task.id) {
-      await supabase
-        .from("executor_tasks")
-        .update({
-          status: "failed",
-          error: err.message,
-          finished_at: new Date().toISOString()
-        })
-        .eq("id", task.id)
-    }
+    await supabase
+      .from("project_initialization_log")
+      .update({
+        status: "failed",
+        finished_at: new Date().toISOString()
+      })
+      .eq("project_id", project_id)
+      .eq("module", "PROJECT_SCAN")
 
     throw err
   }
