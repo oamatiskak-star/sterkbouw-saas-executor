@@ -14,12 +14,12 @@ CONFIG
 ========================
 */
 const AO_ROLE = process.env.AO_ROLE
-const PORT = process.env.PORT || 8080
+const PORT = process.env.PORT || 3000
 
-if (!AO_ROLE) throw new Error("ENV_MISSING_AO_ROLE")
-if (!process.env.SUPABASE_URL) throw new Error("ENV_MISSING_SUPABASE_URL")
+if (!AO_ROLE) throw new Error("env_missing_ao_role")
+if (!process.env.SUPABASE_URL) throw new Error("env_missing_supabase_url")
 if (!process.env.SUPABASE_SERVICE_ROLE_KEY)
-  throw new Error("ENV_MISSING_SUPABASE_SERVICE_ROLE_KEY")
+  throw new Error("env_missing_supabase_service_role_key")
 
 /*
 ========================
@@ -27,7 +27,24 @@ APP INIT
 ========================
 */
 const app = express()
-app.use(express.json({ limit: "2mb" }))
+
+/*
+========================
+CORS FIX
+========================
+*/
+app.use((req, res, next) => {
+  res.setHeader("Access-Control-Allow-Origin", "*")
+  res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type,Authorization")
+
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(200)
+  }
+  next()
+})
+
+app.use(express.json({ limit: "5mb" }))
 
 app.use((req, _res, next) => {
   console.log("INCOMING_REQUEST", req.method, req.path)
@@ -59,8 +76,10 @@ const supabase = createClient(
 BASIC ROUTES
 ========================
 */
-app.get("/", (_req, res) => res.send("OK"))
-app.get("/ping", (_req, res) => res.send("AO LIVE " + AO_ROLE))
+app.get("/", (_req, res) => res.json({ ok: true }))
+app.get("/ping", (_req, res) =>
+  res.json({ ok: true, role: AO_ROLE })
+)
 
 /*
 ========================
@@ -71,52 +90,57 @@ app.post("/telegram/webhook", async (req, res) => {
   try {
     await handleTelegramWebhook(req.body)
   } catch (e) {
-    console.error("TELEGRAM_WEBHOOK_ERROR", e.message)
+    console.error("telegram_webhook_error", e.message)
   }
-  res.sendStatus(200)
+  res.json({ ok: true })
 })
 
 /*
 ========================
-UPLOAD + START FLOW
+UPLOAD + FLOW START
 ========================
 */
 app.post("/upload-files", upload.array("files"), async (req, res) => {
   try {
-    const projectId = req.body.project_id
+    const project_id = req.body.project_id
     const files = req.files || []
 
-    if (!projectId) return res.status(400).json({ error: "NO_PROJECT_ID" })
-    if (!files.length) return res.status(400).json({ error: "NO_FILES" })
+    if (!project_id) {
+      return res.status(400).json({ error: "no_project_id" })
+    }
 
-    const analysisLog = []
+    if (!files.length) {
+      return res.status(400).json({ error: "no_files" })
+    }
+
+    const analysis_log = []
 
     for (const file of files) {
-      const storagePath = `${projectId}/${Date.now()}_${file.originalname}`
+      const storage_path = `${project_id}/${Date.now()}_${file.originalname}`
 
-      const { error: uploadError } = await supabase.storage
+      const { error: uploadErr } = await supabase.storage
         .from("sterkcalc")
-        .upload(storagePath, file.buffer, {
+        .upload(storage_path, file.buffer, {
           contentType: file.mimetype,
           upsert: false
         })
 
-      if (uploadError) throw uploadError
+      if (uploadErr) throw uploadErr
 
-      const { error: dbError } = await supabase
+      const { error: dbErr } = await supabase
         .from("project_files")
         .insert({
-          project_id: projectId,
+          project_id,
           file_name: file.originalname,
-          storage_path: storagePath,
+          storage_path,
           bucket: "sterkcalc",
           status: "uploaded"
         })
 
-      if (dbError) throw dbError
+      if (dbErr) throw dbErr
 
-      analysisLog.push({
-        file_name: file.originalname,
+      analysis_log.push({
+        file: file.originalname,
         status: "queued"
       })
     }
@@ -126,50 +150,36 @@ app.post("/upload-files", upload.array("files"), async (req, res) => {
       .update({
         files_uploaded: true,
         analysis_status: "running",
-        analysis_log: analysisLog,
+        analysis_log,
         updated_at: new Date().toISOString()
       })
-      .eq("id", projectId)
+      .eq("id", project_id)
 
-    // PRODUCER GUARD: project_scan
-    const { data: existingScan } = await supabase
-      .from("executor_tasks")
-      .select("id")
-      .eq("project_id", projectId)
-      .eq("action", "project_scan")
-      .in("status", ["open", "running", "completed"])
-      .limit(1)
-      .maybeSingle()
+    await supabase.from("executor_tasks").insert({
+      project_id,
+      action: "project_scan",
+      payload: { project_id },
+      status: "open",
+      assigned_to: "executor"
+    })
 
-    if (!existingScan) {
-      await supabase.from("executor_tasks").insert({
-        project_id: projectId,
-        action: "project_scan",
-        payload: { project_id: projectId },
-        status: "open",
-        assigned_to: "executor"
-      })
-    }
-
-    res.json({
+    return res.status(200).json({
       ok: true,
-      project_id: projectId,
-      files: analysisLog.map(f => f.file_name),
-      next: "project_scan"
+      project_id,
+      files: analysis_log
     })
   } catch (e) {
-    console.error("UPLOAD_FATAL", e.message)
-    res.status(500).json({ error: e.message })
+    console.error("upload_files_fatal", e.message)
+    return res.status(500).json({ error: e.message })
   }
 })
 
 /*
 ========================
-EXECUTOR POLLER (STERKCALC)
+EXECUTOR LOOP
 ========================
 */
 async function pollExecutorTasks() {
-  // haal oudste open task
   const { data: tasks } = await supabase
     .from("executor_tasks")
     .select("*")
@@ -181,19 +191,6 @@ async function pollExecutorTasks() {
   if (!tasks || !tasks.length) return
 
   const task = tasks[0]
-
-  // DEDUPLICATIE: annuleer andere open tasks met zelfde project + action
-  await supabase
-    .from("executor_tasks")
-    .update({
-      status: "cancelled",
-      finished_at: new Date().toISOString()
-    })
-    .eq("project_id", task.project_id)
-    .eq("action", task.action)
-    .eq("status", "open")
-    .neq("id", task.id)
-
   console.log("EXECUTOR_TASK_PICKED", task.action, task.id)
 
   try {
@@ -214,9 +211,8 @@ async function pollExecutorTasks() {
         finished_at: new Date().toISOString()
       })
       .eq("id", task.id)
-
   } catch (e) {
-    console.error("EXECUTOR_TASK_ERROR", e.message)
+    console.error("executor_task_error", e.message)
 
     await supabase
       .from("executor_tasks")
@@ -229,11 +225,6 @@ async function pollExecutorTasks() {
   }
 }
 
-/*
-========================
-EXECUTOR LOOP
-========================
-*/
 if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
   console.log("AO EXECUTOR STARTED")
   setInterval(pollExecutorTasks, 3000)
@@ -251,7 +242,7 @@ app.listen(PORT, "0.0.0.0", async () => {
     try {
       await sendTelegram(
         process.env.TELEGRAM_CHAT_ID,
-        `AO LIVE\nRole: ${AO_ROLE}\nPort: ${PORT}`
+        `ao live\nrole: ${AO_ROLE}\nport: ${PORT}`
       )
     } catch (_) {}
   }
