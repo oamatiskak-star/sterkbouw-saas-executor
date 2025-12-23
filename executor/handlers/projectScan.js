@@ -17,165 +17,188 @@ export async function handleProjectScan(task) {
 
   const chatId = payload.chat_id || null
 
-  /*
-  ========================
-  START LOG
-  ========================
-  */
-  const { error: startLogError } = await supabase
-    .from("project_initialization_log")
-    .insert({
-      project_id,
-      module: "PROJECT_SCAN",
-      status: "running",
-      started_at: new Date().toISOString()
-    })
+  try {
+    /*
+    ========================
+    STATUS → RUNNING
+    ========================
+    */
+    await supabase
+      .from("projects")
+      .update({ analysis_status: "running" })
+      .eq("id", project_id)
 
-  if (startLogError) {
-    throw new Error("PROJECT_SCAN_LOG_START_FAILED: " + startLogError.message)
-  }
+    /*
+    ========================
+    START LOG
+    ========================
+    */
+    await supabase
+      .from("project_initialization_log")
+      .insert({
+        project_id,
+        module: "PROJECT_SCAN",
+        status: "running",
+        started_at: new Date().toISOString()
+      })
 
-  if (chatId) {
-    try {
-      await sendTelegram(chatId, "Projectscan gestart")
-    } catch (_) {}
-  }
+    if (chatId) {
+      try {
+        await sendTelegram(chatId, "Projectscan gestart")
+      } catch (_) {}
+    }
 
-  /*
-  ========================
-  VALIDATIES (ECHT)
-  ========================
-  */
+    /*
+    ========================
+    VALIDATIES
+    ========================
+    */
 
-  // 1. Project moet bestaan
-  const { data: project, error: projectError } = await supabase
-    .from("projects")
-    .select("id")
-    .eq("id", project_id)
-    .single()
+    // 1. Project moet bestaan
+    const { data: project } = await supabase
+      .from("projects")
+      .select("id")
+      .eq("id", project_id)
+      .single()
 
-  if (projectError || !project) {
-    throw new Error("PROJECT_SCAN_PROJECT_NOT_FOUND")
-  }
+    if (!project) {
+      throw new Error("PROJECT_SCAN_PROJECT_NOT_FOUND")
+    }
 
-  // 2. Uploads moeten bestaan
-  const { data: files, error: filesError } = await supabase
-    .from("project_files")
-    .select("id")
-    .eq("project_id", project_id)
+    // 2. Uploads moeten bestaan
+    const { data: files } = await supabase
+      .from("project_files")
+      .select("id")
+      .eq("project_id", project_id)
 
-  if (filesError) {
-    throw new Error("PROJECT_SCAN_FILES_FETCH_FAILED: " + filesError.message)
-  }
+    if (!files || files.length === 0) {
+      throw new Error("PROJECT_SCAN_NO_UPLOADS")
+    }
 
-  if (!files || files.length === 0) {
-    throw new Error("PROJECT_SCAN_NO_UPLOADS")
-  }
+    // 3. STABU moet gevuld zijn
+    const { count: stabuCount } = await supabase
+      .from("stabu_regels")
+      .select("*", { count: "exact", head: true })
 
-  // 3. STABU moet gevuld zijn
-  const { count: stabuCount, error: stabuError } = await supabase
-    .from("stabu_regels")
-    .select("*", { count: "exact", head: true })
+    if (!stabuCount || stabuCount === 0) {
+      throw new Error("PROJECT_SCAN_NO_STABU_DATA")
+    }
 
-  if (stabuError || !stabuCount || stabuCount === 0) {
-    throw new Error("PROJECT_SCAN_NO_STABU_DATA")
-  }
+    // 4. Hoeveelheden moeten bestaan
+    const { count: qtyCount } = await supabase
+      .from("project_hoeveelheden")
+      .select("*", { count: "exact", head: true })
+      .eq("project_id", project_id)
 
-  // 4. Hoeveelheden-bron moet bestaan
-  const { count: qtyCount, error: qtyError } = await supabase
-    .from("project_hoeveelheden")
-    .select("*", { count: "exact", head: true })
-    .eq("project_id", project_id)
+    if (!qtyCount || qtyCount === 0) {
+      throw new Error("PROJECT_SCAN_NO_QUANTITIES")
+    }
 
-  if (qtyError) {
-    throw new Error("PROJECT_SCAN_QTY_FETCH_FAILED: " + qtyError.message)
-  }
+    /*
+    ========================
+    SCAN RESULTAAT
+    ========================
+    */
+    const scanResult = {
+      uploads: files.length,
+      stabu_rules: stabuCount,
+      quantities: qtyCount,
+      scanned_at: new Date().toISOString()
+    }
 
-  if (!qtyCount || qtyCount === 0) {
-    throw new Error("PROJECT_SCAN_NO_QUANTITIES")
-  }
+    await supabase
+      .from("project_scan_results")
+      .insert({
+        project_id,
+        result: scanResult
+      })
 
-  /*
-  ========================
-  SCAN RESULTAAT VASTLEGGEN
-  ========================
-  */
-  const scanResult = {
-    uploads: files.length,
-    stabu_rules: stabuCount,
-    quantities: qtyCount,
-    scanned_at: new Date().toISOString()
-  }
+    /*
+    ========================
+    STATUS → COMPLETED
+    ========================
+    */
+    await supabase
+      .from("projects")
+      .update({ analysis_status: "completed" })
+      .eq("id", project_id)
 
-  const { error: resultError } = await supabase
-    .from("project_scan_results")
-    .insert({
-      project_id,
-      result: scanResult
-    })
+    /*
+    ========================
+    LOG DONE
+    ========================
+    */
+    await supabase
+      .from("project_initialization_log")
+      .update({
+        status: "done",
+        finished_at: new Date().toISOString()
+      })
+      .eq("project_id", project_id)
+      .eq("module", "PROJECT_SCAN")
 
-  if (resultError) {
-    throw new Error("PROJECT_SCAN_RESULT_WRITE_FAILED: " + resultError.message)
-  }
+    /*
+    ========================
+    SLUIT TASK
+    ========================
+    */
+    if (task.id) {
+      await supabase
+        .from("executor_tasks")
+        .update({ status: "done" })
+        .eq("id", task.id)
+    }
 
-  /*
-  ========================
-  LOG DONE
-  ========================
-  */
-  const { error: doneLogError } = await supabase
-    .from("project_initialization_log")
-    .update({
-      status: "done",
-      finished_at: new Date().toISOString()
-    })
-    .eq("project_id", project_id)
-    .eq("module", "PROJECT_SCAN")
-
-  if (doneLogError) {
-    throw new Error("PROJECT_SCAN_LOG_DONE_FAILED: " + doneLogError.message)
-  }
-
-  /*
-  ========================
-  SLUIT HUIDIGE TASK
-  ========================
-  */
-  if (task.id) {
+    /*
+    ========================
+    START REKENWOLK
+    ========================
+    */
     await supabase
       .from("executor_tasks")
-      .update({ status: "done" })
-      .eq("id", task.id)
-  }
+      .insert({
+        project_id,
+        action: "start_rekenwolk",
+        payload: { project_id, chat_id: chatId },
+        status: "open",
+        assigned_to: "executor"
+      })
 
-  /*
-  ========================
-  START REKENWOLK
-  ========================
-  */
-  const { error: nextTaskError } = await supabase
-    .from("executor_tasks")
-    .insert({
+    if (chatId) {
+      try {
+        await sendTelegram(
+          chatId,
+          "Projectscan afgerond. Rekenwolk gestart."
+        )
+      } catch (_) {}
+    }
+
+    return {
+      state: "DONE",
       project_id,
-      action: "start_rekenwolk",
-      payload: { project_id, chat_id: chatId },
-      status: "open",
-      assigned_to: "executor"
-    })
+      scan: scanResult
+    }
+  } catch (err) {
+    /*
+    ========================
+    STATUS → FAILED
+    ========================
+    */
+    await supabase
+      .from("projects")
+      .update({ analysis_status: "failed" })
+      .eq("id", project_id)
 
-  if (nextTaskError) {
-    throw new Error("PROJECT_SCAN_NEXT_TASK_FAILED: " + nextTaskError.message)
-  }
+    if (task.id) {
+      await supabase
+        .from("executor_tasks")
+        .update({
+          status: "failed",
+          error: err.message
+        })
+        .eq("id", task.id)
+    }
 
-  if (chatId) {
-    try {
-      await sendTelegram(chatId, "Projectscan afgerond. Rekenwolk gestart.")
-    } catch (_) {}
-  }
-
-  return {
-    state: "DONE",
-    project_id,
-    scan: scanResult
+    throw err
   }
 }
