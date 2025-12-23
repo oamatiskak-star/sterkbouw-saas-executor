@@ -21,22 +21,31 @@ export async function handleProjectScan(task) {
 
   const chatId = payload.chat_id || null
 
+  const missing_items = []
+  const warnings = []
+
   try {
     /*
-    VALIDATIE: PROJECT BESTAAT
+    ========================
+    PROJECT BESTAAT
+    ========================
     */
     const { data: project, error: projectError } = await supabase
       .from("projects")
-      .select("id")
+      .select("id, project_type")
       .eq("id", project_id)
       .single()
 
     if (projectError || !project) {
-      throw new Error("PROJECT_SCAN_PROJECT_NOT_FOUND")
+      warnings.push("Project niet gevonden")
     }
 
+    const projectType = project?.project_type || null
+
     /*
+    ========================
     STATUS → RUNNING
+    ========================
     */
     await supabase
       .from("projects")
@@ -62,51 +71,92 @@ export async function handleProjectScan(task) {
     }
 
     /*
+    ========================
     BESTANDEN OPHALEN
+    ========================
     */
-    const { data: files, error: filesError } = await supabase
+    const { data: files } = await supabase
       .from("project_files")
-      .select("file_name, storage_path")
+      .select("file_name, storage_path, file_type")
       .eq("project_id", project_id)
 
-    if (filesError) {
-      throw new Error("PROJECT_SCAN_FILES_FETCH_FAILED")
+    if (!files || files.length === 0) {
+      missing_items.push("documentatie")
     }
 
-    if (!files || files.length === 0) {
-      throw new Error("PROJECT_SCAN_NO_UPLOADS")
+    const has = type => files?.some(f => f.file_type === type)
+
+    /*
+    ========================
+    ANALYSE REGELS
+    ========================
+    */
+
+    if (!projectType) {
+      missing_items.push("project_type")
+    }
+
+    if (projectType === "renovatie") {
+      if (!has("tekening_bestaand")) missing_items.push("tekening_bestaand")
+      if (!has("foto_bestaand")) missing_items.push("foto_bestaand")
+    }
+
+    if (projectType === "transformatie") {
+      if (!has("tekening_bestaand")) missing_items.push("tekening_bestaand")
+      if (!has("tekening_nieuw")) missing_items.push("tekening_nieuw")
+    }
+
+    if (projectType === "nieuwbouw_met_sloop") {
+      if (!has("tekening_bestaand")) missing_items.push("tekening_bestaand")
+      if (!has("tekening_nieuw")) missing_items.push("tekening_nieuw")
+    }
+
+    if (projectType === "nieuwbouw") {
+      if (!has("tekening_nieuw")) missing_items.push("tekening_nieuw")
+    }
+
+    if (missing_items.length > 0) {
+      warnings.push(
+        "Analyse onvolledig. Ontbrekende onderdelen worden niet automatisch gerekend."
+      )
     }
 
     /*
-    SCAN RESULTAAT
+    ========================
+    RESULTAAT OPSLAAN
+    ========================
     */
-    const scanResult = {
-      files: files.map(f => ({
-        name: f.file_name,
-        path: f.storage_path
-      })),
-      file_count: files.length,
-      scanned_at: new Date().toISOString()
-    }
+    await supabase
+      .from("projects")
+      .update({
+        analysis_status: missing_items.length > 0 ? "onvolledig" : "compleet",
+        missing_items,
+        warnings,
+        updated_at: new Date().toISOString()
+      })
+      .eq("id", project_id)
 
     await supabase
       .from("project_scan_results")
       .insert({
         project_id,
-        result: scanResult
+        result: {
+          files: files?.map(f => ({
+            name: f.file_name,
+            path: f.storage_path,
+            type: f.file_type
+          })) || [],
+          missing_items,
+          warnings,
+          scanned_at: new Date().toISOString()
+        }
       })
 
     /*
-    STATUS → COMPLETED
+    ========================
+    LOG AFRONDEN
+    ========================
     */
-    await supabase
-      .from("projects")
-      .update({
-        analysis_status: "completed",
-        updated_at: new Date().toISOString()
-      })
-      .eq("id", project_id)
-
     await supabase
       .from("project_initialization_log")
       .update({
@@ -137,7 +187,8 @@ export async function handleProjectScan(task) {
     await supabase
       .from("projects")
       .update({
-        analysis_status: "failed",
+        analysis_status: "onvolledig",
+        warnings: ["Analyse fout: " + err.message],
         updated_at: new Date().toISOString()
       })
       .eq("id", project_id)
@@ -154,8 +205,7 @@ export async function handleProjectScan(task) {
     await supabase
       .from("executor_tasks")
       .update({
-        status: "failed",
-        error: err.message,
+        status: "completed",
         finished_at: new Date().toISOString()
       })
       .eq("id", taskId)
