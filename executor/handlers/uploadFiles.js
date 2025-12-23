@@ -38,7 +38,7 @@ export async function handleUploadFiles(task) {
   let uploaded = 0
 
   for (const f of files) {
-    assert(f.local_path && f.filename, "UPLOAD_FILE_INVALID_PAYLOAD")
+    assert(f.local_path && f.filename, "UPLOAD_FILE_INVALID")
 
     const buffer = fs.readFileSync(f.local_path)
     const target_path = `${project_id}/${Date.now()}_${f.filename}`
@@ -70,11 +70,20 @@ export async function handleUploadFiles(task) {
     uploaded++
   }
 
-  /*
-  ============================
-  SLUIT HUIDIGE TASK
-  ============================
-  */
+  /* ============================
+     PROJECT STATUS BIJWERKEN
+     ============================ */
+  await supabase
+    .from("projects")
+    .update({
+      files_uploaded: true,
+      analysis_status: "queued"
+    })
+    .eq("id", project_id)
+
+  /* ============================
+     HUIDIGE TASK SLUITEN
+     ============================ */
   if (task.id) {
     await supabase
       .from("executor_tasks")
@@ -82,11 +91,9 @@ export async function handleUploadFiles(task) {
       .eq("id", task.id)
   }
 
-  /*
-  ============================
-  START PROJECT SCAN
-  ============================
-  */
+  /* ============================
+     AUTOMATISCH ANALYSE STARTEN
+     ============================ */
   const { error: nextErr } = await supabase
     .from("executor_tasks")
     .insert({
