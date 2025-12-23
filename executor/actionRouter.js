@@ -54,7 +54,33 @@ export async function runAction(task) {
     throw new Error("ACTION_ID_MISSING")
   }
 
-  const project_id = task.project_id || payload.project_id || null
+  const project_id =
+    task.project_id ||
+    (payload && payload.project_id) ||
+    null
+
+  /*
+  ====================================================
+  ACTIONS DIE GEEN PROJECT NODIG HEBBEN
+  ====================================================
+  */
+
+  if (actionId === "architect_full_ui_pages_build") {
+    await telegramLog(chatId, "UI build gestart")
+    await architectFullUiBuild(task)
+    await telegramLog(chatId, "UI build afgerond")
+    return { state: "DONE", action: actionId }
+  }
+
+  /*
+  ====================================================
+  PROJECT IS VERPLICHT VANAF HIER
+  ====================================================
+  */
+
+  if (!project_id) {
+    throw new Error("RUNACTION_NO_PROJECT_ID")
+  }
 
   /*
   ====================================================
@@ -90,7 +116,7 @@ export async function runAction(task) {
 
   /*
   ====================================================
-  ANALYSIS ACTION (ALIAS)
+  ANALYSIS ALIAS
   ====================================================
   */
 
@@ -109,7 +135,7 @@ export async function runAction(task) {
 
   /*
   ====================================================
-  UPLOAD ACTION (GEEN STATUS LOGICA)
+  UPLOAD TASK (ALLEEN REGISTRATIE)
   ====================================================
   */
 
@@ -120,20 +146,7 @@ export async function runAction(task) {
 
   /*
   ====================================================
-  ARCHITECT ACTIONS
-  ====================================================
-  */
-
-  if (actionId === "architect_full_ui_pages_build") {
-    await telegramLog(chatId, "UI build gestart")
-    await architectFullUiBuild(task)
-    await telegramLog(chatId, "UI build afgerond")
-    return { state: "DONE", action: actionId }
-  }
-
-  /*
-  ====================================================
-  BUILDER ACTIONS (FALLBACK)
+  BUILDER FALLBACK
   ====================================================
   */
 
