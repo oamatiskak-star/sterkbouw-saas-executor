@@ -6,20 +6,6 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 )
 
-/*
-payload verwacht:
-{
-  project_id: "uuid",
-  files: [
-    {
-      local_path: "/tmp/upload/abc.pdf",
-      filename: "abc.pdf",
-      content_type: "application/pdf"
-    }
-  ]
-}
-*/
-
 function assert(cond, msg) {
   if (!cond) throw new Error(msg)
 }
@@ -58,8 +44,8 @@ export async function handleUploadFiles(task) {
       .from("project_files")
       .insert({
         project_id,
-        filename: f.filename,
-        path: target_path,
+        file_name: f.filename,
+        storage_path: target_path,
         bucket
       })
 
@@ -70,42 +56,59 @@ export async function handleUploadFiles(task) {
     uploaded++
   }
 
-  /* ============================
-     PROJECT STATUS BIJWERKEN
-     ============================ */
+  /*
+  ============================
+  PROJECT STATUS BIJWERKEN
+  ============================
+  */
   await supabase
     .from("projects")
     .update({
       files_uploaded: true,
-      analysis_status: "queued"
+      analysis_status: "queued",
+      updated_at: new Date().toISOString()
     })
     .eq("id", project_id)
 
-  /* ============================
-     HUIDIGE TASK SLUITEN
-     ============================ */
+  /*
+  ============================
+  HUIDIGE TASK SLUITEN
+  ============================
+  */
   if (task.id) {
     await supabase
       .from("executor_tasks")
-      .update({ status: "done" })
+      .update({
+        status: "completed",
+        finished_at: new Date().toISOString()
+      })
       .eq("id", task.id)
   }
 
-  /* ============================
-     AUTOMATISCH ANALYSE STARTEN
-     ============================ */
-  const { error: nextErr } = await supabase
+  /*
+  ============================
+  PRODUCER GUARD: PROJECT_SCAN
+  ============================
+  */
+  const { data: existingScan } = await supabase
     .from("executor_tasks")
-    .insert({
-      project_id,
-      action: "project_scan",
-      payload: { project_id },
-      status: "open",
-      assigned_to: "executor"
-    })
+    .select("id")
+    .eq("project_id", project_id)
+    .eq("action", "project_scan")
+    .in("status", ["open", "running", "completed"])
+    .limit(1)
+    .maybeSingle()
 
-  if (nextErr) {
-    throw new Error("UPLOAD_NEXT_TASK_FAILED: " + nextErr.message)
+  if (!existingScan) {
+    await supabase
+      .from("executor_tasks")
+      .insert({
+        project_id,
+        action: "project_scan",
+        payload: { project_id },
+        status: "open",
+        assigned_to: "executor"
+      })
   }
 
   return {
