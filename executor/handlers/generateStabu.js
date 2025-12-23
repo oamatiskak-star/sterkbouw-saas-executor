@@ -5,113 +5,171 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 )
 
-function assert(cond, msg) {
-  if (!cond) throw new Error(msg)
-}
-
-export async function handleGenerateStabu(task) {
-  assert(task, "NO_TASK")
-
-  const project_id =
-    task.project_id || task.payload?.project_id
-
-  assert(project_id, "STABU_NO_PROJECT_ID")
-
-  /*
-  ============================
-  START LOG
-  ============================
-  */
-  await supabase
-    .from("project_initialization_log")
-    .insert({
-      project_id,
-      module: "STABU",
-      status: "running",
-      started_at: new Date().toISOString()
-    })
-
-  /*
-  ============================
-  MASTER STABU CONTROLE
-  ============================
-  */
-  const { count, error } = await supabase
-    .from("stabu_regels")
-    .select("*", { count: "exact", head: true })
-    .eq("actief", true)
-
-  assert(!error, "STABU_FETCH_FAILED")
-  assert(count > 0, "STABU_EMPTY")
-
-  /*
-  ============================
-  OUDE STABU RESULTAAT OPSCHONEN
-  ============================
-  */
-  await supabase
-    .from("stabu_results")
-    .delete()
-    .eq("project_id", project_id)
-
-  /*
-  ============================
-  NIEUW STABU RESULTAAT
-  ============================
-  */
-  const { error: insertErr } = await supabase
-    .from("stabu_results")
-    .insert({
-      project_id,
-      status: "generated",
-      created_at: new Date().toISOString()
-    })
-
-  assert(!insertErr, "PROJECT_STABU_INSERT_FAILED")
-
-  /*
-  ============================
-  LOG DONE
-  ============================
-  */
-  await supabase
-    .from("project_initialization_log")
+function fail(taskId, msg) {
+  if (!taskId) return
+  return supabase
+    .from("executor_tasks")
     .update({
-      status: "done",
+      status: "failed",
+      error: msg,
       finished_at: new Date().toISOString()
     })
-    .eq("project_id", project_id)
-    .eq("module", "STABU")
+    .eq("id", taskId)
+}
 
-  /*
-  ============================
-  VOLGENDE STAP: REKENWOLK
-  ============================
-  */
-  await supabase
-    .from("executor_tasks")
-    .insert({
-      project_id,
-      action: "start_rekenwolk",
-      payload: { project_id },
-      status: "open",
-      assigned_to: "executor"
-    })
+/*
+===========================================================
+STABU GENERATOR – STERKCALC DEFINITIEVE VERSIE
+===========================================================
+- Eén STABU-resultaat per project
+- Idempotent uitgevoerd
+- Volgende stap alleen bij eerste succesvolle run
+===========================================================
+*/
 
-  /*
-  ============================
-  SLUIT HUIDIGE TASK
-  ============================
-  */
-  if (task.id) {
-    await supabase
-      .from("executor_tasks")
-      .update({ status: "done" })
-      .eq("id", task.id)
+export async function handleGenerateStabu(task) {
+  if (!task || !task.id) return
+
+  const taskId = task.id
+  const project_id =
+    task.project_id || task.payload?.project_id || null
+
+  if (!project_id) {
+    await fail(taskId, "STABU_NO_PROJECT_ID")
+    return
   }
 
-  return {
-    state: "DONE",
-    project_id
+  try {
+    /*
+    ============================
+    IDEMPOTENT GUARD
+    ============================
+    */
+    const { data: existing } = await supabase
+      .from("stabu_results")
+      .select("id")
+      .eq("project_id", project_id)
+      .eq("status", "generated")
+      .limit(1)
+      .maybeSingle()
+
+    if (existing) {
+      await supabase
+        .from("executor_tasks")
+        .update({
+          status: "skipped",
+          finished_at: new Date().toISOString()
+        })
+        .eq("id", taskId)
+
+      return {
+        state: "SKIPPED_ALREADY_GENERATED",
+        project_id
+      }
+    }
+
+    /*
+    ============================
+    START LOG
+    ============================
+    */
+    await supabase
+      .from("project_initialization_log")
+      .insert({
+        project_id,
+        module: "STABU",
+        status: "running",
+        started_at: new Date().toISOString()
+      })
+
+    /*
+    ============================
+    MASTER STABU CONTROLE
+    ============================
+    */
+    const { count, error } = await supabase
+      .from("stabu_regels")
+      .select("*", { count: "exact", head: true })
+      .eq("actief", true)
+
+    if (error || !count || count === 0) {
+      throw new Error("STABU_EMPTY")
+    }
+
+    /*
+    ============================
+    OUDE RESULTATEN OPSCHONEN
+    ============================
+    */
+    await supabase
+      .from("stabu_results")
+      .delete()
+      .eq("project_id", project_id)
+
+    /*
+    ============================
+    NIEUW STABU RESULTAAT
+    ============================
+    */
+    const { error: insertErr } = await supabase
+      .from("stabu_results")
+      .insert({
+        project_id,
+        status: "generated",
+        created_at: new Date().toISOString()
+      })
+
+    if (insertErr) {
+      throw new Error("PROJECT_STABU_INSERT_FAILED")
+    }
+
+    /*
+    ============================
+    LOG DONE
+    ============================
+    */
+    await supabase
+      .from("project_initialization_log")
+      .update({
+        status: "done",
+        finished_at: new Date().toISOString()
+      })
+      .eq("project_id", project_id)
+      .eq("module", "STABU")
+
+    /*
+    ============================
+    VOLGENDE STAP: REKENWOLK
+    ============================
+    */
+    await supabase
+      .from("executor_tasks")
+      .insert({
+        project_id,
+        action: "start_rekenwolk",
+        payload: { project_id },
+        status: "open",
+        assigned_to: "executor"
+      })
+
+    /*
+    ============================
+    SLUIT HUIDIGE TASK
+    ============================
+    */
+    await supabase
+      .from("executor_tasks")
+      .update({
+        status: "completed",
+        finished_at: new Date().toISOString()
+      })
+      .eq("id", taskId)
+
+    return {
+      state: "DONE",
+      project_id
+    }
+  } catch (err) {
+    await fail(taskId, err.message)
   }
 }
