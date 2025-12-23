@@ -89,6 +89,8 @@ app.post("/upload-files", upload.array("files"), async (req, res) => {
     if (!projectId) return res.status(400).json({ error: "NO_PROJECT_ID" })
     if (!files.length) return res.status(400).json({ error: "NO_FILES" })
 
+    const analysisLog = []
+
     for (const file of files) {
       const storagePath = `${projectId}/${Date.now()}_${file.originalname}`
 
@@ -112,19 +114,24 @@ app.post("/upload-files", upload.array("files"), async (req, res) => {
         })
 
       if (dbError) throw dbError
+
+      analysisLog.push({
+        file: file.originalname,
+        path: storagePath,
+        status: "queued"
+      })
     }
 
-    // project status
     await supabase
       .from("projects")
       .update({
         files_uploaded: true,
         analysis_status: "running",
+        analysis_log: analysisLog,
         updated_at: new Date().toISOString()
       })
       .eq("id", projectId)
 
-    // scan task
     await supabase.from("executor_tasks").insert({
       project_id: projectId,
       action: "project_scan",
@@ -136,7 +143,7 @@ app.post("/upload-files", upload.array("files"), async (req, res) => {
     res.json({
       ok: true,
       project_id: projectId,
-      files: files.map(f => f.originalname),
+      files: analysisLog.map(f => f.file),
       next: "project_scan"
     })
   } catch (e) {
@@ -175,7 +182,6 @@ async function pollExecutorTasks() {
 
     await runAction(task)
 
-    // 🔒 HARD GARANTIE: na project_scan bestaat ALTIJD calculatie
     if (task.action === "project_scan") {
       const { data: existing } = await supabase
         .from("calculaties")
