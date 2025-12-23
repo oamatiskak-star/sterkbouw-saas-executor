@@ -33,8 +33,7 @@ function normalizeActionId(raw) {
 
 export async function runAction(task) {
   if (!task || !task.id) {
-    // nooit hard stoppen
-    return { state: "SKIPPED_INVALID_TASK" }
+    throw new Error("RUNACTION_INVALID_TASK")
   }
 
   const payload =
@@ -52,8 +51,7 @@ export async function runAction(task) {
   const actionId = normalizeActionId(rawAction)
 
   if (STRICT_MODE && !actionId) {
-    // signaleren maar doorgaan
-    return { state: "SKIPPED_NO_ACTION_ID" }
+    throw new Error("ACTION_ID_MISSING")
   }
 
   const project_id =
@@ -76,14 +74,12 @@ export async function runAction(task) {
 
   /*
   ====================================================
-  PROJECT IS GEWENST MAAR NOOIT HARD VERPLICHT
+  PROJECT VERPLICHT
   ====================================================
   */
 
   if (!project_id) {
-    // niet stoppen, alleen melden
-    await telegramLog(chatId, "Geen project_id bij task, actie overgeslagen")
-    return { state: "SKIPPED_NO_PROJECT_ID", action: actionId }
+    throw new Error("RUNACTION_NO_PROJECT_ID")
   }
 
   /*
@@ -101,10 +97,17 @@ export async function runAction(task) {
       payload
     })
 
-    // Analyse zet zelf status en missing_items
-    // Router forceert hier niets meer
+    await supabase
+      .from("executor_tasks")
+      .insert({
+        project_id,
+        action: "generate_stabu",
+        payload: { project_id, chat_id: chatId },
+        status: "open",
+        assigned_to: "executor"
+      })
 
-    await telegramLog(chatId, "Analyse afgerond")
+    await telegramLog(chatId, "Analyse afgerond, STABU gestart")
 
     return { state: "DONE", action: actionId }
   }
@@ -124,14 +127,24 @@ export async function runAction(task) {
       payload
     })
 
-    await telegramLog(chatId, "STABU generatie afgerond")
+    await supabase
+      .from("executor_tasks")
+      .insert({
+        project_id,
+        action: "start_rekenwolk",
+        payload: { project_id, chat_id: chatId },
+        status: "open",
+        assigned_to: "executor"
+      })
+
+    await telegramLog(chatId, "STABU afgerond, rekenen gestart")
 
     return { state: "DONE", action: actionId }
   }
 
   /*
   ====================================================
-  3. REKENWOLK / CALCULATIE
+  3. REKENWOLK
   ====================================================
   */
 
@@ -144,7 +157,7 @@ export async function runAction(task) {
       payload
     })
 
-    await telegramLog(chatId, "Rekenwolk afgerond")
+    await telegramLog(chatId, "Calculatie afgerond")
 
     return { state: "DONE", action: actionId }
   }
