@@ -2,6 +2,7 @@ import express from "express"
 import multer from "multer"
 import { createClient } from "@supabase/supabase-js"
 
+import { runAction } from "./executor/actionRouter.js"
 import { handleTelegramWebhook } from "./integrations/telegramWebhook.js"
 import { sendTelegram } from "./integrations/telegramSender.js"
 
@@ -27,7 +28,6 @@ APP INIT
 */
 const app = express()
 
-// JSON alleen voor echte JSON endpoints
 app.use(express.json({ limit: "2mb" }))
 
 app.use((req, _res, next) => {
@@ -42,14 +42,12 @@ MULTER SETUP
 */
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: {
-    fileSize: 50 * 1024 * 1024 // 50 MB per bestand
-  }
+  limits: { fileSize: 50 * 1024 * 1024 }
 })
 
 /*
 ========================
-SUPABASE
+SUPABASE CLIENT
 ========================
 */
 const supabase = createClient(
@@ -101,23 +99,11 @@ app.post("/upload-files", upload.array("files"), async (req, res) => {
       return res.status(400).json({ error: "NO_FILES" })
     }
 
-    // Controleer of project bestaat
-    const { data: project } = await supabase
-      .from("projects")
-      .select("id")
-      .eq("id", projectId)
-      .single()
-
-    if (!project) {
-      return res.status(400).json({ error: "PROJECT_NOT_FOUND" })
-    }
-
-    let uploaded = 0
+    let uploadedCount = 0
 
     for (const file of files) {
       const storagePath = `${projectId}/${Date.now()}_${file.originalname}`
 
-      // Upload naar Supabase Storage
       const { error: uploadError } = await supabase.storage
         .from("sterkcalc")
         .upload(storagePath, file.buffer, {
@@ -125,11 +111,8 @@ app.post("/upload-files", upload.array("files"), async (req, res) => {
           upsert: false
         })
 
-      if (uploadError) {
-        throw new Error(uploadError.message)
-      }
+      if (uploadError) throw uploadError
 
-      // Log in project_files
       const { error: dbError } = await supabase
         .from("project_files")
         .insert({
@@ -140,26 +123,41 @@ app.post("/upload-files", upload.array("files"), async (req, res) => {
           status: "uploaded"
         })
 
-      if (dbError) {
-        throw new Error(dbError.message)
-      }
+      if (dbError) throw dbError
 
-      uploaded++
+      uploadedCount++
     }
 
-    // Projectstatus bijwerken
+    /*
+    ========================
+    PROJECT STATUS UPDATE
+    ========================
+    */
     await supabase
       .from("projects")
       .update({
         files_uploaded: true,
-        analysis_status: "completed",
+        analysis_status: "running",
         updated_at: new Date().toISOString()
       })
       .eq("id", projectId)
 
+    /*
+    ========================
+    START PROJECT SCAN TASK
+    ========================
+    */
+    await supabase.from("executor_tasks").insert({
+      project_id: projectId,
+      action: "project_scan",
+      payload: { project_id: projectId },
+      status: "open",
+      assigned_to: "executor"
+    })
+
     res.json({
       ok: true,
-      uploaded
+      uploaded: uploadedCount
     })
   } catch (e) {
     console.error("UPLOAD_FATAL", e.message)
@@ -169,8 +167,59 @@ app.post("/upload-files", upload.array("files"), async (req, res) => {
 
 /*
 ========================
-EXECUTOR LOOP UITGESCHAKELD
-OPTIE B – EXPLICIET
+EXECUTOR TASK POLLER
+========================
+*/
+async function pollExecutorTasks() {
+  const { data: tasks } = await supabase
+    .from("executor_tasks")
+    .select("*")
+    .eq("status", "open")
+    .eq("assigned_to", "executor")
+    .order("created_at", { ascending: true })
+    .limit(1)
+
+  if (!tasks || !tasks.length) return
+
+  const task = tasks[0]
+
+  console.log("EXECUTOR_TASK_PICKED", task.action, task.id)
+
+  try {
+    await supabase
+      .from("executor_tasks")
+      .update({
+        status: "running",
+        started_at: new Date().toISOString()
+      })
+      .eq("id", task.id)
+
+    await runAction(task)
+
+    await supabase
+      .from("executor_tasks")
+      .update({
+        status: "done",
+        finished_at: new Date().toISOString()
+      })
+      .eq("id", task.id)
+  } catch (e) {
+    console.error("EXECUTOR_TASK_ERROR", e.message)
+
+    await supabase
+      .from("executor_tasks")
+      .update({
+        status: "failed",
+        error: e.message,
+        finished_at: new Date().toISOString()
+      })
+      .eq("id", task.id)
+  }
+}
+
+/*
+========================
+EXECUTOR LOOP
 ========================
 */
 if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
@@ -179,7 +228,9 @@ if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
   setInterval(async () => {
     await pollExecutorTasks()
   }, 3000)
-}*
+}
+
+/*
 ========================
 SERVER START
 ========================
