@@ -13,7 +13,7 @@ REKENWOLK – STABIELE BASISVERSIE (ZONDER STABU)
 - STABU is optioneel
 - Calculatie wordt altijd aangemaakt
 - PDF wordt altijd gegenereerd
-- Frontend kan altijd door
+- Executor task wordt altijd correct afgesloten
 ===========================================================
 */
 
@@ -51,7 +51,6 @@ async function getOrCreateCalculatie(project_id) {
 LEGE 2JOURS PDF
 ========================
 */
-
 async function generateEmpty2JoursPdf(calculatie) {
   const pdf = await PDFDocument.create()
   const page = pdf.addPage([595, 842])
@@ -102,7 +101,6 @@ async function uploadPdf(project_id, pdfBytes) {
 ENTRYPOINT
 ========================
 */
-
 export async function handleStartRekenwolk(task) {
   assert(task, "NO_TASK")
 
@@ -146,7 +144,7 @@ export async function handleStartRekenwolk(task) {
 
   /*
   ========================
-  PROJECT AFRONDEN
+  PROJECT STATUS AFRONDEN
   ========================
   */
   await supabase
@@ -156,6 +154,21 @@ export async function handleStartRekenwolk(task) {
       updated_at: new Date().toISOString()
     })
     .eq("id", project_id)
+
+  /*
+  ========================
+  EXECUTOR TASK AFRONDEN
+  ========================
+  */
+  if (task.id) {
+    await supabase
+      .from("executor_tasks")
+      .update({
+        status: "done",
+        finished_at: new Date().toISOString()
+      })
+      .eq("id", task.id)
+  }
 
   return {
     state: "DONE",
