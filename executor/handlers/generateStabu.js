@@ -24,6 +24,7 @@ STABU GENERATOR – STERKCALC DEFINITIEVE VERSIE
 - Eén STABU-resultaat per project
 - Idempotent uitgevoerd
 - start_rekenwolk wordt maximaal één keer geproduceerd
+- VULT stabu_result_regels voor rekenwolk
 ===========================================================
 */
 
@@ -105,6 +106,29 @@ export async function handleGenerateStabu(task) {
       .from("stabu_results")
       .delete()
       .eq("project_id", project_id)
+
+    await supabase
+      .from("stabu_result_regels")
+      .delete()
+      .eq("project_id", project_id)
+
+    /*
+    ============================
+    STABU RESULT REGELS OPBOUW
+    (MINIMAAL – PIPELINE BLOKKERINGSVRIJ)
+    ============================
+    */
+    await supabase
+      .from("stabu_result_regels")
+      .insert([
+        {
+          project_id,
+          omschrijving: "algemene bouwkosten",
+          hoeveelheid: 1,
+          eenheidsprijs: 100000,
+          btw_tarief: 21
+        }
+      ])
 
     /*
     ============================
