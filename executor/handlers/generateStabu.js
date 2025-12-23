@@ -11,13 +11,12 @@ function assert(cond, msg) {
 
 export async function handleGenerateStabu(task) {
   assert(task, "NO_TASK")
-  assert(task.project_id || task.payload?.project_id, "STABU_NO_PROJECT_ID")
-
-  const project_id = task.project_id || task.payload.project_id
+  const project_id = task.project_id || task.payload?.project_id
+  assert(project_id, "STABU_NO_PROJECT_ID")
 
   /*
   ============================
-  LOG START
+  START LOG
   ============================
   */
   await supabase.from("project_initialization_log").insert({
@@ -29,19 +28,40 @@ export async function handleGenerateStabu(task) {
 
   /*
   ============================
-  BASIS STABU LADEN
+  STABU STRUCTUUR + PRIJS
   ============================
   */
-  const { data: basis, error: basisErr } = await supabase
-    .from("stabu_basisprijzen")
-    .select("stabu_code, omschrijving, eenheid, prijs")
+  const { data: regels, error } = await supabase
+    .from("stabu_regels")
+    .select(`
+      id,
+      code,
+      omschrijving,
+      eenheid,
+      stabu_results (
+        berekende_prijs
+      )
+    `)
+    .eq("actief", true)
 
-  assert(!basisErr, "STABU_MASTER_FETCH_FAILED")
-  assert(basis && basis.length > 0, "STABU_MASTER_EMPTY")
+  assert(!error, "STABU_FETCH_FAILED")
+  assert(regels && regels.length > 0, "STABU_EMPTY")
+
+  const projectStabu = regels
+    .filter(r => r.stabu_results && r.stabu_results.berekende_prijs !== null)
+    .map(r => ({
+      project_id,
+      stabu_code: r.code,
+      omschrijving: r.omschrijving,
+      eenheid: r.eenheid,
+      prijs: Number(r.stabu_results.berekende_prijs)
+    }))
+
+  assert(projectStabu.length > 0, "STABU_NO_PRICES")
 
   /*
   ============================
-  OUDE PROJECT STABU OPSCHONEN
+  OPSCHONEN OUDE DATA
   ============================
   */
   await supabase
@@ -51,17 +71,9 @@ export async function handleGenerateStabu(task) {
 
   /*
   ============================
-  KOPIËREN NAAR PROJECT
+  INSERT PROJECT STABU
   ============================
   */
-  const projectStabu = basis.map(r => ({
-    project_id,
-    stabu_code: r.stabu_code,
-    omschrijving: r.omschrijving,
-    eenheid: r.eenheid,
-    prijs: r.prijs
-  }))
-
   const { error: insertErr } = await supabase
     .from("calculatie_stabu")
     .insert(projectStabu)
@@ -84,16 +96,20 @@ export async function handleGenerateStabu(task) {
 
   /*
   ============================
-  VOLGENDE STAP
+  NEXT STEP: REKENWOLK
   ============================
   */
-  await supabase.from("executor_tasks").insert({
-    project_id,
-    action: "derive_quantities",
-    payload: { project_id },
-    status: "open",
-    assigned_to: "executor"
-  })
+  const { error: nextErr } = await supabase
+    .from("executor_tasks")
+    .insert({
+      project_id,
+      action: "start_rekenwolk",
+      payload: { project_id },
+      status: "open",
+      assigned_to: "executor"
+    })
+
+  assert(!nextErr, "STABU_NEXT_TASK_FAILED")
 
   /*
   ============================
