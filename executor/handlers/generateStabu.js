@@ -1,4 +1,4 @@
-import supabase from "../../supabaseClient.js"
+import { createClient } from "@supabase/supabase-js"
 
 /*
 ====================================================
@@ -12,12 +12,20 @@ GENERATE STABU – EINDPRODUCT
 ====================================================
 */
 
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+)
+
 function assert(cond, msg) {
   if (!cond) throw new Error(msg)
 }
 
 export async function handleGenerateStabu(task) {
-  assert(task && (task.project_id || task.payload?.project_id), "STABU_NO_PROJECT_ID")
+  assert(
+    task && (task.project_id || task.payload?.project_id),
+    "STABU_NO_PROJECT_ID"
+  )
 
   const project_id = task.project_id || task.payload.project_id
 
