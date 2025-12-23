@@ -1,4 +1,3 @@
-import fs from "fs"
 import { createClient } from "@supabase/supabase-js"
 import { runBuilder } from "../builder/index.js"
 import { architectFullUiBuild } from "../actions/architectFullUiBuild.js"
@@ -55,30 +54,24 @@ export async function runAction(task) {
     throw new Error("ACTION_ID_MISSING")
   }
 
+  const project_id = task.project_id || payload.project_id || null
+
   /*
   ====================================================
   SYSTEM ACTIONS
   ====================================================
   */
+
   if (actionId === "project_scan") {
     await telegramLog(chatId, "Projectscan gestart")
 
     await handleProjectScan({
       id: task.id,
-      project_id: task.project_id,
+      project_id,
       payload
     })
 
-    await supabase
-      .from("projects")
-      .update({
-        analysis_status: "completed",
-        updated_at: new Date().toISOString()
-      })
-      .eq("id", task.project_id)
-
     await telegramLog(chatId, "Projectscan afgerond")
-
     return { state: "DONE", action: actionId }
   }
 
@@ -87,78 +80,42 @@ export async function runAction(task) {
 
     await handleStartRekenwolk({
       id: task.id,
-      project_id: task.project_id,
+      project_id,
       payload
     })
 
     await telegramLog(chatId, "Rekenwolk afgerond")
-
     return { state: "DONE", action: actionId }
   }
 
   /*
   ====================================================
-  ANALYSIS ACTION
+  ANALYSIS ACTION (ALIAS)
   ====================================================
   */
+
   if (actionId === "analysis") {
     await telegramLog(chatId, "Analyse gestart")
 
-    // Stap 1. Projectscan
     await handleProjectScan({
       id: task.id,
-      project_id: task.project_id,
+      project_id,
       payload
     })
 
-    // Stap 2. Analyse afronden
-    await supabase
-      .from("projects")
-      .update({
-        analysis_status: "completed",
-        updated_at: new Date().toISOString()
-      })
-      .eq("id", task.project_id)
-
-    // Stap 3. Executor taak afronden
-    await supabase
-      .from("executor_tasks")
-      .update({
-        status: "done",
-        finished_at: new Date().toISOString()
-      })
-      .eq("id", task.id)
-
     await telegramLog(chatId, "Analyse afgerond")
-
-    return {
-      state: "DONE",
-      action: actionId
-    }
+    return { state: "DONE", action: actionId }
   }
 
   /*
   ====================================================
-  UPLOAD ACTION
+  UPLOAD ACTION (GEEN STATUS LOGICA)
   ====================================================
   */
+
   if (actionId === "upload_files") {
-    await telegramLog(chatId, "Upload taak ontvangen")
-
-    await supabase
-      .from("projects")
-      .update({
-        files_uploaded: true,
-        updated_at: new Date().toISOString()
-      })
-      .eq("id", task.project_id)
-
-    await telegramLog(chatId, "Upload verwerkt")
-
-    return {
-      state: "DONE",
-      action: actionId
-    }
+    await telegramLog(chatId, "Upload geregistreerd")
+    return { state: "DONE", action: actionId }
   }
 
   /*
@@ -166,6 +123,7 @@ export async function runAction(task) {
   ARCHITECT ACTIONS
   ====================================================
   */
+
   if (actionId === "architect_full_ui_pages_build") {
     await telegramLog(chatId, "UI build gestart")
     await architectFullUiBuild(task)
@@ -175,13 +133,14 @@ export async function runAction(task) {
 
   /*
   ====================================================
-  BUILDER ACTIONS
+  BUILDER ACTIONS (FALLBACK)
   ====================================================
   */
+
   const result = await runBuilder({
     actionId,
     taskId: task.id,
-    project_id: task.project_id,
+    project_id,
     ...payload
   })
 
