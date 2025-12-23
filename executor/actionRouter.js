@@ -33,7 +33,8 @@ function normalizeActionId(raw) {
 
 export async function runAction(task) {
   if (!task || !task.id) {
-    throw new Error("RUNACTION_INVALID_TASK")
+    // nooit hard stoppen
+    return { state: "SKIPPED_INVALID_TASK" }
   }
 
   const payload =
@@ -51,7 +52,8 @@ export async function runAction(task) {
   const actionId = normalizeActionId(rawAction)
 
   if (STRICT_MODE && !actionId) {
-    throw new Error("ACTION_ID_MISSING")
+    // signaleren maar doorgaan
+    return { state: "SKIPPED_NO_ACTION_ID" }
   }
 
   const project_id =
@@ -74,17 +76,19 @@ export async function runAction(task) {
 
   /*
   ====================================================
-  PROJECT IS VERPLICHT
+  PROJECT IS GEWENST MAAR NOOIT HARD VERPLICHT
   ====================================================
   */
 
   if (!project_id) {
-    throw new Error("RUNACTION_NO_PROJECT_ID")
+    // niet stoppen, alleen melden
+    await telegramLog(chatId, "Geen project_id bij task, actie overgeslagen")
+    return { state: "SKIPPED_NO_PROJECT_ID", action: actionId }
   }
 
   /*
   ====================================================
-  1. PROJECT SCAN (ANALYSE)
+  1. PROJECT SCAN / ANALYSE
   ====================================================
   */
 
@@ -97,25 +101,10 @@ export async function runAction(task) {
       payload
     })
 
-    // Zet expliciet status
-    await supabase
-      .from("projects")
-      .update({
-        analysis_status: "analyzed",
-        updated_at: new Date().toISOString()
-      })
-      .eq("id", project_id)
+    // Analyse zet zelf status en missing_items
+    // Router forceert hier niets meer
 
-    // Start STABU generatie
-    await supabase.from("executor_tasks").insert({
-      project_id,
-      action: "generate_stabu",
-      payload: { project_id, chat_id: chatId },
-      status: "open",
-      assigned_to: "executor"
-    })
-
-    await telegramLog(chatId, "Analyse afgerond, STABU generatie gestart")
+    await telegramLog(chatId, "Analyse afgerond")
 
     return { state: "DONE", action: actionId }
   }
@@ -135,16 +124,7 @@ export async function runAction(task) {
       payload
     })
 
-    // Start rekenen
-    await supabase.from("executor_tasks").insert({
-      project_id,
-      action: "start_rekenwolk",
-      payload: { project_id, chat_id: chatId },
-      status: "open",
-      assigned_to: "executor"
-    })
-
-    await telegramLog(chatId, "STABU gegenereerd, rekenen gestart")
+    await telegramLog(chatId, "STABU generatie afgerond")
 
     return { state: "DONE", action: actionId }
   }
@@ -164,16 +144,7 @@ export async function runAction(task) {
       payload
     })
 
-    // Calculatie is klaar
-    await supabase
-      .from("projects")
-      .update({
-        analysis_status: "completed",
-        updated_at: new Date().toISOString()
-      })
-      .eq("id", project_id)
-
-    await telegramLog(chatId, "Calculatie afgerond")
+    await telegramLog(chatId, "Rekenwolk afgerond")
 
     return { state: "DONE", action: actionId }
   }
