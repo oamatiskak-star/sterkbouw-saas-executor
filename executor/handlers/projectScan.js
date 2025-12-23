@@ -20,12 +20,30 @@ export async function handleProjectScan(task) {
   try {
     /*
     ========================
+    VALIDATIE: PROJECT BESTAAT
+    ========================
+    */
+    const { data: project, error: projectError } = await supabase
+      .from("projects")
+      .select("id")
+      .eq("id", project_id)
+      .single()
+
+    if (projectError || !project) {
+      throw new Error("PROJECT_SCAN_PROJECT_NOT_FOUND")
+    }
+
+    /*
+    ========================
     STATUS → RUNNING
     ========================
     */
     await supabase
       .from("projects")
-      .update({ analysis_status: "running" })
+      .update({
+        analysis_status: "running",
+        updated_at: new Date().toISOString()
+      })
       .eq("id", project_id)
 
     /*
@@ -50,22 +68,9 @@ export async function handleProjectScan(task) {
 
     /*
     ========================
-    VALIDATIES
+    VALIDATIE: UPLOADS
     ========================
     */
-
-    // 1. Project moet bestaan
-    const { data: project, error: projectError } = await supabase
-      .from("projects")
-      .select("id")
-      .eq("id", project_id)
-      .single()
-
-    if (projectError || !project) {
-      throw new Error("PROJECT_SCAN_PROJECT_NOT_FOUND")
-    }
-
-    // 2. Uploads moeten bestaan
     const { data: files, error: filesError } = await supabase
       .from("project_files")
       .select("id")
@@ -79,7 +84,11 @@ export async function handleProjectScan(task) {
       throw new Error("PROJECT_SCAN_NO_UPLOADS")
     }
 
-    // 3. STABU moet gevuld zijn
+    /*
+    ========================
+    VALIDATIE: STABU
+    ========================
+    */
     const { count: stabuCount, error: stabuError } = await supabase
       .from("stabu_regels")
       .select("*", { count: "exact", head: true })
@@ -90,7 +99,7 @@ export async function handleProjectScan(task) {
 
     /*
     ========================
-    SCAN RESULTAAT
+    SCAN RESULTAAT OPSLAAN
     ========================
     */
     const scanResult = {
@@ -113,12 +122,15 @@ export async function handleProjectScan(task) {
     */
     await supabase
       .from("projects")
-      .update({ analysis_status: "completed" })
+      .update({
+        analysis_status: "completed",
+        updated_at: new Date().toISOString()
+      })
       .eq("id", project_id)
 
     /*
     ========================
-    LOG DONE
+    LOG → DONE
     ========================
     */
     await supabase
@@ -132,13 +144,16 @@ export async function handleProjectScan(task) {
 
     /*
     ========================
-    SLUIT TASK
+    EXECUTOR TASK → DONE
     ========================
     */
     if (task.id) {
       await supabase
         .from("executor_tasks")
-        .update({ status: "done" })
+        .update({
+          status: "done",
+          finished_at: new Date().toISOString()
+        })
         .eq("id", task.id)
     }
 
@@ -179,7 +194,10 @@ export async function handleProjectScan(task) {
     */
     await supabase
       .from("projects")
-      .update({ analysis_status: "failed" })
+      .update({
+        analysis_status: "failed",
+        updated_at: new Date().toISOString()
+      })
       .eq("id", project_id)
 
     if (task.id) {
@@ -187,7 +205,8 @@ export async function handleProjectScan(task) {
         .from("executor_tasks")
         .update({
           status: "failed",
-          error: err.message
+          error: err.message,
+          finished_at: new Date().toISOString()
         })
         .eq("id", task.id)
     }
