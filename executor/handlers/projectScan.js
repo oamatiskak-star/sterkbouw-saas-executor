@@ -55,43 +55,37 @@ export async function handleProjectScan(task) {
     */
 
     // 1. Project moet bestaan
-    const { data: project } = await supabase
+    const { data: project, error: projectError } = await supabase
       .from("projects")
       .select("id")
       .eq("id", project_id)
       .single()
 
-    if (!project) {
+    if (projectError || !project) {
       throw new Error("PROJECT_SCAN_PROJECT_NOT_FOUND")
     }
 
     // 2. Uploads moeten bestaan
-    const { data: files } = await supabase
+    const { data: files, error: filesError } = await supabase
       .from("project_files")
       .select("id")
       .eq("project_id", project_id)
+
+    if (filesError) {
+      throw new Error("PROJECT_SCAN_FILES_FETCH_FAILED")
+    }
 
     if (!files || files.length === 0) {
       throw new Error("PROJECT_SCAN_NO_UPLOADS")
     }
 
     // 3. STABU moet gevuld zijn
-    const { count: stabuCount } = await supabase
+    const { count: stabuCount, error: stabuError } = await supabase
       .from("stabu_regels")
       .select("*", { count: "exact", head: true })
 
-    if (!stabuCount || stabuCount === 0) {
+    if (stabuError || !stabuCount || stabuCount === 0) {
       throw new Error("PROJECT_SCAN_NO_STABU_DATA")
-    }
-
-    // 4. Hoeveelheden moeten bestaan
-    const { count: qtyCount } = await supabase
-      .from("project_hoeveelheden")
-      .select("*", { count: "exact", head: true })
-      .eq("project_id", project_id)
-
-    if (!qtyCount || qtyCount === 0) {
-      throw new Error("PROJECT_SCAN_NO_QUANTITIES")
     }
 
     /*
@@ -102,7 +96,6 @@ export async function handleProjectScan(task) {
     const scanResult = {
       uploads: files.length,
       stabu_rules: stabuCount,
-      quantities: qtyCount,
       scanned_at: new Date().toISOString()
     }
 
