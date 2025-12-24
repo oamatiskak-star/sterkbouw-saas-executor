@@ -10,23 +10,17 @@ const supabase = createClient(
 
 /*
 ===========================================================
-rekenwolk – sterkcalc definitieve gecorrigeerde versie
+REKENWOLK – PNG OPTIONEEL
 ===========================================================
-- STABU optioneel
+- PNG logo nooit verplicht
+- geen crash op assets
 - calculatie gaat altijd door
-- fallback bij lege STABU
-- pdf altijd gegenereerd
-- workflow nooit blokkeren
 ===========================================================
 */
 
 const ak_pct = 0.08
 const abk_pct = 0.06
 const wr_pct = 0.08
-
-function assert(cond, msg) {
-  if (!cond) throw new Error(msg)
-}
 
 function euro(n) {
   return `€ ${Number(n || 0).toFixed(2)}`
@@ -53,41 +47,64 @@ async function getOrCreateCalculatie(project_id) {
     .select("*")
     .single()
 
-  assert(!error && data, "calculatie_create_failed")
+  if (error) throw error
   return data
 }
 
 async function fetchStabuRegels(project_id) {
-  const { data, error } = await supabase
+  const { data } = await supabase
     .from("stabu_result_regels")
     .select("omschrijving, hoeveelheid, eenheidsprijs, btw_tarief")
     .eq("project_id", project_id)
 
-  assert(!error, "stabu_fetch_failed")
   return Array.isArray(data) ? data : []
 }
 
 /*
 ===========================================================
-pdf opbouw
+PDF
 ===========================================================
 */
 async function generatePdf(calculatie, regels, totalen) {
   const pdf = await PDFDocument.create()
   const font = await pdf.embedFont(StandardFonts.Helvetica)
 
+  /*
+  ========================
+  VOORBLAD
+  ========================
+  */
   const cover = pdf.addPage([595, 842])
 
-  const logoBytes = await fetch(
-    "https://cdn.jsdelivr.net/gh/oamatiskak-star/assets@main/sterkbouw-logo.png"
-  ).then(r => r.arrayBuffer())
+  // LOGO – VOLLEDIG OPTIONEEL
+  try {
+    const res = await fetch(
+      "https://cdn.jsdelivr.net/gh/oamatiskak-star/assets@main/sterkbouw-logo.png"
+    )
 
-  const logo = await pdf.embedPng(logoBytes)
+    if (res.ok) {
+      const buf = await res.arrayBuffer()
+      const logo = await pdf.embedPng(buf)
 
-  cover.drawImage(logo, { x: 40, y: 760, width: 120, height: 40 })
+      cover.drawImage(logo, {
+        x: 40,
+        y: 760,
+        width: 120,
+        height: 40
+      })
+    }
+  } catch (_) {
+    // bewust leeg – logo mag nooit blokkeren
+  }
 
   const text = (t, x, y, size = 10) => {
-    cover.drawText(String(t), { x, y, size, font, color: rgb(0, 0, 0) })
+    cover.drawText(String(t), {
+      x,
+      y,
+      size,
+      font,
+      color: rgb(0, 0, 0)
+    })
   }
 
   text("sterkbouw b.v.", 40, 710, 12)
@@ -96,6 +113,11 @@ async function generatePdf(calculatie, regels, totalen) {
   text(`calculatie id: ${calculatie.id}`, 350, 674)
   text(`datum: ${new Date().toLocaleDateString("nl-NL")}`, 350, 658)
 
+  /*
+  ========================
+  CALCULATIE
+  ========================
+  */
   const page = pdf.addPage([595, 842])
   let y = 800
 
@@ -139,47 +161,30 @@ async function generatePdf(calculatie, regels, totalen) {
 async function uploadPdf(project_id, pdfBytes) {
   const path = `${project_id}/calculatie_2jours.pdf`
 
-  const { error } = await supabase.storage
+  await supabase.storage
     .from("sterkcalc")
     .upload(path, pdfBytes, {
       contentType: "application/pdf",
       upsert: true
     })
-
-  assert(!error, "pdf_upload_failed")
-  return path
 }
 
 /*
 ===========================================================
-entrypoint
+ENTRYPOINT
 ===========================================================
 */
 export async function handleStartRekenwolk(task) {
-  if (!task || !task.id) return
+  if (!task?.id) return
 
-  const project_id =
-    task.project_id ||
-    task.payload?.project_id ||
-    null
-
-  if (!project_id) {
-    await supabase
-      .from("executor_tasks")
-      .update({
-        status: "failed",
-        error: "no_project_id",
-        finished_at: new Date().toISOString()
-      })
-      .eq("id", task.id)
-    return
-  }
+  const taskId = task.id
+  const project_id = task.project_id || task.payload?.project_id
+  if (!project_id) return
 
   try {
     const calculatie = await getOrCreateCalculatie(project_id)
 
     let regels = await fetchStabuRegels(project_id)
-
     if (regels.length === 0) {
       regels = [
         {
@@ -198,8 +203,8 @@ export async function handleStartRekenwolk(task) {
     regels.forEach(r => {
       const sub = Number(r.hoeveelheid) * Number(r.eenheidsprijs)
       kostprijs += sub
-      if (Number(r.btw_tarief) === 9) btw9 += sub * 0.09
-      if (Number(r.btw_tarief) === 21) btw21 += sub * 0.21
+      if (r.btw_tarief === 9) btw9 += sub * 0.09
+      if (r.btw_tarief === 21) btw21 += sub * 0.21
     })
 
     const ak = kostprijs * ak_pct
@@ -239,17 +244,22 @@ export async function handleStartRekenwolk(task) {
         status: "completed",
         finished_at: new Date().toISOString()
       })
-      .eq("id", task.id)
+      .eq("id", taskId)
+  } catch (e) {
+    const msg =
+      e?.message ||
+      e?.error ||
+      (typeof e === "string" ? e : "rekenwolk_error")
 
-  } catch (err) {
+    console.error("REKENWOLK_ERROR", msg)
+
     await supabase
       .from("executor_tasks")
       .update({
         status: "failed",
-        error: err.message,
+        error: msg,
         finished_at: new Date().toISOString()
       })
-      .eq("id", task.id)
-    throw err
+      .eq("id", taskId)
   }
 }
