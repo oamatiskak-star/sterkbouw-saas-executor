@@ -93,7 +93,7 @@ app.post("/telegram/webhook", async (req, res) => {
   try {
     await handleTelegramWebhook(req.body)
   } catch (e) {
-    console.error("telegram_webhook_error", e.message)
+    console.error("telegram_webhook_error", e?.message || e)
   }
   res.json({ ok: true })
 })
@@ -172,8 +172,13 @@ app.post("/upload-files", upload.array("files"), async (req, res) => {
       files: analysis_log
     })
   } catch (e) {
-    console.error("upload_files_fatal", e.message)
-    return res.status(500).json({ error: e.message })
+    const errorMsg =
+      e?.message ||
+      e?.error ||
+      (typeof e === "string" ? e : JSON.stringify(e))
+
+    console.error("upload_files_fatal", errorMsg)
+    return res.status(500).json({ error: errorMsg })
   }
 })
 
@@ -215,13 +220,18 @@ async function pollExecutorTasks() {
       })
       .eq("id", task.id)
   } catch (e) {
-    console.error("executor_task_error", e.message)
+    const errorMsg =
+      e?.message ||
+      e?.error ||
+      (typeof e === "string" ? e : JSON.stringify(e))
+
+    console.error("executor_task_error", errorMsg)
 
     await supabase
       .from("executor_tasks")
       .update({
         status: "failed",
-        error: e.message,
+        error: errorMsg,
         finished_at: new Date().toISOString()
       })
       .eq("id", task.id)
