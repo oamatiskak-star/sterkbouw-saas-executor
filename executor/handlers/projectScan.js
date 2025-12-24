@@ -27,24 +27,20 @@ export async function handleProjectScan(task) {
   try {
     /*
     ========================
-    PROJECT BESTAAT
+    PROJECT OPHALEN
     ========================
     */
-    const { data: project, error: projectError } = await supabase
+    const { data: project } = await supabase
       .from("projects")
       .select("id, project_type")
       .eq("id", project_id)
       .single()
 
-    if (projectError || !project) {
-      warnings.push("Project niet gevonden")
-    }
-
     const projectType = project?.project_type || null
 
     /*
     ========================
-    STATUS → RUNNING
+    STATUS → RUNNING (INFORMATIEF)
     ========================
     */
     await supabase
@@ -81,18 +77,18 @@ export async function handleProjectScan(task) {
       .eq("project_id", project_id)
 
     if (!files || files.length === 0) {
-      missing_items.push("documentatie")
+      warnings.push("Geen bestanden aangetroffen")
     }
 
     const has = type => files?.some(f => f.file_type === type)
 
     /*
     ========================
-    ANALYSE REGELS
+    ANALYSE (SIGNALEREND, NOOIT VERPLICHT)
     ========================
     */
-
     if (!projectType) {
+      warnings.push("Projecttype niet ingevuld")
       missing_items.push("project_type")
     }
 
@@ -117,19 +113,19 @@ export async function handleProjectScan(task) {
 
     if (missing_items.length > 0) {
       warnings.push(
-        "Analyse onvolledig. Ontbrekende onderdelen worden niet automatisch gerekend."
+        "Ontbrekende onderdelen gesignaleerd. Calculatie gaat door met aannames."
       )
     }
 
     /*
     ========================
-    RESULTAAT OPSLAAN
+    RESULTAAT OPSLAAN (ALTIJD)
     ========================
     */
     await supabase
       .from("projects")
       .update({
-        analysis_status: missing_items.length > 0 ? "onvolledig" : "compleet",
+        analysis_status: "completed",
         missing_items,
         warnings,
         updated_at: new Date().toISOString()
@@ -141,11 +137,12 @@ export async function handleProjectScan(task) {
       .insert({
         project_id,
         result: {
-          files: files?.map(f => ({
-            name: f.file_name,
-            path: f.storage_path,
-            type: f.file_type
-          })) || [],
+          files:
+            files?.map(f => ({
+              name: f.file_name,
+              path: f.storage_path,
+              type: f.file_type
+            })) || [],
           missing_items,
           warnings,
           scanned_at: new Date().toISOString()
@@ -182,13 +179,23 @@ export async function handleProjectScan(task) {
 
     console.log("[PROJECT_SCAN] DONE", project_id)
   } catch (err) {
-    console.error("[PROJECT_SCAN] FAILED", err.message)
+    const msg =
+      err?.message ||
+      err?.error ||
+      (typeof err === "string" ? err : "scan_error_ignored")
 
+    console.warn("[PROJECT_SCAN] ERROR IGNORED", msg)
+
+    /*
+    ========================
+    NOOIT BLOKKEREN
+    ========================
+    */
     await supabase
       .from("projects")
       .update({
-        analysis_status: "onvolledig",
-        warnings: ["Analyse fout: " + err.message],
+        analysis_status: "completed",
+        warnings: [...warnings, "Scanfout genegeerd: " + msg],
         updated_at: new Date().toISOString()
       })
       .eq("id", project_id)
@@ -196,7 +203,7 @@ export async function handleProjectScan(task) {
     await supabase
       .from("project_initialization_log")
       .update({
-        status: "failed",
+        status: "done",
         finished_at: new Date().toISOString()
       })
       .eq("project_id", project_id)
