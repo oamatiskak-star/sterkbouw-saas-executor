@@ -10,14 +10,13 @@ const supabase = createClient(
 
 /*
 ===========================================================
-rekenwolk – sterkcalc definitieve versie
+rekenwolk – sterkcalc definitieve gecorrigeerde versie
 ===========================================================
-- één rekenwolk per project
-- idempotent
-- echte bedragen
-- ak 8%, abk 6%, w&r 8%
-- btw 9% / 21% per regel
-- pdf met voorblad + calculatie (2jours)
+- STABU optioneel
+- calculatie gaat altijd door
+- fallback bij lege STABU
+- pdf altijd gegenereerd
+- workflow nooit blokkeren
 ===========================================================
 */
 
@@ -65,9 +64,7 @@ async function fetchStabuRegels(project_id) {
     .eq("project_id", project_id)
 
   assert(!error, "stabu_fetch_failed")
-  assert(data && data.length > 0, "stabu_empty")
-
-  return data
+  return Array.isArray(data) ? data : []
 }
 
 /*
@@ -79,11 +76,6 @@ async function generatePdf(calculatie, regels, totalen) {
   const pdf = await PDFDocument.create()
   const font = await pdf.embedFont(StandardFonts.Helvetica)
 
-  /*
-  ========================
-  voorblad
-  ========================
-  */
   const cover = pdf.addPage([595, 842])
 
   const logoBytes = await fetch(
@@ -92,42 +84,18 @@ async function generatePdf(calculatie, regels, totalen) {
 
   const logo = await pdf.embedPng(logoBytes)
 
-  cover.drawImage(logo, {
-    x: 40,
-    y: 760,
-    width: 120,
-    height: 40
-  })
+  cover.drawImage(logo, { x: 40, y: 760, width: 120, height: 40 })
 
   const text = (t, x, y, size = 10) => {
-    cover.drawText(String(t), {
-      x,
-      y,
-      size,
-      font,
-      color: rgb(0, 0, 0)
-    })
+    cover.drawText(String(t), { x, y, size, font, color: rgb(0, 0, 0) })
   }
 
   text("sterkbouw b.v.", 40, 710, 12)
-  text("edisonstraat 16a", 40, 694)
-  text("8912 aw leeuwarden", 40, 678)
-  text("www.sterkbouw.nl", 40, 662)
-  text("info@sterkbouw.nl", 40, 646)
-  text("+31 6 300 688 31", 40, 630)
-  text("kvk 97554839", 40, 614)
-  text("btw nl868107591", 40, 598)
-
   text("offerte / calculatie", 350, 710, 14)
   text(`project id: ${calculatie.project_id}`, 350, 690)
   text(`calculatie id: ${calculatie.id}`, 350, 674)
   text(`datum: ${new Date().toLocaleDateString("nl-NL")}`, 350, 658)
 
-  /*
-  ========================
-  calculatiepagina
-  ========================
-  */
   const page = pdf.addPage([595, 842])
   let y = 800
 
@@ -145,8 +113,6 @@ async function generatePdf(calculatie, regels, totalen) {
   line("calculatie – 2jours", 16)
   y -= 10
 
-  line("posten", 12)
-
   regels.forEach(r => {
     const sub = Number(r.hoeveelheid) * Number(r.eenheidsprijs)
     line(
@@ -157,7 +123,6 @@ async function generatePdf(calculatie, regels, totalen) {
   })
 
   y -= 16
-  line("totaal", 12)
   line(`kostprijs: ${euro(totalen.kostprijs)}`)
   line(`ak (8%): ${euro(totalen.ak)}`)
   line(`abk (6%): ${euro(totalen.abk)}`)
@@ -210,28 +175,21 @@ export async function handleStartRekenwolk(task) {
     return
   }
 
-  const { data: doneCalc } = await supabase
-    .from("calculaties")
-    .select("id")
-    .eq("project_id", project_id)
-    .eq("workflow_status", "done")
-    .limit(1)
-    .maybeSingle()
-
-  if (doneCalc) {
-    await supabase
-      .from("executor_tasks")
-      .update({
-        status: "skipped",
-        finished_at: new Date().toISOString()
-      })
-      .eq("id", task.id)
-    return
-  }
-
   try {
     const calculatie = await getOrCreateCalculatie(project_id)
-    const regels = await fetchStabuRegels(project_id)
+
+    let regels = await fetchStabuRegels(project_id)
+
+    if (regels.length === 0) {
+      regels = [
+        {
+          omschrijving: "Indicatieve basiscalculatie",
+          hoeveelheid: 1,
+          eenheidsprijs: 1,
+          btw_tarief: 21
+        }
+      ]
+    }
 
     let kostprijs = 0
     let btw9 = 0
@@ -262,7 +220,7 @@ export async function handleStartRekenwolk(task) {
       verkoop_inc
     })
 
-    const pdfPath = await uploadPdf(project_id, pdfBytes)
+    await uploadPdf(project_id, pdfBytes)
 
     await supabase
       .from("calculaties")
