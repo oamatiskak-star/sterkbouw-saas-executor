@@ -16,9 +16,11 @@ export async function handleProjectScan(task) {
 
   const taskId = task.id
   const project_id = task.project_id
+
   const payload =
     task.payload && typeof task.payload === "object" ? task.payload : {}
 
+  const attempt = Number(payload.attempt || 1)
   const chatId = payload.chat_id || null
 
   const missing_items = []
@@ -62,7 +64,7 @@ export async function handleProjectScan(task) {
 
     if (chatId) {
       try {
-        await sendTelegram(chatId, "Projectscan gestart")
+        await sendTelegram(chatId, `Projectscan gestart (poging ${attempt})`)
       } catch (_) {}
     }
 
@@ -84,7 +86,7 @@ export async function handleProjectScan(task) {
 
     /*
     ========================
-    ANALYSE (SIGNALEREND, NOOIT VERPLICHT)
+    ANALYSE (SIGNALEREND)
     ========================
     */
     if (!projectType) {
@@ -119,7 +121,7 @@ export async function handleProjectScan(task) {
 
     /*
     ========================
-    RESULTAAT OPSLAAN (ALTIJD)
+    RESULTAAT OPSLAAN
     ========================
     */
     await supabase
@@ -145,13 +147,14 @@ export async function handleProjectScan(task) {
             })) || [],
           missing_items,
           warnings,
-          scanned_at: new Date().toISOString()
+          scanned_at: new Date().toISOString(),
+          attempt
         }
       })
 
     /*
     ========================
-    LOG AFRONDEN
+    AFRONDEN
     ========================
     */
     await supabase
@@ -182,20 +185,44 @@ export async function handleProjectScan(task) {
     const msg =
       err?.message ||
       err?.error ||
-      (typeof err === "string" ? err : "scan_error_ignored")
+      (typeof err === "string" ? err : "scan_error")
 
-    console.warn("[PROJECT_SCAN] ERROR IGNORED", msg)
+    console.warn("[PROJECT_SCAN] ERROR", msg)
 
     /*
     ========================
-    NOOIT BLOKKEREN
+    1 HERPROBEER, DAARNA STOP
+    ========================
+    */
+    if (attempt < 2) {
+      console.warn("[PROJECT_SCAN] RETRYING ONCE")
+
+      await supabase
+        .from("executor_tasks")
+        .insert({
+          project_id,
+          action: "project_scan",
+          payload: {
+            ...payload,
+            attempt: attempt + 1
+          },
+          status: "open",
+          assigned_to: "executor"
+        })
+    } else {
+      warnings.push("Projectscan definitief mislukt, doorgaan met aannames")
+    }
+
+    /*
+    ========================
+    ALTIJD AFRONDEN
     ========================
     */
     await supabase
       .from("projects")
       .update({
         analysis_status: "completed",
-        warnings: [...warnings, "Scanfout genegeerd: " + msg],
+        warnings: [...warnings, "Scanfout: " + msg],
         updated_at: new Date().toISOString()
       })
       .eq("id", project_id)
