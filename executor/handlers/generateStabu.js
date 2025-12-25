@@ -19,15 +19,23 @@ async function fail(taskId, msg) {
 
 export async function handleGenerateStabu(task) {
   if (!task?.id) return
+
   const taskId = task.id
-  const project_id = task.project_id || task.payload?.project_id
+
+  // ❗ ENIGE GELDIGE BRON
+  const project_id = task.project_id
+
   if (!project_id) {
     await fail(taskId, "stabu_no_project_id")
     return
   }
 
   try {
-    // TASK LOCK: check dat geen andere generate_stabu draait
+    /*
+    ========================
+    TASK LOCK – GEEN DUBBELE RUN
+    ========================
+    */
     const { data: runningTask } = await supabase
       .from("executor_tasks")
       .select("id")
@@ -40,46 +48,80 @@ export async function handleGenerateStabu(task) {
     if (runningTask) {
       await supabase
         .from("executor_tasks")
-        .update({ status: "skipped" })
+        .update({
+          status: "skipped",
+          finished_at: new Date().toISOString()
+        })
         .eq("id", taskId)
       return
     }
 
-    // MARK TASK AS RUNNING
+    /*
+    ========================
+    MARK TASK RUNNING
+    ========================
+    */
     await supabase
       .from("executor_tasks")
-      .update({ status: "running", started_at: new Date().toISOString() })
+      .update({
+        status: "running",
+        started_at: new Date().toISOString()
+      })
       .eq("id", taskId)
 
-    // Check vorige stap: project_scan moet done zijn
+    /*
+    ========================
+    CHECK: PROJECT_SCAN MOET KLAAR ZIJN
+    ========================
+    */
     const { data: prevScan } = await supabase
       .from("executor_tasks")
       .select("status")
       .eq("project_id", project_id)
       .eq("action", "project_scan")
-      .single()
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle()
 
     if (!prevScan || prevScan.status !== "completed") {
       throw new Error("project_scan_not_completed")
     }
 
-    // OPSCHONEN
-    await supabase.from("stabu_results").delete().eq("project_id", project_id)
+    /*
+    ========================
+    OPSCHONEN OUDE STABU DATA
+    ========================
+    */
+    await supabase
+      .from("stabu_results")
+      .delete()
+      .eq("project_id", project_id)
+
     await supabase
       .from("stabu_result_regels")
       .delete()
       .eq("project_id", project_id)
 
-    // PROJECT TYPE
+    /*
+    ========================
+    PROJECT TYPE OPHALEN
+    ========================
+    */
     const { data: project } = await supabase
       .from("projects")
       .select("project_type")
       .eq("id", project_id)
       .single()
+
     const type = project?.project_type || "nieuwbouw"
 
-    // REALISTISCHE STABU REGELS
+    /*
+    ========================
+    REALISTISCHE STABU REGELS
+    ========================
+    */
     let regels = []
+
     if (type === "nieuwbouw") {
       regels = [
         { omschrijving: "grondwerk en fundering", prijs: 65000 },
@@ -99,6 +141,11 @@ export async function handleGenerateStabu(task) {
       ]
     }
 
+    /*
+    ========================
+    STABU REGELS OPSLAAN
+    ========================
+    */
     await supabase.from("stabu_result_regels").insert(
       regels.map(r => ({
         project_id,
@@ -109,28 +156,42 @@ export async function handleGenerateStabu(task) {
       }))
     )
 
-    // MARK STABU KLAAR
+    /*
+    ========================
+    STABU RESULTAAT MARKEREN
+    ========================
+    */
     await supabase.from("stabu_results").insert({
       project_id,
       status: "generated",
       created_at: new Date().toISOString()
     })
 
-    // VOLGENDE TASK STARTEN: start_rekenwolk
+    /*
+    ========================
+    VOLGENDE STAP: START REKENWOLK
+    ========================
+    */
     await supabase.from("executor_tasks").insert({
       project_id,
       action: "start_rekenwolk",
-      payload: { project_id },
       status: "open",
       assigned_to: "executor"
     })
 
-    // MARK CURRENT TASK DONE
+    /*
+    ========================
+    TASK AFRONDEN
+    ========================
+    */
     await supabase
       .from("executor_tasks")
-      .update({ status: "completed", finished_at: new Date().toISOString() })
+      .update({
+        status: "completed",
+        finished_at: new Date().toISOString()
+      })
       .eq("id", taskId)
   } catch (err) {
-    await fail(taskId, err.message)
+    await fail(taskId, err?.message || "generate_stabu_error")
   }
 }
