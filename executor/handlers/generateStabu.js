@@ -5,17 +5,6 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 )
 
-/*
-===========================================================
-GENERATE STABU – DEFINITIEF
-===========================================================
-- draait exact 1x per project
-- vereist afgeronde project_scan
-- schrijft altijd stabu_result_regels
-- start daarna exact 1x start_rekenwolk
-===========================================================
-*/
-
 async function fail(taskId, msg) {
   if (!taskId) return
   await supabase
@@ -29,10 +18,10 @@ async function fail(taskId, msg) {
 }
 
 export async function handleGenerateStabu(task) {
-  if (!task || !task.id) return
+  if (!task?.id) return
 
   const taskId = task.id
-  const project_id = task.project_id || task.payload?.project_id
+  const project_id = task.project_id
 
   if (!project_id) {
     await fail(taskId, "stabu_no_project_id")
@@ -40,50 +29,7 @@ export async function handleGenerateStabu(task) {
   }
 
   try {
-    /*
-    ===========================================================
-    HARD GUARD 1: project_scan moet completed zijn
-    ===========================================================
-    */
-    const { data: scanTask } = await supabase
-      .from("executor_tasks")
-      .select("status")
-      .eq("project_id", project_id)
-      .eq("action", "project_scan")
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle()
-
-    if (!scanTask || scanTask.status !== "completed") {
-      throw new Error("project_scan_not_completed")
-    }
-
-    /*
-    ===========================================================
-    HARD GUARD 2: nooit 2 generate_stabu tegelijk
-    ===========================================================
-    */
-    const { data: running } = await supabase
-      .from("executor_tasks")
-      .select("id")
-      .eq("project_id", project_id)
-      .eq("action", "generate_stabu")
-      .eq("status", "running")
-      .maybeSingle()
-
-    if (running) {
-      await supabase
-        .from("executor_tasks")
-        .update({ status: "skipped", finished_at: new Date().toISOString() })
-        .eq("id", taskId)
-      return
-    }
-
-    /*
-    ===========================================================
-    TASK → RUNNING
-    ===========================================================
-    */
+    // mark running
     await supabase
       .from("executor_tasks")
       .update({
@@ -92,26 +38,25 @@ export async function handleGenerateStabu(task) {
       })
       .eq("id", taskId)
 
-    /*
-    ===========================================================
-    OPSCHONEN OUDE DATA
-    ===========================================================
-    */
-    await supabase
-      .from("stabu_result_regels")
-      .delete()
+    // project_scan moet klaar zijn
+    const { data: scan } = await supabase
+      .from("executor_tasks")
+      .select("status")
       .eq("project_id", project_id)
+      .eq("action", "project_scan")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle()
 
-    await supabase
-      .from("stabu_results")
-      .delete()
-      .eq("project_id", project_id)
+    if (!scan || scan.status !== "completed") {
+      throw new Error("project_scan_not_completed")
+    }
 
-    /*
-    ===========================================================
-    PROJECT TYPE OPHALEN
-    ===========================================================
-    */
+    // opschonen
+    await supabase.from("stabu_result_regels").delete().eq("project_id", project_id)
+    await supabase.from("stabu_results").delete().eq("project_id", project_id)
+
+    // projecttype ophalen
     const { data: project } = await supabase
       .from("projects")
       .select("project_type")
@@ -120,11 +65,7 @@ export async function handleGenerateStabu(task) {
 
     const type = project?.project_type || "nieuwbouw"
 
-    /*
-    ===========================================================
-    STABU REGELS (REALISTISCHE BASISSET)
-    ===========================================================
-    */
+    // ❗ ALTIJD ARRAY
     let regels = []
 
     if (type === "nieuwbouw") {
@@ -146,49 +87,44 @@ export async function handleGenerateStabu(task) {
       ]
     }
 
+    // ❗ HARD FAIL ALS LEEG
     if (!Array.isArray(regels) || regels.length === 0) {
-      throw new Error("no_stabu_regels_generated")
+      throw new Error("stabu_no_regels_generated")
     }
 
-    /*
-    ===========================================================
-    INSERT STABU REGELS (PLAT MODEL)
-    ===========================================================
-    */
-    await supabase.from("stabu_result_regels").insert(
-      regels.map(r => ({
-        project_id,
-        omschrijving: r.omschrijving,
-        hoeveelheid: 1,
-        eenheidsprijs: r.prijs,
-        btw_tarief: 21
-      }))
-    )
+    // insert regels
+    const { error: insertErr } = await supabase
+      .from("stabu_result_regels")
+      .insert(
+        regels.map(r => ({
+          project_id,
+          omschrijving: r.omschrijving,
+          hoeveelheid: 1,
+          eenheidsprijs: r.prijs,
+          btw_tarief: 21
+        }))
+      )
 
+    if (insertErr) {
+      throw new Error("stabu_insert_failed: " + insertErr.message)
+    }
+
+    // mark stabu result
     await supabase.from("stabu_results").insert({
       project_id,
       status: "generated",
       created_at: new Date().toISOString()
     })
 
-    /*
-    ===========================================================
-    VOLGENDE STAP: START_REKENWOLK (EXACT 1x)
-    ===========================================================
-    */
+    // start rekenwolk PAS NA SUCCES
     await supabase.from("executor_tasks").insert({
       project_id,
       action: "start_rekenwolk",
       status: "open",
-      assigned_to: "executor",
-      payload: { project_id }
+      assigned_to: "executor"
     })
 
-    /*
-    ===========================================================
-    TASK AFRONDEN
-    ===========================================================
-    */
+    // mark completed
     await supabase
       .from("executor_tasks")
       .update({
@@ -196,7 +132,6 @@ export async function handleGenerateStabu(task) {
         finished_at: new Date().toISOString()
       })
       .eq("id", taskId)
-
   } catch (err) {
     await fail(taskId, err.message)
   }
