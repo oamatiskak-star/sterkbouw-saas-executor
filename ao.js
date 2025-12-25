@@ -76,6 +76,17 @@ const supabase = createClient(
 
 /*
 ========================
+DEBUG – DIT IS KRITISCH
+========================
+*/
+console.log("SUPABASE_URL =", process.env.SUPABASE_URL)
+console.log(
+  "SERVICE_ROLE_KEY_PREFIX =",
+  process.env.SUPABASE_SERVICE_ROLE_KEY.slice(0, 12)
+)
+
+/*
+========================
 BASIC ROUTES
 ========================
 */
@@ -153,8 +164,7 @@ app.post("/upload-files", upload.array("files"), async (req, res) => {
       .update({
         files_uploaded: true,
         analysis_status: "running",
-        analysis_log,
-        updated_at: new Date().toISOString()
+        analysis_log
       })
       .eq("id", project_id)
 
