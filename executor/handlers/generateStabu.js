@@ -6,6 +6,7 @@ const supabase = createClient(
 )
 
 async function fail(taskId, msg) {
+  if (!taskId) return
   await supabase
     .from("executor_tasks")
     .update({
@@ -17,13 +18,19 @@ async function fail(taskId, msg) {
 }
 
 export async function handleGenerateStabu(task) {
-  if (!task?.id || !task.project_id) return
+  if (!task || !task.id || !task.project_id) {
+    return
+  }
 
   const taskId = task.id
   const project_id = task.project_id
 
   try {
-    // lock
+    /*
+    =========================================================
+    LOCK: nooit 2 generate_stabu tegelijk
+    =========================================================
+    */
     const { data: running } = await supabase
       .from("executor_tasks")
       .select("id")
@@ -33,32 +40,54 @@ export async function handleGenerateStabu(task) {
       .maybeSingle()
 
     if (running) {
-      await supabase.from("executor_tasks")
+      await supabase
+        .from("executor_tasks")
         .update({ status: "skipped" })
         .eq("id", taskId)
       return
     }
 
-    await supabase.from("executor_tasks")
-      .update({ status: "running", started_at: new Date().toISOString() })
+    await supabase
+      .from("executor_tasks")
+      .update({
+        status: "running",
+        started_at: new Date().toISOString()
+      })
       .eq("id", taskId)
 
-    // check scan
+    /*
+    =========================================================
+    HARD GUARD: project_scan moet completed zijn
+    =========================================================
+    */
     const { data: scan } = await supabase
       .from("executor_tasks")
       .select("status")
       .eq("project_id", project_id)
       .eq("action", "project_scan")
+      .order("created_at", { ascending: false })
+      .limit(1)
       .maybeSingle()
 
     if (!scan || scan.status !== "completed") {
       throw new Error("project_scan_not_completed")
     }
 
-    // cleanup
-    await supabase.from("stabu_result_regels").delete().eq("project_id", project_id)
+    /*
+    =========================================================
+    OPSCHONEN OUDE REGELS
+    =========================================================
+    */
+    await supabase
+      .from("stabu_result_regels")
+      .delete()
+      .eq("project_id", project_id)
 
-    // project type
+    /*
+    =========================================================
+    PROJECT TYPE OPHALEN
+    =========================================================
+    */
     const { data: project } = await supabase
       .from("projects")
       .select("project_type")
@@ -67,6 +96,11 @@ export async function handleGenerateStabu(task) {
 
     const type = project?.project_type || "nieuwbouw"
 
+    /*
+    =========================================================
+    STABU REGELS GENEREREN
+    =========================================================
+    */
     const regels =
       type === "nieuwbouw"
         ? [
@@ -85,8 +119,12 @@ export async function handleGenerateStabu(task) {
             { omschrijving: "afbouw en herindeling", prijs: 88000 }
           ]
 
-    // INSERT REGELS
-    const { data: inserted } = await supabase
+    /*
+    =========================================================
+    INSERT STABU REGELS
+    =========================================================
+    */
+    const { data: inserted, error: insertErr } = await supabase
       .from("stabu_result_regels")
       .insert(
         regels.map(r => ({
@@ -99,11 +137,37 @@ export async function handleGenerateStabu(task) {
       )
       .select("id")
 
-    if (!inserted || inserted.length === 0) {
-      throw new Error("stabu_insert_failed")
+    if (insertErr) {
+      throw new Error("stabu_insert_failed: " + insertErr.message)
     }
 
-    // start rekenwolk PAS NU
+    if (!Array.isArray(inserted) || inserted.length === 0) {
+      throw new Error("stabu_insert_empty")
+    }
+
+    /*
+    =========================================================
+    🔒 VERIFICATIE: REGELS MOETEN LEESBAAR ZIJN
+    =========================================================
+    */
+    const { data: verify, error: verifyErr } = await supabase
+      .from("stabu_result_regels")
+      .select("id")
+      .eq("project_id", project_id)
+
+    if (verifyErr) {
+      throw new Error("stabu_verify_failed: " + verifyErr.message)
+    }
+
+    if (!Array.isArray(verify) || verify.length === 0) {
+      throw new Error("stabu_verify_empty")
+    }
+
+    /*
+    =========================================================
+    START REKENWOLK
+    =========================================================
+    */
     await supabase.from("executor_tasks").insert({
       project_id,
       action: "start_rekenwolk",
@@ -111,11 +175,20 @@ export async function handleGenerateStabu(task) {
       assigned_to: "executor"
     })
 
-    await supabase.from("executor_tasks")
-      .update({ status: "completed", finished_at: new Date().toISOString() })
+    /*
+    =========================================================
+    AFRONDEN
+    =========================================================
+    */
+    await supabase
+      .from("executor_tasks")
+      .update({
+        status: "completed",
+        finished_at: new Date().toISOString()
+      })
       .eq("id", taskId)
 
   } catch (err) {
-    await fail(taskId, err.message)
+    await fail(taskId, err.message || "generate_stabu_error")
   }
 }
