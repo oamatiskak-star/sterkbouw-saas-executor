@@ -90,11 +90,6 @@ async function generatePdf(calculatie, regels, totalen) {
   const pdf = await PDFDocument.create()
   const font = await pdf.embedFont(StandardFonts.Helvetica)
 
-  /*
-  ========================
-  VOORBLAD
-  ========================
-  */
   const cover = pdf.addPage([595, 842])
 
   try {
@@ -122,11 +117,6 @@ async function generatePdf(calculatie, regels, totalen) {
     658
   )
 
-  /*
-  ========================
-  CALCULATIE PAGINA
-  ========================
-  */
   const page = pdf.addPage([595, 842])
   let y = 800
 
@@ -155,7 +145,7 @@ async function generatePdf(calculatie, regels, totalen) {
   y -= 8
   line(`verkoopprijs excl. btw: ${euro(totalen.verkoop_ex)}`)
   line(`btw 9%: ${euro(totalen.btw9)}`)
-  line(`btw 21%: ${euro(totalen.btw21)}`)
+  line(`btw 21%): ${euro(totalen.btw21)}`)
   line(`verkoopprijs incl. btw: ${euro(totalen.verkoop_inc)}`)
 
   return pdf.save()
@@ -190,7 +180,6 @@ export async function handleStartRekenwolk(task) {
   const taskId = task.id
   const project_id = task.project_id
 
-  // ❗ GEEN payload fallback – project_id moet altijd kloppen
   if (!project_id) {
     await supabase
       .from("executor_tasks")
@@ -204,8 +193,48 @@ export async function handleStartRekenwolk(task) {
   }
 
   try {
-    const calculatie = await getOrCreateCalculatie(project_id)
+    /*
+    ===========================================================
+    HARD GUARD 1: generate_stabu moet completed zijn
+    ===========================================================
+    */
+    const { data: stabuTask } = await supabase
+      .from("executor_tasks")
+      .select("status")
+      .eq("project_id", project_id)
+      .eq("action", "generate_stabu")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle()
 
+    if (!stabuTask || stabuTask.status !== "completed") {
+      throw new Error("generate_stabu_not_completed")
+    }
+
+    /*
+    ===========================================================
+    HARD GUARD 2: nooit 2 start_rekenwolk tegelijk
+    ===========================================================
+    */
+    const { data: running } = await supabase
+      .from("executor_tasks")
+      .select("id")
+      .eq("project_id", project_id)
+      .eq("action", "start_rekenwolk")
+      .eq("status", "running")
+      .maybeSingle()
+
+    if (running) return
+
+    await supabase
+      .from("executor_tasks")
+      .update({
+        status: "running",
+        started_at: new Date().toISOString()
+      })
+      .eq("id", taskId)
+
+    const calculatie = await getOrCreateCalculatie(project_id)
     const regels = await fetchStabuRegels(project_id)
 
     if (!Array.isArray(regels) || regels.length === 0) {
@@ -262,17 +291,14 @@ export async function handleStartRekenwolk(task) {
       })
       .eq("id", taskId)
   } catch (err) {
-    const msg = err?.message || "rekenwolk_error"
-
     await supabase
       .from("executor_tasks")
       .update({
         status: "failed",
-        error: msg,
+        error: err.message || "rekenwolk_error",
         finished_at: new Date().toISOString()
       })
       .eq("id", taskId)
-
     throw err
   }
 }
