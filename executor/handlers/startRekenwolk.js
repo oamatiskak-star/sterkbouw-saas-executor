@@ -17,6 +17,7 @@ REKENWOLK – DEFINITIEF (STABU PLAT MODEL)
 - geen json/result kolommen
 - harde guards
 - pdf altijd gegenereerd
+- project_id komt ALTIJD uit task.project_id
 ===========================================================
 */
 
@@ -60,7 +61,7 @@ async function getOrCreateCalculatie(project_id) {
 
 /*
 ===========================================================
-STABU REGELS – ENIGE JUISTE FETCH
+STABU REGELS – ENIGE JUISTE BRON
 ===========================================================
 */
 async function fetchStabuRegels(project_id) {
@@ -187,8 +188,9 @@ export async function handleStartRekenwolk(task) {
   if (!task?.id) return
 
   const taskId = task.id
-  const project_id = task.project_id || task.payload?.project_id
+  const project_id = task.project_id
 
+  // ❗ GEEN payload fallback – project_id moet altijd kloppen
   if (!project_id) {
     await supabase
       .from("executor_tasks")
