@@ -5,27 +5,15 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 )
 
-async function fail(taskId, project_id, msg) {
-  if (taskId) {
-    await supabase
-      .from("executor_tasks")
-      .update({
-        status: "failed",
-        error: msg,
-        finished_at: new Date().toISOString()
-      })
-      .eq("id", taskId)
-  }
-
-  if (project_id) {
-    await supabase
-      .from("projects")
-      .update({
-        analysis_status: "failed",
-        updated_at: new Date().toISOString()
-      })
-      .eq("id", project_id)
-  }
+async function fail(taskId, msg) {
+  await supabase
+    .from("executor_tasks")
+    .update({
+      status: "failed",
+      error: msg,
+      finished_at: new Date().toISOString()
+    })
+    .eq("id", taskId)
 }
 
 export async function handleGenerateStabu(task) {
@@ -35,34 +23,42 @@ export async function handleGenerateStabu(task) {
   const project_id = task.project_id
 
   try {
-    // ===== LOCK TASK =====
-    await supabase
+    // lock
+    const { data: running } = await supabase
       .from("executor_tasks")
-      .update({
-        status: "running",
-        started_at: new Date().toISOString()
-      })
+      .select("id")
+      .eq("project_id", project_id)
+      .eq("action", "generate_stabu")
+      .eq("status", "running")
+      .maybeSingle()
+
+    if (running) {
+      await supabase.from("executor_tasks")
+        .update({ status: "skipped" })
+        .eq("id", taskId)
+      return
+    }
+
+    await supabase.from("executor_tasks")
+      .update({ status: "running", started_at: new Date().toISOString() })
       .eq("id", taskId)
 
-    // ===== CHECK PROJECT SCAN =====
+    // check scan
     const { data: scan } = await supabase
       .from("executor_tasks")
       .select("status")
       .eq("project_id", project_id)
       .eq("action", "project_scan")
-      .order("created_at", { ascending: false })
-      .limit(1)
       .maybeSingle()
 
     if (!scan || scan.status !== "completed") {
       throw new Error("project_scan_not_completed")
     }
 
-    // ===== OPSCHONEN =====
+    // cleanup
     await supabase.from("stabu_result_regels").delete().eq("project_id", project_id)
-    await supabase.from("stabu_results").delete().eq("project_id", project_id)
 
-    // ===== PROJECTTYPE =====
+    // project type
     const { data: project } = await supabase
       .from("projects")
       .select("project_type")
@@ -71,35 +67,26 @@ export async function handleGenerateStabu(task) {
 
     const type = project?.project_type || "nieuwbouw"
 
-    // ===== REGELS – ALTIJD ARRAY =====
-    let regels = []
+    const regels =
+      type === "nieuwbouw"
+        ? [
+            { omschrijving: "grondwerk en fundering", prijs: 65000 },
+            { omschrijving: "casco en draagconstructie", prijs: 145000 },
+            { omschrijving: "gevels en kozijnen", prijs: 92000 },
+            { omschrijving: "daken en isolatie", prijs: 54000 },
+            { omschrijving: "installaties e en w", prijs: 78000 },
+            { omschrijving: "afbouw en oplevering", prijs: 98000 }
+          ]
+        : [
+            { omschrijving: "sloop en stripwerk", prijs: 42000 },
+            { omschrijving: "constructieve aanpassingen", prijs: 68000 },
+            { omschrijving: "gevel en isolatie", prijs: 51000 },
+            { omschrijving: "installaties e en w", prijs: 73000 },
+            { omschrijving: "afbouw en herindeling", prijs: 88000 }
+          ]
 
-    if (type === "nieuwbouw") {
-      regels = [
-        { omschrijving: "grondwerk en fundering", prijs: 65000 },
-        { omschrijving: "casco en draagconstructie", prijs: 145000 },
-        { omschrijving: "gevels en kozijnen", prijs: 92000 },
-        { omschrijving: "daken en isolatie", prijs: 54000 },
-        { omschrijving: "installaties e en w", prijs: 78000 },
-        { omschrijving: "afbouw en oplevering", prijs: 98000 }
-      ]
-    } else {
-      regels = [
-        { omschrijving: "sloop en stripwerk", prijs: 42000 },
-        { omschrijving: "constructieve aanpassingen", prijs: 68000 },
-        { omschrijving: "gevel en isolatie", prijs: 51000 },
-        { omschrijving: "installaties e en w", prijs: 73000 },
-        { omschrijving: "afbouw en herindeling", prijs: 88000 }
-      ]
-    }
-
-    // ===== HARD GUARD =====
-    if (!Array.isArray(regels) || regels.length === 0) {
-      throw new Error("stabu_regels_empty")
-    }
-
-    // ===== INSERT REGELS =====
-    const { error: insertErr } = await supabase
+    // INSERT REGELS
+    const { data: inserted } = await supabase
       .from("stabu_result_regels")
       .insert(
         regels.map(r => ({
@@ -110,19 +97,13 @@ export async function handleGenerateStabu(task) {
           btw_tarief: 21
         }))
       )
+      .select("id")
 
-    if (insertErr) {
+    if (!inserted || inserted.length === 0) {
       throw new Error("stabu_insert_failed")
     }
 
-    // ===== MARK STABU RESULT =====
-    await supabase.from("stabu_results").insert({
-      project_id,
-      status: "generated",
-      created_at: new Date().toISOString()
-    })
-
-    // ===== START REKENWOLK =====
+    // start rekenwolk PAS NU
     await supabase.from("executor_tasks").insert({
       project_id,
       action: "start_rekenwolk",
@@ -130,16 +111,11 @@ export async function handleGenerateStabu(task) {
       assigned_to: "executor"
     })
 
-    // ===== DONE =====
-    await supabase
-      .from("executor_tasks")
-      .update({
-        status: "completed",
-        finished_at: new Date().toISOString()
-      })
+    await supabase.from("executor_tasks")
+      .update({ status: "completed", finished_at: new Date().toISOString() })
       .eq("id", taskId)
 
   } catch (err) {
-    await fail(taskId, project_id, err.message)
+    await fail(taskId, err.message)
   }
 }
