@@ -7,158 +7,67 @@ const supabase = createClient(
 )
 
 export async function handleProjectScan(task) {
-  console.log("[PROJECT_SCAN] START", task)
-
-  if (!task || !task.id || !task.project_id) {
-    console.error("[PROJECT_SCAN] INVALID_TASK")
-    return
-  }
+  if (!task?.id || !task.project_id) return
 
   const taskId = task.id
   const project_id = task.project_id
-
-  const payload =
-    task.payload && typeof task.payload === "object" ? task.payload : {}
-
-  const attempt = Number(payload.attempt || 1)
+  const payload = task.payload || {}
   const chatId = payload.chat_id || null
 
-  const missing_items = []
-  const warnings = []
-
   try {
-    /*
-    ========================
-    PROJECT OPHALEN
-    ========================
-    */
-    const { data: project } = await supabase
-      .from("projects")
-      .select("id, project_type")
-      .eq("id", project_id)
-      .single()
+    // LOCK: nooit 2 scans tegelijk
+    const { data: running } = await supabase
+      .from("executor_tasks")
+      .select("id")
+      .eq("project_id", project_id)
+      .eq("action", "project_scan")
+      .eq("status", "running")
+      .maybeSingle()
 
-    const projectType = project?.project_type || null
-
-    /*
-    ========================
-    STATUS → RUNNING (INFORMATIEF)
-    ========================
-    */
-    await supabase
-      .from("projects")
-      .update({
-        analysis_status: "running",
-        updated_at: new Date().toISOString()
-      })
-      .eq("id", project_id)
-
-    await supabase
-      .from("project_initialization_log")
-      .insert({
-        project_id,
-        module: "PROJECT_SCAN",
-        status: "running",
-        started_at: new Date().toISOString()
-      })
-
-    if (chatId) {
-      try {
-        await sendTelegram(chatId, `Projectscan gestart (poging ${attempt})`)
-      } catch (_) {}
+    if (running) {
+      await supabase.from("executor_tasks")
+        .update({ status: "skipped" })
+        .eq("id", taskId)
+      return
     }
 
-    /*
-    ========================
-    BESTANDEN OPHALEN
-    ========================
-    */
+    await supabase.from("executor_tasks")
+      .update({ status: "running", started_at: new Date().toISOString() })
+      .eq("id", taskId)
+
+    await supabase.from("projects")
+      .update({ analysis_status: "running" })
+      .eq("id", project_id)
+
+    await supabase.from("project_initialization_log").insert({
+      project_id,
+      module: "PROJECT_SCAN",
+      status: "running",
+      started_at: new Date().toISOString()
+    })
+
+    if (chatId) await sendTelegram(chatId, "Projectscan gestart")
+
+    // === FILES ===
     const { data: files } = await supabase
       .from("project_files")
-      .select("file_name, storage_path, file_type")
+      .select("file_name")
       .eq("project_id", project_id)
 
+    const warnings = []
     if (!files || files.length === 0) {
       warnings.push("Geen bestanden aangetroffen")
     }
 
-    const has = type => files?.some(f => f.file_type === type)
-
-    /*
-    ========================
-    ANALYSE (SIGNALEREND)
-    ========================
-    */
-    if (!projectType) {
-      warnings.push("Projecttype niet ingevuld")
-      missing_items.push("project_type")
-    }
-
-    if (projectType === "renovatie") {
-      if (!has("tekening_bestaand")) missing_items.push("tekening_bestaand")
-      if (!has("foto_bestaand")) missing_items.push("foto_bestaand")
-    }
-
-    if (projectType === "transformatie") {
-      if (!has("tekening_bestaand")) missing_items.push("tekening_bestaand")
-      if (!has("tekening_nieuw")) missing_items.push("tekening_nieuw")
-    }
-
-    if (projectType === "nieuwbouw_met_sloop") {
-      if (!has("tekening_bestaand")) missing_items.push("tekening_bestaand")
-      if (!has("tekening_nieuw")) missing_items.push("tekening_nieuw")
-    }
-
-    if (projectType === "nieuwbouw") {
-      if (!has("tekening_nieuw")) missing_items.push("tekening_nieuw")
-    }
-
-    if (missing_items.length > 0) {
-      warnings.push(
-        "Ontbrekende onderdelen gesignaleerd. Calculatie gaat door met aannames."
-      )
-    }
-
-    /*
-    ========================
-    RESULTAAT OPSLAAN
-    ========================
-    */
-    await supabase
-      .from("projects")
+    await supabase.from("projects")
       .update({
         analysis_status: "completed",
-        missing_items,
         warnings,
         updated_at: new Date().toISOString()
       })
       .eq("id", project_id)
 
-    await supabase
-      .from("project_scan_results")
-      .insert({
-        project_id,
-        result: {
-          files:
-            files?.map(f => ({
-              name: f.file_name,
-              path: f.storage_path,
-              type: f.file_type
-            })) || [],
-          missing_items,
-          warnings,
-          scanned_at: new Date().toISOString(),
-          attempt
-        }
-      })
-
-    /*
-    ========================
-    AFRONDEN
-    ========================
-    */
-    await supabase
-      .from("project_initialization_log")
+    await supabase.from("project_initialization_log")
       .update({
         status: "done",
         finished_at: new Date().toISOString()
@@ -166,80 +75,25 @@ export async function handleProjectScan(task) {
       .eq("project_id", project_id)
       .eq("module", "PROJECT_SCAN")
 
-    await supabase
-      .from("executor_tasks")
-      .update({
-        status: "completed",
-        finished_at: new Date().toISOString()
-      })
+    // === VOLGENDE STAP ===
+    await supabase.from("executor_tasks").insert({
+      project_id,
+      action: "generate_stabu",
+      status: "open",
+      assigned_to: "executor",
+      payload: { project_id }
+    })
+
+    await supabase.from("executor_tasks")
+      .update({ status: "completed", finished_at: new Date().toISOString() })
       .eq("id", taskId)
 
-    if (chatId) {
-      try {
-        await sendTelegram(chatId, "Projectscan afgerond")
-      } catch (_) {}
-    }
-
-    console.log("[PROJECT_SCAN] DONE", project_id)
+    if (chatId) await sendTelegram(chatId, "Projectscan afgerond")
   } catch (err) {
-    const msg =
-      err?.message ||
-      err?.error ||
-      (typeof err === "string" ? err : "scan_error")
-
-    console.warn("[PROJECT_SCAN] ERROR", msg)
-
-    /*
-    ========================
-    1 HERPROBEER, DAARNA STOP
-    ========================
-    */
-    if (attempt < 2) {
-      console.warn("[PROJECT_SCAN] RETRYING ONCE")
-
-      await supabase
-        .from("executor_tasks")
-        .insert({
-          project_id,
-          action: "project_scan",
-          payload: {
-            ...payload,
-            attempt: attempt + 1
-          },
-          status: "open",
-          assigned_to: "executor"
-        })
-    } else {
-      warnings.push("Projectscan definitief mislukt, doorgaan met aannames")
-    }
-
-    /*
-    ========================
-    ALTIJD AFRONDEN
-    ========================
-    */
-    await supabase
-      .from("projects")
+    await supabase.from("executor_tasks")
       .update({
-        analysis_status: "completed",
-        warnings: [...warnings, "Scanfout: " + msg],
-        updated_at: new Date().toISOString()
-      })
-      .eq("id", project_id)
-
-    await supabase
-      .from("project_initialization_log")
-      .update({
-        status: "done",
-        finished_at: new Date().toISOString()
-      })
-      .eq("project_id", project_id)
-      .eq("module", "PROJECT_SCAN")
-
-    await supabase
-      .from("executor_tasks")
-      .update({
-        status: "completed",
+        status: "failed",
+        error: err.message,
         finished_at: new Date().toISOString()
       })
       .eq("id", taskId)
