@@ -1,4 +1,4 @@
-import supabase from "../lib/supabase.js"
+import supabase from "../supabase.js"
 import { sendTelegram } from "../../integrations/telegramSender.js"
 
 export async function handleProjectScan(task) {
@@ -10,7 +10,7 @@ export async function handleProjectScan(task) {
   const chatId = payload.chat_id || null
 
   try {
-    // status running
+    // zet task op running
     await supabase
       .from("executor_tasks")
       .update({
@@ -41,7 +41,7 @@ export async function handleProjectScan(task) {
       await sendTelegram(chatId, "Projectscan afgerond")
     }
 
-    // VOLGENDE STAP – CORRECTE ASSIGNED_TO
+    // VOLGENDE STAP
     await supabase.from("executor_tasks").insert({
       project_id,
       action: "generate_stabu",
@@ -50,7 +50,7 @@ export async function handleProjectScan(task) {
       payload: { project_id, chat_id: chatId }
     })
 
-    // afronden huidige taak
+    // huidige taak afronden
     await supabase
       .from("executor_tasks")
       .update({
