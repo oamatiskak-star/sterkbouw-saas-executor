@@ -4,6 +4,7 @@ import { architectFullUiBuild } from "../actions/architectFullUiBuild.js"
 import { sendTelegram } from "../integrations/telegramSender.js"
 
 // HANDLERS
+import { handleCreateProject } from "./handlers/createProject.js"
 import { handleProjectScan } from "./handlers/projectScan.js"
 import { handleGenerateStabu } from "./handlers/generateStabu.js"
 import { handleStartRekenwolk } from "./handlers/startRekenwolk.js"
@@ -67,6 +68,13 @@ export async function runAction(task) {
     await telegramLog(chatId, "UI build gestart")
     await architectFullUiBuild(task)
     await telegramLog(chatId, "UI build afgerond")
+    return { state: "DONE", action: actionId }
+  }
+
+  if (actionId === "create_project") {
+    await telegramLog(chatId, "Project aanmaken gestart")
+    await handleCreateProject(task)
+    await telegramLog(chatId, "Project aangemaakt")
     return { state: "DONE", action: actionId }
   }
 
