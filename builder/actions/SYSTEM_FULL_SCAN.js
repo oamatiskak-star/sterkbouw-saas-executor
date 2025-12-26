@@ -1,31 +1,52 @@
 export default async function SYSTEM_FULL_SCAN({ supabase, task }) {
-  const project_id = task.project_id
+  const errors = []
 
-  if (!project_id) {
-    return {
-      status: "failed",
-      error: "NO_PROJECT_ID"
+  // 1. Task validatie
+  if (!task || !task.project_id) {
+    errors.push("TASK_PROJECT_ID_MISSING")
+  }
+
+  let project = null
+
+  // 2. Project validatie
+  if (task.project_id) {
+    const projectRes = await supabase
+      .from("projects")
+      .select("*")
+      .eq("id", task.project_id)
+      .single()
+
+    if (projectRes.error || !projectRes.data) {
+      errors.push("PROJECT_NOT_FOUND")
+    } else {
+      project = projectRes.data
     }
   }
 
-  const { data: project, error } = await supabase
-    .from("projects")
-    .select("id")
-    .eq("id", project_id)
-    .single()
-
-  if (error || !project) {
-    return {
-      status: "failed",
-      error: "PROJECT_NOT_FOUND"
-    }
+  // 3. Scan-voorwaarde validatie (geen aannames)
+  if (project) {
+    // Project bestaat = scanbaar
+    // Geen extra logica toegevoegd
   }
 
+  // 4. Scanresultaat vastleggen (altijd)
   await supabase.from("system_log").insert({
-    type: "scan",
-    message: `system_full_scan ok for project ${project_id}`,
-    created_at: new Date().toISOString()
+    type: "system_scan",
+    message:
+      errors.length === 0
+        ? `SYSTEM_FULL_SCAN_OK for project ${task.project_id}`
+        : `SYSTEM_FULL_SCAN_WARNINGS for project ${task.project_id}: ${errors.join(
+            " | "
+          )}`
   })
+
+  // 5. Eindoordeel
+  if (errors.length > 0) {
+    return {
+      status: "failed",
+      error: errors.join(" | ")
+    }
+  }
 
   return {
     status: "completed",
