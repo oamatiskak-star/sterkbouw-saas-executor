@@ -18,6 +18,7 @@ REKENWOLK – DEFINITIEF (STABU PLAT MODEL)
 - harde guards
 - pdf altijd gegenereerd
 - project_id komt ALTIJD uit task.project_id
+- signed pdf url wordt SERVER-SIDE gegenereerd
 ===========================================================
 */
 
@@ -61,7 +62,7 @@ async function getOrCreateCalculatie(project_id) {
 
 /*
 ===========================================================
-STABU REGELS – ENIGE JUISTE BRON
+STABU REGELS
 ===========================================================
 */
 async function fetchStabuRegels(project_id) {
@@ -70,13 +71,8 @@ async function fetchStabuRegels(project_id) {
     .select("omschrijving, hoeveelheid, eenheidsprijs, btw_tarief")
     .eq("project_id", project_id)
 
-  if (error) {
-    throw new Error("stabu_fetch_failed: " + error.message)
-  }
-
-  if (!Array.isArray(data)) {
-    throw new Error("stabu_result_not_array")
-  }
+  if (error) throw new Error("stabu_fetch_failed")
+  if (!Array.isArray(data)) throw new Error("stabu_not_array")
 
   return data
 }
@@ -103,15 +99,14 @@ async function generatePdf(calculatie, regels, totalen) {
     }
   } catch (_) {}
 
-  const drawCoverText = (t, x, y, size = 10) => {
+  const draw = (t, x, y, size = 10) =>
     cover.drawText(String(t), { x, y, size, font, color: rgb(0, 0, 0) })
-  }
 
-  drawCoverText("sterkbouw b.v.", 40, 710, 12)
-  drawCoverText("offerte / calculatie", 350, 710, 14)
-  drawCoverText(`project id: ${calculatie.project_id}`, 350, 690)
-  drawCoverText(`calculatie id: ${calculatie.id}`, 350, 674)
-  drawCoverText(
+  draw("sterkbouw b.v.", 40, 710, 12)
+  draw("offerte / calculatie", 350, 710, 14)
+  draw(`project id: ${calculatie.project_id}`, 350, 690)
+  draw(`calculatie id: ${calculatie.id}`, 350, 674)
+  draw(
     `datum: ${new Date().toLocaleDateString("nl-NL")}`,
     350,
     658
@@ -145,7 +140,7 @@ async function generatePdf(calculatie, regels, totalen) {
   y -= 8
   line(`verkoopprijs excl. btw: ${euro(totalen.verkoop_ex)}`)
   line(`btw 9%: ${euro(totalen.btw9)}`)
-  line(`btw 21%): ${euro(totalen.btw21)}`)
+  line(`btw 21%: ${euro(totalen.btw21)}`)
   line(`verkoopprijs incl. btw: ${euro(totalen.verkoop_inc)}`)
 
   return pdf.save()
@@ -167,6 +162,28 @@ async function uploadPdf(project_id, pdfBytes) {
     })
 
   if (error) throw error
+}
+
+/*
+===========================================================
+SIGNED PDF URL (SERVER-SIDE)
+===========================================================
+*/
+async function generateAndStorePdfUrl(project_id) {
+  const path = `${project_id}/calculatie_2jours.pdf`
+
+  const { data, error } = await supabase.storage
+    .from("sterkcalc")
+    .createSignedUrl(path, 3600)
+
+  if (error || !data?.signedUrl) {
+    throw new Error("signed_pdf_url_failed")
+  }
+
+  await supabase
+    .from("projects")
+    .update({ pdf_url: data.signedUrl })
+    .eq("id", project_id)
 }
 
 /*
@@ -193,11 +210,6 @@ export async function handleStartRekenwolk(task) {
   }
 
   try {
-    /*
-    ===========================================================
-    HARD GUARD 1: generate_stabu moet completed zijn
-    ===========================================================
-    */
     const { data: stabuTask } = await supabase
       .from("executor_tasks")
       .select("status")
@@ -211,11 +223,6 @@ export async function handleStartRekenwolk(task) {
       throw new Error("generate_stabu_not_completed")
     }
 
-    /*
-    ===========================================================
-    HARD GUARD 2: nooit 2 start_rekenwolk tegelijk
-    ===========================================================
-    */
     const { data: running } = await supabase
       .from("executor_tasks")
       .select("id")
@@ -237,9 +244,7 @@ export async function handleStartRekenwolk(task) {
     const calculatie = await getOrCreateCalculatie(project_id)
     const regels = await fetchStabuRegels(project_id)
 
-    if (!Array.isArray(regels) || regels.length === 0) {
-      throw new Error("no_stabu_regels_for_project")
-    }
+    if (!regels.length) throw new Error("no_stabu_regels")
 
     let kostprijs = 0
     let btw9 = 0
@@ -271,6 +276,9 @@ export async function handleStartRekenwolk(task) {
     })
 
     await uploadPdf(project_id, pdfBytes)
+
+    // >>> DIT LOST HET PDF-PROBLEEM DEFINITIEF OP <<<
+    await generateAndStorePdfUrl(project_id)
 
     await supabase
       .from("calculaties")
