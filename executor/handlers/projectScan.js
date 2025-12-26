@@ -41,16 +41,16 @@ export async function handleProjectScan(task) {
       await sendTelegram(chatId, "Projectscan afgerond")
     }
 
-    // ALTIJD volgende stap
+    // VOLGENDE STAP – CORRECTE ASSIGNED_TO
     await supabase.from("executor_tasks").insert({
       project_id,
       action: "generate_stabu",
       status: "open",
-      assigned_to: "executor",
+      assigned_to: process.env.AO_ROLE,
       payload: { project_id, chat_id: chatId }
     })
 
-    // afronden
+    // afronden huidige taak
     await supabase
       .from("executor_tasks")
       .update({
