@@ -36,7 +36,7 @@ export async function handleCreateProject(task) {
         land,
         telefoon,
         opmerking,
-        analysis_status: false,
+        analysis_status: "pending",
         created_at: new Date().toISOString()
       })
       .select("id")
