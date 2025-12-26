@@ -25,18 +25,28 @@ export async function handleProjectScan(task) {
       .maybeSingle()
 
     if (running) {
-      await supabase.from("executor_tasks")
+      await supabase
+        .from("executor_tasks")
         .update({ status: "skipped" })
         .eq("id", taskId)
       return
     }
 
-    await supabase.from("executor_tasks")
-      .update({ status: "running", started_at: new Date().toISOString() })
+    await supabase
+      .from("executor_tasks")
+      .update({
+        status: "running",
+        started_at: new Date().toISOString()
+      })
       .eq("id", taskId)
 
-    await supabase.from("projects")
-      .update({ analysis_status: "running" })
+    // === ANALYSE START ===
+    await supabase
+      .from("projects")
+      .update({
+        analysis_status: false,
+        updated_at: new Date().toISOString()
+      })
       .eq("id", project_id)
 
     await supabase.from("project_initialization_log").insert({
@@ -59,15 +69,18 @@ export async function handleProjectScan(task) {
       warnings.push("Geen bestanden aangetroffen")
     }
 
-    await supabase.from("projects")
+    // === ANALYSE KLAAR ===
+    await supabase
+      .from("projects")
       .update({
-        analysis_status: "completed",
+        analysis_status: true,
         warnings,
         updated_at: new Date().toISOString()
       })
       .eq("id", project_id)
 
-    await supabase.from("project_initialization_log")
+    await supabase
+      .from("project_initialization_log")
       .update({
         status: "done",
         finished_at: new Date().toISOString()
@@ -84,13 +97,18 @@ export async function handleProjectScan(task) {
       payload: { project_id }
     })
 
-    await supabase.from("executor_tasks")
-      .update({ status: "completed", finished_at: new Date().toISOString() })
+    await supabase
+      .from("executor_tasks")
+      .update({
+        status: "completed",
+        finished_at: new Date().toISOString()
+      })
       .eq("id", taskId)
 
     if (chatId) await sendTelegram(chatId, "Projectscan afgerond")
   } catch (err) {
-    await supabase.from("executor_tasks")
+    await supabase
+      .from("executor_tasks")
       .update({
         status: "failed",
         error: err.message,
