@@ -5,8 +5,8 @@ import { sendTelegram } from "../integrations/telegramSender.js"
 
 // HANDLERS
 import { handleProjectScan } from "./handlers/projectScan.js"
-import { handleStartRekenwolk } from "./handlers/startRekenwolk.js"
 import { handleGenerateStabu } from "./handlers/generateStabu.js"
+import { handleStartRekenwolk } from "./handlers/startRekenwolk.js"
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -59,11 +59,9 @@ export async function runAction(task) {
     payload.project_id ||
     null
 
-  /*
-  ====================================================
-  ACTIES ZONDER PROJECT
-  ====================================================
-  */
+  // =========================
+  // ACTIES ZONDER PROJECT
+  // =========================
 
   if (actionId === "architect_full_ui_pages_build") {
     await telegramLog(chatId, "UI build gestart")
@@ -72,21 +70,17 @@ export async function runAction(task) {
     return { state: "DONE", action: actionId }
   }
 
-  /*
-  ====================================================
-  PROJECT VERPLICHT
-  ====================================================
-  */
+  // =========================
+  // PROJECT VERPLICHT
+  // =========================
 
   if (!project_id) {
     throw new Error("RUNACTION_NO_PROJECT_ID")
   }
 
-  /*
-  ====================================================
-  1. PROJECT SCAN / ANALYSE
-  ====================================================
-  */
+  // =========================
+  // 1. PROJECT SCAN
+  // =========================
 
   if (actionId === "project_scan" || actionId === "analysis") {
     await telegramLog(chatId, "Analyse gestart")
@@ -97,28 +91,24 @@ export async function runAction(task) {
       payload
     })
 
-    await supabase
-      .from("executor_tasks")
-      .insert({
-        project_id,
-        action: "generate_stabu",
-        payload: { project_id, chat_id: chatId },
-        status: "open",
-        assigned_to: "executor"
-      })
+    await supabase.from("executor_tasks").insert({
+      project_id,
+      action: "generate_stabu",
+      status: "open",
+      assigned_to: "executor",
+      payload: { project_id, chat_id: chatId }
+    })
 
-    await telegramLog(chatId, "Analyse afgerond, STABU gestart")
+    await telegramLog(chatId, "Analyse afgerond")
     return { state: "DONE", action: actionId }
   }
 
-  /*
-  ====================================================
-  2. STABU GENEREREN
-  ====================================================
-  */
+  // =========================
+  // 2. STABU GENEREREN
+  // =========================
 
   if (actionId === "generate_stabu") {
-    await telegramLog(chatId, "STABU generatie gestart")
+    await telegramLog(chatId, "STABU gestart")
 
     await handleGenerateStabu({
       id: task.id,
@@ -126,25 +116,21 @@ export async function runAction(task) {
       payload
     })
 
-    await supabase
-      .from("executor_tasks")
-      .insert({
-        project_id,
-        action: "start_rekenwolk",
-        payload: { project_id, chat_id: chatId },
-        status: "open",
-        assigned_to: "executor"
-      })
+    await supabase.from("executor_tasks").insert({
+      project_id,
+      action: "start_rekenwolk",
+      status: "open",
+      assigned_to: "executor",
+      payload: { project_id, chat_id: chatId }
+    })
 
-    await telegramLog(chatId, "STABU afgerond, rekenen gestart")
+    await telegramLog(chatId, "STABU afgerond")
     return { state: "DONE", action: actionId }
   }
 
-  /*
-  ====================================================
-  3. REKENWOLK + PDF (ENIGE BRON)
-  ====================================================
-  */
+  // =========================
+  // 3. REKENWOLK + PDF
+  // =========================
 
   if (actionId === "start_rekenwolk") {
     await telegramLog(chatId, "Rekenwolk gestart")
@@ -155,31 +141,27 @@ export async function runAction(task) {
       payload
     })
 
-    await telegramLog(chatId, "Calculatie en PDF afgerond")
-
+    await telegramLog(chatId, "Rekenwolk afgerond")
     return { state: "DONE", action: actionId }
   }
 
-  /*
-  ====================================================
-  UPLOAD REGISTRATIE
-  ====================================================
-  */
+  // =========================
+  // UPLOAD REGISTRATIE
+  // =========================
 
   if (actionId === "upload_files") {
     await telegramLog(chatId, "Upload geregistreerd")
     return { state: "DONE", action: actionId }
   }
 
-  /*
-  ====================================================
-  BUILDER FALLBACK
-  ====================================================
-  */
+  // =========================
+  // BUILDER FALLBACK
+  // =========================
 
-  const result = await runBuilder({
+  return await runBuilder({
     actionId,
     taskId: task.id,
     project_id,
     ...payload
   })
+}
