@@ -13,60 +13,93 @@ export async function handleProjectScan(task) {
   const project_id = task.project_id
   const payload = task.payload || {}
   const chatId = payload.chat_id || null
+  const now = new Date().toISOString()
 
   try {
-    // task running
+    /*
+    ============================
+    TASK → RUNNING
+    ============================
+    */
     await supabase
       .from("executor_tasks")
       .update({
         status: "running",
-        started_at: new Date().toISOString()
+        started_at: now
       })
       .eq("id", taskId)
 
-    // analyse afronden
+    /*
+    ============================
+    PROJECT ANALYSE AFRONDEN
+    ============================
+    */
     await supabase
       .from("projects")
       .update({
         analysis_status: true,
-        updated_at: new Date().toISOString()
+        updated_at: now
       })
       .eq("id", project_id)
 
-    // log
+    /*
+    ============================
+    INIT LOG
+    ============================
+    */
     await supabase
       .from("project_initialization_log")
       .insert({
         project_id,
         module: "PROJECT_SCAN",
         status: "done",
-        started_at: new Date().toISOString(),
-        finished_at: new Date().toISOString()
+        started_at: now,
+        finished_at: now
       })
 
     if (chatId) {
       await sendTelegram(chatId, "Projectscan afgerond")
     }
 
-    // volgende stap
-    await supabase
-      .from("executor_tasks")
-      .insert({
-        project_id,
-        action: "generate_stabu",
-        status: "open",
-        assigned_to: "executor",
-        payload: { project_id, chat_id: chatId }
-      })
-
-    // afronden
+    /*
+    ============================
+    TASK → COMPLETED (EERST)
+    ============================
+    */
     await supabase
       .from("executor_tasks")
       .update({
         status: "completed",
-        finished_at: new Date().toISOString()
+        finished_at: now
       })
       .eq("id", taskId)
+
+    /*
+    ============================
+    VOLGENDE STAP: GENERATE_STABU
+    (GUARDED – 1×)
+    ============================
+    */
+    const { data: existing } = await supabase
+      .from("executor_tasks")
+      .select("id")
+      .eq("project_id", project_id)
+      .eq("action", "generate_stabu")
+      .in("status", ["open", "running", "completed"])
+      .limit(1)
+      .maybeSingle()
+
+    if (!existing) {
+      await supabase
+        .from("executor_tasks")
+        .insert({
+          project_id,
+          action: "generate_stabu",
+          status: "open",
+          assigned_to: "executor",
+          payload: { project_id, chat_id: chatId }
+        })
+    }
 
   } catch (err) {
     await supabase
