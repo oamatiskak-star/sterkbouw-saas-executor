@@ -1,15 +1,8 @@
-import { createClient } from "@supabase/supabase-js"
+import supabase from "../lib/supabase.js"
 import { sendTelegram } from "../../integrations/telegramSender.js"
 
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY
-)
-
 export async function handleProjectScan(task) {
-  if (!task?.id || !task.project_id) {
-    return
-  }
+  if (!task?.id || !task.project_id) return
 
   const taskId = task.id
   const project_id = task.project_id
@@ -17,7 +10,7 @@ export async function handleProjectScan(task) {
   const chatId = payload.chat_id || null
 
   try {
-    // ===== STATUS: RUNNING =====
+    // status running
     await supabase
       .from("executor_tasks")
       .update({
@@ -26,7 +19,7 @@ export async function handleProjectScan(task) {
       })
       .eq("id", taskId)
 
-    // ===== PROJECT ANALYSE =====
+    // analyse afronden
     await supabase
       .from("projects")
       .update({
@@ -35,7 +28,7 @@ export async function handleProjectScan(task) {
       })
       .eq("id", project_id)
 
-    // ===== LOG =====
+    // log
     await supabase.from("project_initialization_log").insert({
       project_id,
       module: "PROJECT_SCAN",
@@ -48,7 +41,7 @@ export async function handleProjectScan(task) {
       await sendTelegram(chatId, "Projectscan afgerond")
     }
 
-    // ===== HARD DOORZETTEN NAAR STABU =====
+    // ALTIJD volgende stap
     await supabase.from("executor_tasks").insert({
       project_id,
       action: "generate_stabu",
@@ -57,7 +50,7 @@ export async function handleProjectScan(task) {
       payload: { project_id, chat_id: chatId }
     })
 
-    // ===== TASK COMPLETED =====
+    // afronden
     await supabase
       .from("executor_tasks")
       .update({
