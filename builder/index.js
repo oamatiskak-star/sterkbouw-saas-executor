@@ -79,6 +79,16 @@ export async function runBuilder(payload = {}) {
 
       /*
       ========================
+      SYSTEM / REPAIR
+      ========================
+      */
+      case "system_repair_full": {
+        const m = await import("./actions/SYSTEM_REPAIR_FULL.js")
+        return await m.default(payload)
+      }
+
+      /*
+      ========================
       FRONTEND
       ========================
       */
@@ -114,7 +124,7 @@ export async function runBuilder(payload = {}) {
 
       /*
       ========================
-      BACKEND / SYSTEM
+      BACKEND / SYSTEM (NO-OP)
       ========================
       */
       case "backend_run_initialization":
