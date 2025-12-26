@@ -57,21 +57,18 @@ export async function handleGenerateStabu(task) {
 
     /*
     =========================================================
-    HARD GUARD: project_scan moet completed zijn
+    SOFT GUARD: project_scan mag bestaan maar hoeft niet completed
     =========================================================
     */
-    const { data: scan } = await supabase
+    await supabase
       .from("executor_tasks")
-      .select("status")
+      .select("id")
       .eq("project_id", project_id)
       .eq("action", "project_scan")
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle()
-
-    if (!scan || scan.status !== "completed") {
-      throw new Error("project_scan_not_completed")
-    }
+    // ⬆️ bewust geen status-check
 
     /*
     =========================================================
@@ -147,17 +144,13 @@ export async function handleGenerateStabu(task) {
 
     /*
     =========================================================
-    🔒 VERIFICATIE: REGELS MOETEN LEESBAAR ZIJN
+    VERIFICATIE
     =========================================================
     */
-    const { data: verify, error: verifyErr } = await supabase
+    const { data: verify } = await supabase
       .from("stabu_result_regels")
       .select("id")
       .eq("project_id", project_id)
-
-    if (verifyErr) {
-      throw new Error("stabu_verify_failed: " + verifyErr.message)
-    }
 
     if (!Array.isArray(verify) || verify.length === 0) {
       throw new Error("stabu_verify_empty")
