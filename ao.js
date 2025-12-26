@@ -1,5 +1,4 @@
 import express from "express"
-import multer from "multer"
 import { createClient } from "@supabase/supabase-js"
 
 import { runAction } from "./executor/actionRouter.js"
@@ -30,7 +29,7 @@ const app = express()
 
 /*
 ========================
-CORS FIX (LOCKED)
+CORS (LOCKED)
 ========================
 */
 app.use((req, res, next) => {
@@ -56,16 +55,6 @@ app.use((req, _res, next) => {
 
 /*
 ========================
-MULTER
-========================
-*/
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 50 * 1024 * 1024 }
-})
-
-/*
-========================
 SUPABASE
 ========================
 */
@@ -76,7 +65,7 @@ const supabase = createClient(
 
 /*
 ========================
-DEBUG – DIT IS KRITISCH
+DEBUG
 ========================
 */
 console.log("SUPABASE_URL =", process.env.SUPABASE_URL)
@@ -110,87 +99,18 @@ app.post("/telegram/webhook", async (req, res) => {
 })
 
 /*
-========================
-UPLOAD + FLOW START
-========================
+====================================================
+⚠️ GEEN /upload-files ROUTE MEER
+====================================================
+– Upload verloopt uitsluitend via:
+  frontend → /api/executor/upload-task
+  → executor_tasks
+  → executor/handlers/uploadFiles.js
+– Geen multer
+– Geen storage upload
+– Geen directe DB inserts hier
+====================================================
 */
-app.post("/upload-files", upload.array("files"), async (req, res) => {
-  try {
-    const project_id = req.body.project_id
-    const files = req.files || []
-
-    if (!project_id) {
-      return res.status(400).json({ error: "no_project_id" })
-    }
-
-    if (!files.length) {
-      return res.status(400).json({ error: "no_files" })
-    }
-
-    const analysis_log = []
-
-    for (const file of files) {
-      const storage_path = `${project_id}/${Date.now()}_${file.originalname}`
-
-      const { error: uploadErr } = await supabase.storage
-        .from("sterkcalc")
-        .upload(storage_path, file.buffer, {
-          contentType: file.mimetype,
-          upsert: false
-        })
-
-      if (uploadErr) throw uploadErr
-
-      const { error: dbErr } = await supabase
-        .from("project_files")
-        .insert({
-          project_id,
-          file_name: file.originalname,
-          storage_path,
-          bucket: "sterkcalc",
-          status: "uploaded"
-        })
-
-      if (dbErr) throw dbErr
-
-      analysis_log.push({
-        file: file.originalname,
-        status: "queued"
-      })
-    }
-
-    await supabase
-      .from("projects")
-      .update({
-        files_uploaded: true,
-        analysis_status: "running",
-        analysis_log
-      })
-      .eq("id", project_id)
-
-    await supabase.from("executor_tasks").insert({
-      project_id,
-      action: "project_scan",
-      payload: { project_id },
-      status: "open",
-      assigned_to: "executor"
-    })
-
-    return res.status(200).json({
-      ok: true,
-      project_id,
-      files: analysis_log
-    })
-  } catch (e) {
-    const errorMsg =
-      e?.message ||
-      e?.error ||
-      (typeof e === "string" ? e : JSON.stringify(e))
-
-    console.error("upload_files_fatal", errorMsg)
-    return res.status(500).json({ error: errorMsg })
-  }
-})
 
 /*
 ========================
@@ -229,6 +149,7 @@ async function pollExecutorTasks() {
         finished_at: new Date().toISOString()
       })
       .eq("id", task.id)
+
   } catch (e) {
     const errorMsg =
       e?.message ||
