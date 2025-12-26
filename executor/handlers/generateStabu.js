@@ -18,18 +18,17 @@ async function fail(taskId, msg) {
 }
 
 export async function handleGenerateStabu(task) {
-  if (!task || !task.id || !task.project_id) {
-    return
-  }
+  if (!task?.id || !task.project_id) return
 
   const taskId = task.id
   const project_id = task.project_id
+  const now = new Date().toISOString()
 
   try {
     /*
-    =========================================================
-    LOCK: nooit 2 generate_stabu tegelijk
-    =========================================================
+    ============================
+    LOCK: GEEN DUBBELE RUN
+    ============================
     */
     const { data: running } = await supabase
       .from("executor_tasks")
@@ -42,38 +41,49 @@ export async function handleGenerateStabu(task) {
     if (running) {
       await supabase
         .from("executor_tasks")
-        .update({ status: "skipped" })
+        .update({
+          status: "skipped",
+          finished_at: now
+        })
         .eq("id", taskId)
       return
     }
 
+    /*
+    ============================
+    TASK → RUNNING
+    ============================
+    */
     await supabase
       .from("executor_tasks")
       .update({
         status: "running",
-        started_at: new Date().toISOString()
+        started_at: now
       })
       .eq("id", taskId)
 
     /*
-    =========================================================
-    SOFT GUARD: project_scan mag bestaan maar hoeft niet completed
-    =========================================================
+    ============================
+    HARD GUARD: PROJECT_SCAN
+    ============================
     */
-    await supabase
+    const { data: scan } = await supabase
       .from("executor_tasks")
-      .select("id")
+      .select("status")
       .eq("project_id", project_id)
       .eq("action", "project_scan")
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle()
-    // ⬆️ bewust geen status-check
+
+    if (!scan || scan.status !== "completed") {
+      throw new Error("project_scan_not_completed")
+    }
 
     /*
-    =========================================================
-    OPSCHONEN OUDE REGELS
-    =========================================================
+    ============================
+    OUDE STABU OPSCHONEN
+    ============================
     */
     await supabase
       .from("stabu_result_regels")
@@ -81,22 +91,24 @@ export async function handleGenerateStabu(task) {
       .eq("project_id", project_id)
 
     /*
-    =========================================================
-    PROJECT TYPE OPHALEN
-    =========================================================
+    ============================
+    PROJECT TYPE
+    ============================
     */
-    const { data: project } = await supabase
+    const { data: project, error: projErr } = await supabase
       .from("projects")
       .select("project_type")
       .eq("id", project_id)
       .single()
 
+    if (projErr) throw projErr
+
     const type = project?.project_type || "nieuwbouw"
 
     /*
-    =========================================================
-    STABU REGELS GENEREREN
-    =========================================================
+    ============================
+    STABU REGELS
+    ============================
     */
     const regels =
       type === "nieuwbouw"
@@ -117,9 +129,9 @@ export async function handleGenerateStabu(task) {
           ]
 
     /*
-    =========================================================
-    INSERT STABU REGELS
-    =========================================================
+    ============================
+    INSERT STABU
+    ============================
     */
     const { data: inserted, error: insertErr } = await supabase
       .from("stabu_result_regels")
@@ -134,52 +146,49 @@ export async function handleGenerateStabu(task) {
       )
       .select("id")
 
-    if (insertErr) {
-      throw new Error("stabu_insert_failed: " + insertErr.message)
-    }
-
-    if (!Array.isArray(inserted) || inserted.length === 0) {
+    if (insertErr) throw insertErr
+    if (!inserted || inserted.length === 0) {
       throw new Error("stabu_insert_empty")
     }
 
     /*
-    =========================================================
-    VERIFICATIE
-    =========================================================
-    */
-    const { data: verify } = await supabase
-      .from("stabu_result_regels")
-      .select("id")
-      .eq("project_id", project_id)
-
-    if (!Array.isArray(verify) || verify.length === 0) {
-      throw new Error("stabu_verify_empty")
-    }
-
-    /*
-    =========================================================
-    START REKENWOLK
-    =========================================================
-    */
-    await supabase.from("executor_tasks").insert({
-      project_id,
-      action: "start_rekenwolk",
-      status: "open",
-      assigned_to: "executor"
-    })
-
-    /*
-    =========================================================
-    AFRONDEN
-    =========================================================
+    ============================
+    TASK → COMPLETED
+    ============================
     */
     await supabase
       .from("executor_tasks")
       .update({
         status: "completed",
-        finished_at: new Date().toISOString()
+        finished_at: now
       })
       .eq("id", taskId)
+
+    /*
+    ============================
+    VOLGENDE STAP: REKENWOLK
+    (GUARDED)
+    ============================
+    */
+    const { data: existingNext } = await supabase
+      .from("executor_tasks")
+      .select("id")
+      .eq("project_id", project_id)
+      .eq("action", "start_rekenwolk")
+      .in("status", ["open", "running", "completed"])
+      .limit(1)
+      .maybeSingle()
+
+    if (!existingNext) {
+      await supabase
+        .from("executor_tasks")
+        .insert({
+          project_id,
+          action: "start_rekenwolk",
+          status: "open",
+          assigned_to: "executor"
+        })
+    }
 
   } catch (err) {
     await fail(taskId, err.message || "generate_stabu_error")
