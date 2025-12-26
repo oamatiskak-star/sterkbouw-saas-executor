@@ -43,13 +43,16 @@ export async function handleUploadFiles(task) {
     for (const f of files) {
       assert(f.filename, "UPLOAD_FILE_NO_FILENAME")
 
+      const storage_path = `${project_id}/${f.filename}`
+
       const { error: insertErr } = await supabase
         .from("project_files")
         .insert({
           project_id,
           file_name: f.filename,
-          status: "uploaded",
+          storage_path,
           bucket: "sterkcalc",
+          status: "uploaded",
           created_at: now
         })
 
@@ -74,7 +77,6 @@ export async function handleUploadFiles(task) {
     /*
     ============================
     VOLGENDE STAP: PROJECT_SCAN
-    (HARD GARANTIE)
     ============================
     */
     const { data: existingScan } = await supabase
