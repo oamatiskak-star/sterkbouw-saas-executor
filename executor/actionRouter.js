@@ -8,9 +8,6 @@ import { handleProjectScan } from "./handlers/projectScan.js"
 import { handleStartRekenwolk } from "./handlers/startRekenwolk.js"
 import { handleGenerateStabu } from "./handlers/generateStabu.js"
 
-// PDF GENERATOR
-import { generate2joursPdf } from "../pdf/generate2joursPdf.js"
-
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
@@ -145,7 +142,7 @@ export async function runAction(task) {
 
   /*
   ====================================================
-  3. REKENWOLK + PDF GENERATIE
+  3. REKENWOLK + PDF (ENIGE BRON)
   ====================================================
   */
 
@@ -158,11 +155,7 @@ export async function runAction(task) {
       payload
     })
 
-    await telegramLog(chatId, "Calculatie afgerond, PDF wordt gegenereerd")
-
-    await generate2joursPdf(project_id)
-
-    await telegramLog(chatId, "2jours PDF gegenereerd")
+    await telegramLog(chatId, "Calculatie en PDF afgerond")
 
     return { state: "DONE", action: actionId }
   }
@@ -190,6 +183,3 @@ export async function runAction(task) {
     project_id,
     ...payload
   })
-
-  return result
-}
