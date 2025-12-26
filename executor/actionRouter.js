@@ -1,3 +1,4 @@
+// executor/actionRouter.js
 import { createClient } from "@supabase/supabase-js"
 import { runBuilder } from "../builder/index.js"
 import { architectFullUiBuild } from "../actions/architectFullUiBuild.js"
@@ -80,7 +81,7 @@ export async function runAction(task) {
   }
 
   // =========================
-  // 0. UPLOAD FILES  ✅ FIX
+  // 0. UPLOAD FILES
   // =========================
 
   if (actionId === "upload_files") {
