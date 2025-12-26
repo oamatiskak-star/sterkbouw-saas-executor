@@ -65,7 +65,7 @@ export async function handleUploadFiles(task) {
     .from("projects")
     .update({
       files_uploaded: true,
-      analysis_status: "queued",
+      analysis_status: true, // ✅ BOOLEAN – GEEN STRING
       updated_at: new Date().toISOString()
     })
     .eq("id", project_id)
