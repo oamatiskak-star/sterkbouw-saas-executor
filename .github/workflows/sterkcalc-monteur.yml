@@ -1,0 +1,26 @@
+name: SterkCalc Monteur
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  monteur:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Monteur scan
+        run: |
+          echo "STERKCALC MONTEUR START"
+          echo "Scan repository structuur"
+          find . -maxdepth 3
+          echo "MONTEUR KLAAR"
