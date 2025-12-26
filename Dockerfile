@@ -5,12 +5,13 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm install
 
+# Kopieer ALLES (inclusief zip)
 COPY . .
 
-# ⬇️ BESTAAND – PDF map
-COPY executor/pdf /app/pdf
-
-# ⬇️ TOEGEVOEGD – MONTEUR ZIP UITPAKKEN
-RUN unzip -o sterkcalc-monteur.zip -d /app/monteur
+# ⬇️ MONTEUR ZIP UITPAKKEN (DIT ONTBRAK)
+RUN apt-get update \
+ && apt-get install -y unzip \
+ && unzip -o sterkcalc-monteur.zip -d /app/monteur \
+ && rm sterkcalc-monteur.zip
 
 CMD ["node", "ao.js"]
