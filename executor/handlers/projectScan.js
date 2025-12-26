@@ -6,6 +6,15 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 )
 
+/*
+===========================================================
+PROJECT SCAN – DEFINITIEVE KETENSCHAKEL
+- markeert analyse voltooid
+- logt scan
+- triggert exact 1x generate_stabu
+===========================================================
+*/
+
 export async function handleProjectScan(task) {
   if (!task?.id || !task.project_id) return
 
@@ -31,7 +40,7 @@ export async function handleProjectScan(task) {
 
     /*
     ============================
-    PROJECT ANALYSE AFRONDEN
+    PROJECT STATUS
     ============================
     */
     await supabase
@@ -52,7 +61,7 @@ export async function handleProjectScan(task) {
       .insert({
         project_id,
         module: "PROJECT_SCAN",
-        status: "done",
+        status: "completed",
         started_at: now,
         finished_at: now
       })
@@ -63,21 +72,8 @@ export async function handleProjectScan(task) {
 
     /*
     ============================
-    TASK → COMPLETED (EERST)
-    ============================
-    */
-    await supabase
-      .from("executor_tasks")
-      .update({
-        status: "completed",
-        finished_at: now
-      })
-      .eq("id", taskId)
-
-    /*
-    ============================
     VOLGENDE STAP: GENERATE_STABU
-    (GUARDED – 1×)
+    (HARD GUARD – NOOIT DUBBEL)
     ============================
     */
     const { data: existing } = await supabase
@@ -86,7 +82,6 @@ export async function handleProjectScan(task) {
       .eq("project_id", project_id)
       .eq("action", "generate_stabu")
       .in("status", ["open", "running", "completed"])
-      .limit(1)
       .maybeSingle()
 
     if (!existing) {
@@ -100,6 +95,19 @@ export async function handleProjectScan(task) {
           payload: { project_id, chat_id: chatId }
         })
     }
+
+    /*
+    ============================
+    TASK → COMPLETED
+    ============================
+    */
+    await supabase
+      .from("executor_tasks")
+      .update({
+        status: "completed",
+        finished_at: now
+      })
+      .eq("id", taskId)
 
   } catch (err) {
     await supabase
