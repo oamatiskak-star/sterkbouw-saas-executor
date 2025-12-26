@@ -10,7 +10,11 @@ const supabase = createClient(
 
 /*
 ===========================================================
-REKENWOLK – DEFINITIEF (STABU PLAT MODEL)
+REKENWOLK – DEFINITIEF EINDSTATION
+- vereist STABU
+- maakt calculatie
+- genereert 2jours PDF
+- zet workflow definitief op DONE
 ===========================================================
 */
 
@@ -63,8 +67,8 @@ async function fetchStabuRegels(project_id) {
     .eq("project_id", project_id)
 
   if (error) throw error
-  if (!Array.isArray(data) || !data.length) {
-    throw new Error("no_stabu_regels")
+  if (!Array.isArray(data) || data.length === 0) {
+    throw new Error("NO_STABU_REGELS")
   }
 
   return data
@@ -72,7 +76,7 @@ async function fetchStabuRegels(project_id) {
 
 /*
 ===========================================================
-SYNC → CALCULATIE_REGELS  (ESSENTIEEL)
+SYNC → CALCULATIE_REGELS
 ===========================================================
 */
 async function syncCalculatieRegels(calculatie_id, regels) {
@@ -83,14 +87,14 @@ async function syncCalculatieRegels(calculatie_id, regels) {
 
   const inserts = regels.map(r => ({
     calculatie_id,
-    stabu_id: r.id ?? null,
-    hoeveelheid: r.hoeveelheid ?? 1,
-    eenheid: r.eenheid ?? "st",
-    materiaalprijs: r.eenheidsprijs ?? 0,
+    stabu_id: r.id,
+    hoeveelheid: r.hoeveelheid || 1,
+    eenheid: r.eenheid || "st",
+    materiaalprijs: r.eenheidsprijs || 0,
     arbeidsprijs: 0,
     normuren: 0,
     loonkosten: 0,
-    totaal: (r.hoeveelheid ?? 1) * (r.eenheidsprijs ?? 0)
+    totaal: (r.hoeveelheid || 1) * (r.eenheidsprijs || 0)
   }))
 
   const { error } = await supabase
@@ -102,37 +106,37 @@ async function syncCalculatieRegels(calculatie_id, regels) {
 
 /*
 ===========================================================
-PDF GENERATIE
+PDF GENERATIE – 2JOURS
 ===========================================================
 */
 async function generatePdf(calculatie, regels, totalen) {
   const pdf = await PDFDocument.create()
   const font = await pdf.embedFont(StandardFonts.Helvetica)
 
-  const cover = pdf.addPage([595, 842])
+  const page1 = pdf.addPage([595, 842])
 
   const draw = (t, x, y, size = 10) =>
-    cover.drawText(String(t), { x, y, size, font, color: rgb(0, 0, 0) })
+    page1.drawText(String(t), { x, y, size, font, color: rgb(0, 0, 0) })
 
-  draw("SterkBouw B.V.", 40, 720, 14)
-  draw("Calculatie 2jours", 350, 720, 14)
-  draw(`Project: ${calculatie.project_id}`, 40, 690)
-  draw(`Calculatie: ${calculatie.id}`, 40, 675)
+  draw("SterkBouw B.V.", 40, 780, 14)
+  draw("2jours Offerte – Calculatie", 350, 780, 14)
+  draw(`Project: ${calculatie.project_id}`, 40, 750)
+  draw(`Calculatie: ${calculatie.id}`, 40, 735)
 
-  const page = pdf.addPage([595, 842])
-  let y = 800
-
+  let y = 700
   regels.forEach(r => {
-    const sub = (r.hoeveelheid ?? 1) * (r.eenheidsprijs ?? 0)
-    page.drawText(
-      `${r.omschrijving} | ${euro(sub)}`,
+    const sub = (r.hoeveelheid || 1) * (r.eenheidsprijs || 0)
+    page1.drawText(
+      `${r.omschrijving} — ${euro(sub)}`,
       { x: 40, y, size: 10, font }
     )
     y -= 14
   })
 
   y -= 20
-  page.drawText(`Kostprijs: ${euro(totalen.kostprijs)}`, { x: 40, y, size: 11, font })
+  page1.drawText(`Kostprijs: ${euro(totalen.kostprijs)}`, { x: 40, y, size: 11, font })
+  y -= 14
+  page1.drawText(`Verkoopprijs: ${euro(totalen.verkoopprijs)}`, { x: 40, y, size: 11, font })
 
   return pdf.save()
 }
@@ -147,7 +151,10 @@ async function storePdf(project_id, pdfBytes) {
 
   await supabase.storage
     .from("sterkcalc")
-    .upload(path, pdfBytes, { upsert: true, contentType: "application/pdf" })
+    .upload(path, pdfBytes, {
+      upsert: true,
+      contentType: "application/pdf"
+    })
 
   const { data } = await supabase.storage
     .from("sterkcalc")
@@ -163,7 +170,7 @@ async function storePdf(project_id, pdfBytes) {
 
 /*
 ===========================================================
-ENTRYPOINT
+ENTRYPOINT – EINDE WORKFLOW
 ===========================================================
 */
 export async function handleStartRekenwolk(task) {
@@ -171,46 +178,87 @@ export async function handleStartRekenwolk(task) {
 
   const taskId = task.id
   const project_id = task.project_id
+  const now = new Date().toISOString()
 
   try {
+    /*
+    ============================
+    TASK → RUNNING
+    ============================
+    */
     await supabase
       .from("executor_tasks")
-      .update({ status: "running" })
+      .update({
+        status: "running",
+        started_at: now
+      })
       .eq("id", taskId)
 
+    /*
+    ============================
+    CALCULATIE + STABU
+    ============================
+    */
     const calculatie = await getOrCreateCalculatie(project_id)
     const regels = await fetchStabuRegels(project_id)
 
     await syncCalculatieRegels(calculatie.id, regels)
 
+    /*
+    ============================
+    TOTALEN
+    ============================
+    */
     let kostprijs = 0
     regels.forEach(r => {
-      kostprijs += (r.hoeveelheid ?? 1) * (r.eenheidsprijs ?? 0)
+      kostprijs += (r.hoeveelheid || 1) * (r.eenheidsprijs || 0)
     })
 
-    const totalen = {
-      kostprijs,
-      ak: kostprijs * AK_PCT,
-      abk: kostprijs * ABK_PCT,
-      wr: kostprijs * WR_PCT
-    }
+    const verkoopprijs =
+      kostprijs +
+      kostprijs * AK_PCT +
+      kostprijs * ABK_PCT +
+      kostprijs * WR_PCT
 
-    const pdfBytes = await generatePdf(calculatie, regels, totalen)
+    /*
+    ============================
+    PDF
+    ============================
+    */
+    const pdfBytes = await generatePdf(
+      calculatie,
+      regels,
+      { kostprijs, verkoopprijs }
+    )
+
     await storePdf(project_id, pdfBytes)
 
+    /*
+    ============================
+    AFRONDEN CALCULATIE
+    ============================
+    */
     await supabase
       .from("calculaties")
       .update({
         workflow_status: "done",
         kostprijs,
-        verkoopprijs: kostprijs + totalen.ak + totalen.abk + totalen.wr,
-        marge: totalen.ak + totalen.abk + totalen.wr
+        verkoopprijs,
+        marge: verkoopprijs - kostprijs
       })
       .eq("id", calculatie.id)
 
+    /*
+    ============================
+    TASK → COMPLETED
+    ============================
+    */
     await supabase
       .from("executor_tasks")
-      .update({ status: "completed" })
+      .update({
+        status: "completed",
+        finished_at: now
+      })
       .eq("id", taskId)
 
   } catch (err) {
@@ -218,9 +266,9 @@ export async function handleStartRekenwolk(task) {
       .from("executor_tasks")
       .update({
         status: "failed",
-        error: err.message
+        error: err.message,
+        finished_at: new Date().toISOString()
       })
       .eq("id", taskId)
-    throw err
   }
 }
