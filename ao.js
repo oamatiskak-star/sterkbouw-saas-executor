@@ -1,3 +1,4 @@
+import("./monteur/scan.js")
 import express from "express"
 import { createClient } from "@supabase/supabase-js"
 
