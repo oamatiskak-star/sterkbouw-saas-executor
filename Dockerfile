@@ -7,7 +7,10 @@ RUN npm install
 
 COPY . .
 
-# ⬇️ DIT IS DE FIX
+# ⬇️ BESTAAND – PDF map
 COPY executor/pdf /app/pdf
+
+# ⬇️ TOEGEVOEGD – MONTEUR ZIP UITPAKKEN
+RUN unzip -o sterkcalc-monteur.zip -d /app/monteur
 
 CMD ["node", "ao.js"]
