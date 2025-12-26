@@ -4,6 +4,7 @@ import { architectFullUiBuild } from "../actions/architectFullUiBuild.js"
 import { sendTelegram } from "../integrations/telegramSender.js"
 
 // HANDLERS
+import { handleUploadFiles } from "./handlers/uploadFiles.js"
 import { handleProjectScan } from "./handlers/projectScan.js"
 import { handleGenerateStabu } from "./handlers/generateStabu.js"
 import { handleStartRekenwolk } from "./handlers/startRekenwolk.js"
@@ -79,6 +80,23 @@ export async function runAction(task) {
   }
 
   // =========================
+  // 0. UPLOAD FILES  ✅ FIX
+  // =========================
+
+  if (actionId === "upload_files") {
+    await telegramLog(chatId, "Upload gestart")
+
+    await handleUploadFiles({
+      id: task.id,
+      project_id,
+      payload
+    })
+
+    await telegramLog(chatId, "Upload afgerond")
+    return { state: "DONE", action: actionId }
+  }
+
+  // =========================
   // 1. PROJECT SCAN
   // =========================
 
@@ -126,15 +144,6 @@ export async function runAction(task) {
     })
 
     await telegramLog(chatId, "Rekenwolk afgerond")
-    return { state: "DONE", action: actionId }
-  }
-
-  // =========================
-  // UPLOAD REGISTRATIE
-  // =========================
-
-  if (actionId === "upload_files") {
-    await telegramLog(chatId, "Upload geregistreerd")
     return { state: "DONE", action: actionId }
   }
 
