@@ -11,7 +11,7 @@ COPY . .
 # ⬇️ MONTEUR ZIP UITPAKKEN (DIT ONTBRAK)
 RUN apt-get update \
  && apt-get install -y unzip \
- && unzip -o sterkcalc-monteur.zip -d /app/monteur \
+ && unzip -o sterkcalc-monteur.zip -d /app \
  && rm sterkcalc-monteur.zip
 
 CMD ["node", "ao.js"]
