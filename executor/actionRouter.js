@@ -4,7 +4,6 @@ import { architectFullUiBuild } from "../actions/architectFullUiBuild.js"
 import { sendTelegram } from "../integrations/telegramSender.js"
 
 // HANDLERS
-import { handleCreateProject } from "./handlers/createProject.js"
 import { handleProjectScan } from "./handlers/projectScan.js"
 import { handleGenerateStabu } from "./handlers/generateStabu.js"
 import { handleStartRekenwolk } from "./handlers/startRekenwolk.js"
@@ -71,13 +70,6 @@ export async function runAction(task) {
     return { state: "DONE", action: actionId }
   }
 
-  if (actionId === "create_project") {
-    await telegramLog(chatId, "Project aanmaken gestart")
-    await handleCreateProject(task)
-    await telegramLog(chatId, "Project aangemaakt")
-    return { state: "DONE", action: actionId }
-  }
-
   // =========================
   // PROJECT VERPLICHT
   // =========================
@@ -91,7 +83,7 @@ export async function runAction(task) {
   // =========================
 
   if (actionId === "project_scan" || actionId === "analysis") {
-    await telegramLog(chatId, "Analyse gestart")
+    await telegramLog(chatId, "Projectscan gestart")
 
     await handleProjectScan({
       id: task.id,
@@ -99,15 +91,7 @@ export async function runAction(task) {
       payload
     })
 
-    await supabase.from("executor_tasks").insert({
-      project_id,
-      action: "generate_stabu",
-      status: "open",
-      assigned_to: "executor",
-      payload: { project_id, chat_id: chatId }
-    })
-
-    await telegramLog(chatId, "Analyse afgerond")
+    await telegramLog(chatId, "Projectscan afgerond")
     return { state: "DONE", action: actionId }
   }
 
@@ -122,14 +106,6 @@ export async function runAction(task) {
       id: task.id,
       project_id,
       payload
-    })
-
-    await supabase.from("executor_tasks").insert({
-      project_id,
-      action: "start_rekenwolk",
-      status: "open",
-      assigned_to: "executor",
-      payload: { project_id, chat_id: chatId }
     })
 
     await telegramLog(chatId, "STABU afgerond")
