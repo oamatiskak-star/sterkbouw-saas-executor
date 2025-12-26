@@ -1,21 +1,15 @@
-import fs from "fs"
-import path from "path"
-import { fileURLToPath } from "url"
 import { registerUnknownCommand } from "../utils/registerUnknownCommand.js"
 
 /*
-========================
-BUILDER ENTRY – FREEZE
-========================
-- gebruikt action (niet actionId)
-- valideert payload hard
-- geen executor statusbeheer
-- geen aannames
-- alle uitbreidingen via losse actie-bestanden
+================================================
+BUILDER ENTRY – FREEZE / SYSTEM OF RECORD
+================================================
+- ALLE system / monteur / frontend / backend acties
+- SQL-gedreven (executor_tasks / builder_tasks)
+- Geen aannames
+- Geen stil falen
+================================================
 */
-
-const __filename = fileURLToPath(import.meta.url)
-const __dirname = path.dirname(__filename)
 
 function normalize(raw) {
   if (!raw || typeof raw !== "string") return null
@@ -25,48 +19,12 @@ function normalize(raw) {
     .replace(/^_|_$/g, "")
 }
 
-/*
-========================
-DYNAMISCHE ACTION LOADER
-========================
-- acties worden automatisch geladen uit:
-  - builder/actions/
-  - builder/frontend/
-  - builder/system/
-  - builder/monteur/
-- dit bestand hoeft NOOIT meer aangepast te worden
-*/
-
-async function runDynamicAction(action, payload) {
-  const candidates = [
-    `./actions/${action}.js`,
-    `./frontend/${action}.js`,
-    `./system/${action}.js`,
-    `./monteur/${action}.js`
-  ]
-
-  for (const rel of candidates) {
-    const abs = path.join(__dirname, rel)
-    if (fs.existsSync(abs)) {
-      const mod = await import(rel)
-      if (typeof mod.default === "function") {
-        return await mod.default(payload)
-      }
-      if (typeof mod[action] === "function") {
-        return await mod[action](payload)
-      }
-    }
-  }
-
-  return null
-}
-
 export async function runBuilder(payload = {}) {
   if (!payload || typeof payload !== "object") {
     throw new Error("BUILDER_INVALID_PAYLOAD")
   }
 
-  const rawAction = payload.action || payload.actionId || payload.command
+  const rawAction = payload.action || payload.actionId
   const action = normalize(rawAction)
 
   if (!action) {
@@ -78,85 +36,98 @@ export async function runBuilder(payload = {}) {
 
       /*
       ========================
-      PROJECT / REKENWOLK
+      CORE CALCULATIE KETEN
       ========================
       */
       case "project_scan":
-      case "start_rekenwolk":
+        return (await import("./actions/PROJECT_SCAN.js")).default(payload)
+
       case "generate_stabu":
+        return (await import("./actions/GENERATE_STABU.js")).default(payload)
+
       case "derive_quantities":
+        return (await import("./actions/DERIVE_QUANTITIES.js")).default(payload)
+
+      case "start_rekenwolk":
+        return (await import("./actions/START_REKENWOLK.js")).default(payload)
+
       case "installaties_e":
+        return (await import("./actions/INSTALLATIES_E.js")).default(payload)
+
       case "installaties_w":
+        return (await import("./actions/INSTALLATIES_W.js")).default(payload)
+
       case "planning":
-      case "rapportage": {
-        const result = await runDynamicAction(action, payload)
-        if (result) return result
-        throw new Error(`ACTION_FILE_MISSING (${action})`)
-      }
+        return (await import("./actions/PLANNING.js")).default(payload)
+
+      case "rapportage":
+        return (await import("./actions/RAPPORTAGE.js")).default(payload)
 
       /*
       ========================
-      SYSTEM / REPAIR / MONTEUR
+      SYSTEM / MONTEUR (CRUCIAAL)
       ========================
       */
       case "system_repair_full":
-      case "system_repair_full_chain":
-      case "system_repair_upload_and_restart":
-      case "system_full_scan":
       case "repair_full_system":
+        return (await import("./actions/SYSTEM_REPAIR_FULL.js")).default(payload)
+
+      case "system_repair_full_chain":
+        return (await import("./actions/SYSTEM_REPAIR_FULL_CHAIN.js")).default(payload)
+
+      case "system_repair_upload_and_restart":
+        return (await import("./actions/SYSTEM_REPAIR_UPLOAD_AND_RESTART.js")).default(payload)
+
       case "write_files":
+        return (await import("./actions/WRITE_FILES.js")).default(payload)
+
       case "create_module":
-      case "create_folder":
-      case "delete_file":
-      case "delete_folder":
-      case "freeze":
-      case "unfreeze": {
-        const result = await runDynamicAction(action, payload)
-        if (result) return result
-        throw new Error(`SYSTEM_ACTION_MISSING (${action})`)
-      }
+        return (await import("./actions/CREATE_MODULE.js")).default(payload)
+
+      case "system_full_scan":
+        return (await import("./actions/SYSTEM_FULL_SCAN.js")).default(payload)
 
       /*
       ========================
-      FRONTEND
+      FRONTEND (AUTOMATISCH)
       ========================
       */
       case "frontend_install_tabler":
+        return (await import("./frontend/installTabler.js")).installTabler(payload)
+
       case "frontend_apply_tabler_layout":
+        return (await import("./frontend/applyTablerLayout.js")).applyTablerLayout(payload)
+
       case "frontend_generate_navigation":
+        return (await import("./frontend/generateTablerNav.js")).generateTablerNav(payload)
+
       case "frontend_generate_login":
+        return (await import("./frontend/generateTablerLogin.js")).generateTablerLogin(payload)
+
       case "frontend_generate_standard_page":
-      case "frontend_build": {
-        const result = await runDynamicAction(action, payload)
-        if (result) return result
-        throw new Error(`FRONTEND_ACTION_MISSING (${action})`)
-      }
+        return (await import("./frontend/generateStandardPage.js")).generateStandardPage(payload)
+
+      case "frontend_build":
+        return (await import("./frontend/frontendBuild.js")).frontendBuild(payload)
 
       /*
       ========================
-      BACKEND / SYSTEM (NO-OP)
+      STATUS / HEALTH (NO-OP)
       ========================
       */
-      case "backend_run_initialization":
-      case "backend_start_calculation":
-      case "system_post_deploy_verify":
       case "system_status":
-      case "system_health": {
-        return { action, state: "SKIPPED" }
-      }
+      case "system_health":
+      case "system_post_deploy_verify":
+        return { action, state: "OK" }
 
       /*
       ========================
-      FALLBACK – NO LOOP
+      FALLBACK
       ========================
       */
       default:
         await registerUnknownCommand("builder", action)
-        return {
-          action,
-          state: "IGNORED",
-          reason: "UNKNOWN_BUT_REGISTERED"
-        }
+        return { action, state: "IGNORED" }
     }
   } catch (err) {
     throw new Error(`BUILDER_ACTION_FAILED (${action}): ${err.message}`)
