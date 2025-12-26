@@ -15,13 +15,13 @@ export async function handleCreateProject(task) {
     const {
       adres,
       project_type = "transformatie",
-      naam,
-      naam_opdrachtgever,
-      postcode,
-      plaatsnaam,
-      land,
-      telefoon,
-      opmerking
+      naam = null,
+      naam_opdrachtgever = null,
+      postcode = null,
+      plaatsnaam = null,
+      land = "Nederland",
+      telefoon = null,
+      opmerking = null
     } = payload
 
     const { data, error } = await supabase
@@ -46,6 +46,7 @@ export async function handleCreateProject(task) {
 
     const project_id = data.id
 
+    // start keten
     await supabase.from("executor_tasks").insert({
       project_id,
       action: "project_scan",
