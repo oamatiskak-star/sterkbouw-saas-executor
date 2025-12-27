@@ -1,11 +1,8 @@
 // executor/pdf/generate2joursPdf.js
 //
-// INTERNE PDF GENERATOR
-// Wordt aangeroepen door runAction()
-// PDF = system of record
+// INTERNE PDF GENERATOR – 2JOURS
+// Wordt aangeroepen met: await generate2joursPdf(project_id)
 
-import fs from "fs"
-import path from "path"
 import xlsx from "xlsx"
 import { PDFDocument, rgb, StandardFonts } from "pdf-lib"
 import { createClient } from "@supabase/supabase-js"
@@ -15,9 +12,6 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 )
 
-// =========================
-// CONFIG
-// =========================
 const TEMPLATE_BUCKET = "sterkcalc"
 const TEMPLATE_PATH = "templates/2jours_layout_template_v1.xlsx"
 
@@ -28,25 +22,31 @@ function assert(cond, msg) {
   if (!cond) throw new Error(msg)
 }
 
-function isRed(cell) {
-  const c = cell?.s?.font?.color?.rgb
-  if (!c) return false
-  return c.toUpperCase() === "FFFF0000"
-}
-
 function euro(n) {
   return `€ ${Number(n || 0).toFixed(2)}`
 }
 
+function isRed(cell) {
+  const rgb = cell?.s?.font?.color?.rgb
+  if (!rgb) return false
+  return rgb.toUpperCase().endsWith("FF0000")
+}
+
+// Excel column widths → PDF points
+function colWidthToPt(w) {
+  if (!w) return 40
+  return w * 7
+}
+
 // =========================
-// MAIN FUNCTION
+// MAIN
 // =========================
 export async function generate2joursPdf(project_id) {
   assert(project_id, "NO_PROJECT_ID")
 
-  // =========================
-  // LOAD PROJECT
-  // =========================
+  // -------------------------
+  // DATA
+  // -------------------------
   const { data: project } = await supabase
     .from("projects")
     .select("*")
@@ -55,9 +55,6 @@ export async function generate2joursPdf(project_id) {
 
   assert(project, "PROJECT_NOT_FOUND")
 
-  // =========================
-  // LOAD CALCULATIE VIEW
-  // =========================
   const { data: regels } = await supabase
     .from("v_calculatie_2jours")
     .select("*")
@@ -67,9 +64,9 @@ export async function generate2joursPdf(project_id) {
 
   assert(Array.isArray(regels), "NO_CALCULATIE_DATA")
 
-  // =========================
-  // DOWNLOAD TEMPLATE
-  // =========================
+  // -------------------------
+  // TEMPLATE
+  // -------------------------
   const { data: file } = await supabase
     .storage
     .from(TEMPLATE_BUCKET)
@@ -80,107 +77,68 @@ export async function generate2joursPdf(project_id) {
   const buffer = Buffer.from(await file.arrayBuffer())
   const workbook = xlsx.read(buffer, { cellStyles: true })
 
-  // =========================
-  // PDF INIT
-  // =========================
   const pdf = await PDFDocument.create()
   const font = await pdf.embedFont(StandardFonts.Helvetica)
 
-  // =========================
+  // -------------------------
   // RENDER SHEETS
-  // =========================
+  // -------------------------
+  renderSheet(pdf, font, workbook.Sheets["Voorblad"], project)
+  renderSheet(pdf, font, workbook.Sheets["Voorblad calculatie_regels"], project)
+  renderCalculatie(pdf, font, workbook.Sheets["Calculatie_regels"], regels)
+  renderSheet(pdf, font, workbook.Sheets["Staartblad"], project)
 
-  // VOORBLAD
-  renderSheet({
-    pdf,
-    font,
-    sheet: workbook.Sheets["Voorblad"],
-    pageSize: "A4_P",
-    project,
-    regels
+  // -------------------------
+  // SAVE
+  // -------------------------
+  const bytes = await pdf.save()
+  const target = `${project_id}/offerte_2jours.pdf`
+
+  await supabase.storage.from("sterkcalc").upload(target, bytes, {
+    upsert: true,
+    contentType: "application/pdf"
   })
 
-  // VOORBLAD CALCULATIE
-  renderSheet({
-    pdf,
-    font,
-    sheet: workbook.Sheets["Voorblad calculatie_regels"],
-    pageSize: "A4_L",
-    project,
-    regels
-  })
-
-  // CALCULATIE REGELS
-  renderCalculatieRegels({
-    pdf,
-    font,
-    sheet: workbook.Sheets["Calculatie_regels"],
-    regels
-  })
-
-  // STAARTBLAD
-  renderSheet({
-    pdf,
-    font,
-    sheet: workbook.Sheets["Staartblad"],
-    pageSize: "A4_L",
-    project,
-    regels
-  })
-
-  // =========================
-  // SAVE & UPLOAD
-  // =========================
-  const pdfBytes = await pdf.save()
-  const targetPath = `${project_id}/offerte_2jours.pdf`
-
-  await supabase
-    .storage
-    .from("sterkcalc")
-    .upload(targetPath, pdfBytes, {
-      upsert: true,
-      contentType: "application/pdf"
-    })
-
-  const publicUrl =
-    `${process.env.SUPABASE_URL}/storage/v1/object/public/sterkcalc/${targetPath}`
+  const url =
+    `${process.env.SUPABASE_URL}/storage/v1/object/public/sterkcalc/${target}`
 
   await supabase
     .from("projects")
-    .update({ pdf_url: publicUrl })
+    .update({ pdf_url: url })
     .eq("id", project_id)
 
-  return {
-    status: "DONE",
-    pdf_url: publicUrl
-  }
+  return { pdf_url: url }
 }
 
 // =========================
-// GENERIC SHEET RENDERER
+// GENERIC SHEET RENDER
 // =========================
-function renderSheet({ pdf, font, sheet, pageSize, project, regels }) {
-  const size =
-    pageSize === "A4_P"
-      ? [595, 842]
-      : [842, 595]
+function renderSheet(pdf, font, sheet, project) {
+  const page = pdf.addPage([595, 842])
+  const ref = xlsx.utils.decode_range(sheet["!ref"])
 
-  const page = pdf.addPage(size)
+  // column x-positions
+  const colX = []
+  let accX = 40
+  for (let c = 0; c <= ref.e.c; c++) {
+    colX[c] = accX
+    const w = sheet["!cols"]?.[c]?.wpx
+    accX += colWidthToPt(w)
+  }
 
   for (const addr in sheet) {
     if (addr.startsWith("!")) continue
-
     const cell = sheet[addr]
-    const text = cell.v
-    if (text == null) continue
+    if (cell.v == null) continue
 
-    const x = 40 + (cell.c || 0) * 60
-    const y = size[1] - 40 - (cell.r || 0) * 18
+    const { c, r } = xlsx.utils.decode_cell(addr)
 
-    let value = text
+    const x = colX[c]
+    const y = 842 - 40 - r * 16
 
+    let value = cell.v
     if (isRed(cell)) {
-      value = resolveDynamicValue(text, project)
+      value = resolveDynamic(value, project)
     }
 
     page.drawText(String(value), {
@@ -194,9 +152,9 @@ function renderSheet({ pdf, font, sheet, pageSize, project, regels }) {
 }
 
 // =========================
-// CALCULATIE REGELS RENDER
+// CALCULATIE PAGINA’S
 // =========================
-function renderCalculatieRegels({ pdf, font, regels }) {
+function renderCalculatie(pdf, font, sheet, regels) {
   let page = pdf.addPage([842, 595])
   let y = 555
 
@@ -206,26 +164,25 @@ function renderCalculatieRegels({ pdf, font, regels }) {
       y = 555
     }
 
-    page.drawText(r.code || "", { x: 40, y, size: 8, font })
-    page.drawText(r.omschrijving || "", { x: 90, y, size: 8, font })
-    page.drawText(euro(r.totaal), { x: 720, y, size: 8, font })
+    page.drawText(r.code, { x: 40, y, size: 8, font })
+    page.drawText(r.omschrijving, { x: 90, y, size: 8, font })
+    page.drawText(euro(r.totaal), { x: 760, y, size: 8, font })
 
-    y -= 18
+    y -= 16
   }
 }
 
 // =========================
-// DYNAMIC VALUE RESOLVER
+// DYNAMIC VALUES
 // =========================
-function resolveDynamicValue(text, project) {
+function resolveDynamic(text, project) {
   const t = String(text).toLowerCase()
 
-  if (t.includes("naam opdrachtgever")) return project.opdrachtgever
-  if (t.includes("projectomschrijving")) return project.omschrijving
   if (t.includes("projectnaam")) return project.naam
-  if (t.includes("plaatsnaam")) return project.plaatsnaam
+  if (t.includes("opdrachtgever")) return project.opdrachtgever
+  if (t.includes("plaats")) return project.plaatsnaam
   if (t.includes("offertenummer")) return project.offertenummer
-  if (t.includes("offertedatum")) return project.offertedatum
+  if (t.includes("datum")) return project.offertedatum
 
   return ""
 }
