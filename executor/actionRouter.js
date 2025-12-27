@@ -1,5 +1,3 @@
-// executor/actionRouter.js
-
 import { createClient } from "@supabase/supabase-js"
 import { sendTelegram } from "../integrations/telegramSender.js"
 
@@ -11,6 +9,9 @@ import { handleUploadFiles } from "./handlers/uploadFiles.js"
 import { handleProjectScan } from "./handlers/projectScan.js"
 import { handleGenerateStabu } from "./handlers/generateStabu.js"
 import { handleStartRekenwolk } from "./handlers/startRekenwolk.js"
+
+// MONTEUR / BUILDER
+import { runBuilder } from "../builder/index.js"
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -71,6 +72,29 @@ export async function runAction(task) {
     action,
     project_id
   })
+
+  /*
+  ==================================================
+  0. MONTEUR / SYSTEM REPAIR (BUILDER)
+  ==================================================
+  */
+  if (
+    action === "system_repair_full_chain" ||
+    action === "system_repair_full" ||
+    action === "repair_full_system" ||
+    action === "system_full_scan"
+  ) {
+
+    const result = await runBuilder({
+      ...payload,
+      action,
+      project_id,
+      task_id: task.id
+    })
+
+    log("SYSTEM_REPAIR_DONE", { action })
+    return { state: "DONE", action, result }
+  }
 
   /*
   ==================================================
