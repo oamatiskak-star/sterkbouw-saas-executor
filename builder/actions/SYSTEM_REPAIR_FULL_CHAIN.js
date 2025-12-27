@@ -1,49 +1,47 @@
-export default async function SYSTEM_REPAIR_FULL_CHAIN({ supabase, task }) {
-  const errors = []
+import { createClient } from "@supabase/supabase-js"
 
-  // 1. Database connectiviteit
-  const ping = await supabase.from("projects").select("id").limit(1)
-  if (ping.error) {
-    errors.push(`DB_PROJECTS_UNREACHABLE: ${ping.error.message}`)
-  }
+export default async function SYSTEM_FULL_SCAN(task = {}) {
+  const supabase = createClient(
+    process.env.SUPABASE_URL,
+    process.env.SUPABASE_SERVICE_ROLE_KEY
+  )
 
-  const pingTasks = await supabase.from("executor_tasks").select("id").limit(1)
-  if (pingTasks.error) {
-    errors.push(`DB_EXECUTOR_TASKS_UNREACHABLE: ${pingTasks.error.message}`)
-  }
+  try {
+    const project_id = task.project_id
 
-  // 2. Projectcontext (indien aanwezig)
-  if (task.project_id) {
-    const projectCheck = await supabase
+    if (!project_id) {
+      return {
+        status: "failed",
+        error: "NO_PROJECT_ID_IN_TASK"
+      }
+    }
+
+    const { data, error } = await supabase
       .from("projects")
       .select("id")
-      .eq("id", task.project_id)
+      .eq("id", project_id)
       .single()
 
-    if (projectCheck.error || !projectCheck.data) {
-      errors.push("PROJECT_CONTEXT_INVALID")
+    if (error || !data) {
+      return {
+        status: "failed",
+        error: "PROJECT_NOT_FOUND"
+      }
     }
-  }
 
-  // 3. Resultaat vastleggen (altijd)
-  await supabase.from("system_log").insert({
-    type: "system_repair",
-    message:
-      errors.length === 0
-        ? "SYSTEM_REPAIR_FULL_CHAIN_OK"
-        : `SYSTEM_REPAIR_WARNINGS: ${errors.join(" | ")}`
-  })
+    await supabase.from("system_log").insert({
+      type: "system_scan",
+      message: `SYSTEM_FULL_SCAN_OK for ${project_id}`
+    })
 
-  // 4. Eindoordeel
-  if (errors.length > 0) {
+    return {
+      status: "completed",
+      error: null
+    }
+  } catch (e) {
     return {
       status: "failed",
-      error: errors.join(" | ")
+      error: `SYSTEM_FULL_SCAN_EXCEPTION: ${e.message}`
     }
-  }
-
-  return {
-    status: "completed",
-    error: null
   }
 }
