@@ -1,7 +1,5 @@
 import { createClient } from "@supabase/supabase-js"
-import pkg from "pdf-lib"
-
-const { PDFDocument, rgb, StandardFonts } = pkg
+import { TwoJoursWriter } from "../../builder/pdf/TwoJoursWriter.js"
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -10,11 +8,10 @@ const supabase = createClient(
 
 /*
 ===========================================================
-REKENWOLK – DEFINITIEF EINDSTATION
-- vereist STABU
-- maakt calculatie
-- genereert 2jours PDF
-- zet workflow definitief op DONE
+REKENWOLK – DEFINITIEF
+- vult STABU-regels met project-specifieke data
+- schrijft ALLES in bestaande 2jours-PDF
+- finaliseert PDF
 ===========================================================
 */
 
@@ -22,157 +19,6 @@ const AK_PCT = 0.08
 const ABK_PCT = 0.06
 const WR_PCT = 0.08
 
-function euro(n) {
-  return `€ ${Number(n || 0).toFixed(2)}`
-}
-
-/*
-===========================================================
-CALCULATIE
-===========================================================
-*/
-async function getOrCreateCalculatie(project_id) {
-  const { data: existing, error } = await supabase
-    .from("calculaties")
-    .select("*")
-    .eq("project_id", project_id)
-    .order("created_at", { ascending: false })
-    .limit(1)
-
-  if (error) throw error
-  if (existing && existing.length) return existing[0]
-
-  const { data, error: insertErr } = await supabase
-    .from("calculaties")
-    .insert({
-      project_id,
-      workflow_status: "running"
-    })
-    .select("*")
-    .single()
-
-  if (insertErr) throw insertErr
-  return data
-}
-
-/*
-===========================================================
-STABU REGELS
-===========================================================
-*/
-async function fetchStabuRegels(project_id) {
-  const { data, error } = await supabase
-    .from("stabu_result_regels")
-    .select("*")
-    .eq("project_id", project_id)
-
-  if (error) throw error
-  if (!Array.isArray(data) || data.length === 0) {
-    throw new Error("NO_STABU_REGELS")
-  }
-
-  return data
-}
-
-/*
-===========================================================
-SYNC → CALCULATIE_REGELS
-===========================================================
-*/
-async function syncCalculatieRegels(calculatie_id, regels) {
-  await supabase
-    .from("calculatie_regels")
-    .delete()
-    .eq("calculatie_id", calculatie_id)
-
-  const inserts = regels.map(r => ({
-    calculatie_id,
-    stabu_id: r.id,
-    hoeveelheid: r.hoeveelheid || 1,
-    eenheid: r.eenheid || "st",
-    materiaalprijs: r.eenheidsprijs || 0,
-    arbeidsprijs: 0,
-    normuren: 0,
-    loonkosten: 0,
-    totaal: (r.hoeveelheid || 1) * (r.eenheidsprijs || 0)
-  }))
-
-  const { error } = await supabase
-    .from("calculatie_regels")
-    .insert(inserts)
-
-  if (error) throw error
-}
-
-/*
-===========================================================
-PDF GENERATIE – 2JOURS
-===========================================================
-*/
-async function generatePdf(calculatie, regels, totalen) {
-  const pdf = await PDFDocument.create()
-  const font = await pdf.embedFont(StandardFonts.Helvetica)
-
-  const page1 = pdf.addPage([595, 842])
-
-  const draw = (t, x, y, size = 10) =>
-    page1.drawText(String(t), { x, y, size, font, color: rgb(0, 0, 0) })
-
-  draw("SterkBouw B.V.", 40, 780, 14)
-  draw("2jours Offerte – Calculatie", 350, 780, 14)
-  draw(`Project: ${calculatie.project_id}`, 40, 750)
-  draw(`Calculatie: ${calculatie.id}`, 40, 735)
-
-  let y = 700
-  regels.forEach(r => {
-    const sub = (r.hoeveelheid || 1) * (r.eenheidsprijs || 0)
-    page1.drawText(
-      `${r.omschrijving} — ${euro(sub)}`,
-      { x: 40, y, size: 10, font }
-    )
-    y -= 14
-  })
-
-  y -= 20
-  page1.drawText(`Kostprijs: ${euro(totalen.kostprijs)}`, { x: 40, y, size: 11, font })
-  y -= 14
-  page1.drawText(`Verkoopprijs: ${euro(totalen.verkoopprijs)}`, { x: 40, y, size: 11, font })
-
-  return pdf.save()
-}
-
-/*
-===========================================================
-PDF OPSLAAN + SIGNED URL
-===========================================================
-*/
-async function storePdf(project_id, pdfBytes) {
-  const path = `${project_id}/calculatie_2jours.pdf`
-
-  await supabase.storage
-    .from("sterkcalc")
-    .upload(path, pdfBytes, {
-      upsert: true,
-      contentType: "application/pdf"
-    })
-
-  const { data } = await supabase.storage
-    .from("sterkcalc")
-    .createSignedUrl(path, 3600)
-
-  if (data?.signedUrl) {
-    await supabase
-      .from("projects")
-      .update({ pdf_url: data.signedUrl })
-      .eq("id", project_id)
-  }
-}
-
-/*
-===========================================================
-ENTRYPOINT – EINDE WORKFLOW
-===========================================================
-*/
 export async function handleStartRekenwolk(task) {
   if (!task?.id || !task.project_id) return
 
@@ -196,22 +42,42 @@ export async function handleStartRekenwolk(task) {
 
     /*
     ============================
-    CALCULATIE + STABU
+    STABU REGELS OPHALEN
     ============================
     */
-    const calculatie = await getOrCreateCalculatie(project_id)
-    const regels = await fetchStabuRegels(project_id)
+    const { data: regels, error } = await supabase
+      .from("stabu_result_regels")
+      .select("*")
+      .eq("project_id", project_id)
 
-    await syncCalculatieRegels(calculatie.id, regels)
+    if (error) throw error
+    if (!regels || regels.length === 0) {
+      throw new Error("NO_STABU_REGELS")
+    }
 
     /*
     ============================
-    TOTALEN
+    REKENWOLK – PROJECT INVULLING
+    (DIT WORDT LATER VERVANGEN
+     DOOR ECHTE SCAN-LOGICA)
     ============================
     */
     let kostprijs = 0
-    regels.forEach(r => {
-      kostprijs += (r.hoeveelheid || 1) * (r.eenheidsprijs || 0)
+
+    const ingevuldeRegels = regels.map(r => {
+      const hoeveelheid = r.hoeveelheid ?? 1
+      const subtotaal = hoeveelheid * (r.eenheidsprijs || 0)
+      kostprijs += subtotaal
+
+      return {
+        id: r.id,
+        stabu_code: r.stabu_code,
+        omschrijving: r.omschrijving,
+        norm: r.norm,
+        hoeveelheid,
+        eenheidsprijs: r.eenheidsprijs,
+        subtotaal
+      }
     })
 
     const verkoopprijs =
@@ -222,31 +88,33 @@ export async function handleStartRekenwolk(task) {
 
     /*
     ============================
-    PDF
+    2JOURS PDF – INVULLEN + AFRONDEN
     ============================
     */
-    const pdfBytes = await generatePdf(
-      calculatie,
-      regels,
-      { kostprijs, verkoopprijs }
-    )
+    const pdf = await TwoJoursWriter.open(project_id)
 
-    await storePdf(project_id, pdfBytes)
+    await pdf.writeSection("stabu.invulling", {
+      titel: "Project-specifieke invulling",
+      regels: ingevuldeRegels,
+      totalen: {
+        kostprijs,
+        verkoopprijs
+      }
+    })
+
+    const pdfUrl = await pdf.finalize()
 
     /*
     ============================
-    AFRONDEN CALCULATIE
+    PROJECT PDF LINK
     ============================
     */
     await supabase
-      .from("calculaties")
+      .from("projects")
       .update({
-        workflow_status: "done",
-        kostprijs,
-        verkoopprijs,
-        marge: verkoopprijs - kostprijs
+        pdf_url: pdfUrl
       })
-      .eq("id", calculatie.id)
+      .eq("id", project_id)
 
     /*
     ============================
