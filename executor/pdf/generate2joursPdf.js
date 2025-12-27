@@ -6,22 +6,40 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 )
 
+/*
+===========================================================
+2JOURS PDF GENERATOR – DEFINITIEF EINDPRODUCT
+- GEEN templates
+- layout = code
+- dynamische pagination
+- staand → liggend
+- alle ketenstappen zichtbaar in PDF
+===========================================================
+*/
+
 const A4_P = { w: 595, h: 842 }   // staand
 const A4_L = { w: 842, h: 595 }   // liggend
 
 const MARGIN = 40
 const LINE = 12
+const SMALL = 9
+const NORMAL = 11
+const TITLE = 18
 
 function euro(n) {
   return `€ ${Number(n || 0).toFixed(2)}`
 }
 
+function assert(cond, msg) {
+  if (!cond) throw new Error(msg)
+}
+
 export async function generate2joursPdf(project_id) {
-  if (!project_id) throw new Error("NO_PROJECT_ID")
+  assert(project_id, "NO_PROJECT_ID")
 
   /*
   ============================
-  DATA
+  DATA – PROJECT
   ============================
   */
   const { data: project } = await supabase
@@ -30,8 +48,13 @@ export async function generate2joursPdf(project_id) {
     .eq("id", project_id)
     .single()
 
-  if (!project) throw new Error("PROJECT_NOT_FOUND")
+  assert(project, "PROJECT_NOT_FOUND")
 
+  /*
+  ============================
+  DATA – CALCULATIE VIEW
+  ============================
+  */
   const { data: regels = [] } = await supabase
     .from("v_calculatie_2jours")
     .select("*")
@@ -40,6 +63,11 @@ export async function generate2joursPdf(project_id) {
     .order("subhoofdstuk_code")
     .order("code")
 
+  /*
+  ============================
+  DATA – STELPOSTEN / CORRECTIES / UURLONEN
+  ============================
+  */
   const { data: stelposten = [] } =
     await supabase.from("calculatie_stelposten").select("*").eq("project_id", project_id)
 
@@ -51,6 +79,21 @@ export async function generate2joursPdf(project_id) {
 
   /*
   ============================
+  DATA – UPLOADS & SCAN (OPTIONEEL)
+  ============================
+  */
+  const { data: files = [] } =
+    await supabase.from("project_files").select("file_name").eq("project_id", project_id)
+
+  const { data: scanlog } =
+    await supabase
+      .from("project_initialization_log")
+      .select("*")
+      .eq("project_id", project_id)
+      .order("created_at", { ascending: true })
+
+  /*
+  ============================
   PDF INIT
   ============================
   */
@@ -59,80 +102,130 @@ export async function generate2joursPdf(project_id) {
 
   /*
   ============================
-  VOORBLAD (STAAND – DYNAMISCH)
+  HELPERS
   ============================
+  */
+  const drawText = (page, t, x, y, size = NORMAL) =>
+    page.drawText(String(t ?? ""), { x, y, size, font, color: rgb(0, 0, 0) })
+
+  /*
+  ===========================================================
+  VOORBLAD (STAAND – DYNAMISCH)
+  ===========================================================
   */
   let page = pdf.addPage([A4_P.w, A4_P.h])
   let y = A4_P.h - MARGIN
 
-  const drawP = (t, x, y, s = 11) =>
-    page.drawText(String(t), { x, y, size: s, font, color: rgb(0, 0, 0) })
-
-  drawP("2jours Offerte / Calculatie", 180, y, 20)
+  drawText(page, "2jours Offerte / Calculatie", 160, y, 20)
   y -= 50
 
-  drawP(`Project: ${project.naam || ""}`, MARGIN, y)
+  drawText(page, `Project: ${project.naam || ""}`, MARGIN, y)
   y -= LINE
-  drawP(`Opdrachtgever: ${project.naam_opdrachtgever || ""}`, MARGIN, y)
+  drawText(page, `Opdrachtgever: ${project.naam_opdrachtgever || ""}`, MARGIN, y)
   y -= LINE
-  drawP(`Adres: ${project.adres || ""} ${project.plaatsnaam || ""}`, MARGIN, y)
+  drawText(page, `Adres: ${project.adres || ""} ${project.plaatsnaam || ""}`, MARGIN, y)
   y -= LINE
-  drawP(`Telefoon: ${project.telefoon || ""}`, MARGIN, y)
+  drawText(page, `Telefoon: ${project.telefoon || ""}`, MARGIN, y)
   y -= LINE * 2
 
-  drawP("Omschrijving:", MARGIN, y, 12)
+  drawText(page, "Omschrijving:", MARGIN, y, 12)
   y -= LINE
-  drawP(project.opmerking || "-", MARGIN, y)
+  drawText(page, project.opmerking || "-", MARGIN, y)
 
   /*
-  ============================
+  ===========================================================
   OPDRACHTBEVESTIGING (STAAND)
-  ============================
+  ===========================================================
   */
   page = pdf.addPage([A4_P.w, A4_P.h])
   y = A4_P.h - MARGIN
 
-  drawP("Opdrachtbevestiging", MARGIN, y, 18)
+  drawText(page, "Opdrachtbevestiging", MARGIN, y, TITLE)
   y -= 40
 
-  drawP(
+  drawText(
+    page,
     "Deze offerte betreft de volledige calculatie conform STABU-systematiek en bijbehorende uitgangspunten.",
     MARGIN,
-    y,
-    11
+    y
   )
 
   /*
-  ============================
+  ===========================================================
+  UPLOAD OVERZICHT
+  ===========================================================
+  */
+  if (files.length) {
+    y -= 40
+    drawText(page, "Aangeleverde documenten", MARGIN, y, 14)
+    y -= 20
+
+    files.forEach(f => {
+      if (y < 60) {
+        page = pdf.addPage([A4_P.w, A4_P.h])
+        y = A4_P.h - MARGIN
+      }
+      drawText(page, `- ${f.file_name}`, MARGIN, y, SMALL)
+      y -= LINE
+    })
+  }
+
+  /*
+  ===========================================================
+  SCAN RESULTAAT (LOG)
+  ===========================================================
+  */
+  if (scanlog && scanlog.length) {
+    page = pdf.addPage([A4_P.w, A4_P.h])
+    y = A4_P.h - MARGIN
+
+    drawText(page, "Analyse & Scan", MARGIN, y, TITLE)
+    y -= 30
+
+    scanlog.forEach(l => {
+      if (y < 60) {
+        page = pdf.addPage([A4_P.w, A4_P.h])
+        y = A4_P.h - MARGIN
+      }
+      drawText(
+        page,
+        `${l.module}: ${l.status}`,
+        MARGIN,
+        y,
+        SMALL
+      )
+      y -= LINE
+    })
+  }
+
+  /*
+  ===========================================================
   CALCULATIE (LIGGEND – DYNAMISCH)
-  ============================
+  ===========================================================
   */
   page = pdf.addPage([A4_L.w, A4_L.h])
   y = A4_L.h - MARGIN
-
-  const drawL = (t, x, y, s = 9) =>
-    page.drawText(String(t), { x, y, size: s, font })
 
   const col = {
     code: 30,
     oms: 90,
     aant: 340,
     eenh: 380,
-    norm: 430,
+    norm: 420,
     loon: 470,
     mat: 520,
     tot: 600
   }
 
   function header() {
-    drawL("Code", col.code, y)
-    drawL("Omschrijving", col.oms, y)
-    drawL("Aantal", col.aant, y)
-    drawL("Eenh", col.eenh, y)
-    drawL("Norm", col.norm, y)
-    drawL("Loon", col.loon, y)
-    drawL("Materiaal", col.mat, y)
-    drawL("Totaal", col.tot, y)
+    drawText(page, "Code", col.code, y, SMALL)
+    drawText(page, "Omschrijving", col.oms, y, SMALL)
+    drawText(page, "Aantal", col.aant, y, SMALL)
+    drawText(page, "Eenh", col.eenh, y, SMALL)
+    drawText(page, "Norm", col.norm, y, SMALL)
+    drawText(page, "Loon", col.loon, y, SMALL)
+    drawText(page, "Materiaal", col.mat, y, SMALL)
+    drawText(page, "Totaal", col.tot, y, SMALL)
     y -= LINE
   }
 
@@ -150,66 +243,67 @@ export async function generate2joursPdf(project_id) {
     const sub = Number(r.totaal || 0)
     kostprijs += sub
 
-    drawL(r.code, col.code, y)
-    drawL(r.omschrijving, col.oms, y)
-    drawL(r.aantal, col.aant, y)
-    drawL(r.eenheid, col.eenh, y)
-    drawL(r.normuren, col.norm, y)
-    drawL(euro(r.loonkosten), col.loon, y)
-    drawL(euro(r.materiaalkosten), col.mat, y)
-    drawL(euro(sub), col.tot, y)
+    drawText(page, r.code, col.code, y, SMALL)
+    drawText(page, r.omschrijving, col.oms, y, SMALL)
+    drawText(page, r.aantal, col.aant, y, SMALL)
+    drawText(page, r.eenheid, col.eenh, y, SMALL)
+    drawText(page, r.normuren, col.norm, y, SMALL)
+    drawText(page, euro(r.loonkosten), col.loon, y, SMALL)
+    drawText(page, euro(r.materiaalkosten), col.mat, y, SMALL)
+    drawText(page, euro(sub), col.tot, y, SMALL)
 
     y -= LINE
   }
 
   /*
-  ============================
+  ===========================================================
   STELPOSTEN
-  ============================
+  ===========================================================
   */
   if (stelposten.length) {
     page = pdf.addPage([A4_L.w, A4_L.h])
     y = A4_L.h - MARGIN
 
-    drawL("Stelposten", 30, y, 14)
+    drawText(page, "Stelposten", 30, y, 14)
     y -= 30
 
     stelposten.forEach(s => {
-      drawL(`${s.omschrijving} – ${euro(s.bedrag)}`, 30, y)
+      drawText(page, `${s.omschrijving} – ${euro(s.bedrag)}`, 30, y)
       y -= LINE
     })
   }
 
   /*
-  ============================
-  CORRECTIES + UURLONEN
-  ============================
+  ===========================================================
+  AANNAMES / OPSLAGEN / UURLONEN
+  ===========================================================
   */
   page = pdf.addPage([A4_L.w, A4_L.h])
   y = A4_L.h - MARGIN
 
-  drawL("Aannames & Opslagen", 30, y, 14)
+  drawText(page, "Aannames & Opslagen", 30, y, 14)
   y -= 30
 
-  drawL(
+  drawText(
+    page,
     `AK ${correcties?.ak_pct * 100 || 0}% | ABK ${correcties?.abk_pct * 100 || 0}% | W ${correcties?.w_pct * 100 || 0}% | R ${correcties?.r_pct * 100 || 0}%`,
     30,
     y
   )
   y -= 30
 
-  drawL("Uurlonen:", 30, y, 12)
+  drawText(page, "Uurlonen:", 30, y, 12)
   y -= 20
 
   uurlonen.forEach(u => {
-    drawL(`${u.discipline}: € ${u.uurloon}/uur`, 30, y)
+    drawText(page, `${u.discipline}: € ${u.uurloon}/uur`, 30, y)
     y -= LINE
   })
 
   /*
-  ============================
-  OPSLAAN + LINK
-  ============================
+  ===========================================================
+  OPSLAAN + PUBLIC URL
+  ===========================================================
   */
   const bytes = await pdf.save()
   const path = `${project_id}/calculatie_2jours.pdf`
@@ -219,20 +313,18 @@ export async function generate2joursPdf(project_id) {
     contentType: "application/pdf"
   })
 
-  const { data: url } = await supabase.storage
-    .from("sterkcalc")
-    .createSignedUrl(path, 60 * 60 * 24)
-
-  if (!url?.signedUrl) throw new Error("SIGNED_URL_FAILED")
+  const publicUrl =
+    `${process.env.SUPABASE_URL}/storage/v1/object/public/sterkcalc/${path}`
 
   await supabase
     .from("projects")
-    .update({ pdf_url: url.signedUrl })
+    .update({ pdf_url: publicUrl })
     .eq("id", project_id)
 
   return {
     status: "DONE",
     project_id,
-    pdf_url: url.signedUrl
+    pdf_url: publicUrl,
+    kostprijs
   }
 }
