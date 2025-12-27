@@ -1,3 +1,4 @@
+// executor/pdf/generate2joursPdf.js
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib"
 import { createClient } from "@supabase/supabase-js"
 
@@ -13,16 +14,16 @@ const supabase = createClient(
 - layout = code
 - dynamische pagination
 - staand → liggend
-- alle ketenstappen zichtbaar in PDF
+- ALLE ketenstappen zichtbaar in PDF
 ===========================================================
 */
 
-const A4_P = { w: 595, h: 842 }   // staand
-const A4_L = { w: 842, h: 595 }   // liggend
+const A4_P = { w: 595, h: 842 }
+const A4_L = { w: 842, h: 595 }
 
-const MARGIN = 40
+const MARGIN = 30
 const LINE = 12
-const SMALL = 9
+const SMALL = 8
 const NORMAL = 11
 const TITLE = 18
 
@@ -34,26 +35,35 @@ function assert(cond, msg) {
   if (!cond) throw new Error(msg)
 }
 
+function draw(page, font, text, x, y, size = NORMAL) {
+  page.drawText(String(text ?? ""), {
+    x,
+    y,
+    size,
+    font,
+    color: rgb(0, 0, 0)
+  })
+}
+
 export async function generate2joursPdf(project_id) {
   assert(project_id, "NO_PROJECT_ID")
 
   /*
-  ============================
+  ===========================================================
   DATA – PROJECT
-  ============================
+  ===========================================================
   */
   const { data: project } = await supabase
     .from("projects")
     .select("*")
     .eq("id", project_id)
     .single()
-
   assert(project, "PROJECT_NOT_FOUND")
 
   /*
-  ============================
-  DATA – CALCULATIE VIEW
-  ============================
+  ===========================================================
+  DATA – CALCULATIE (VOLLEDIGE 2JOURS VIEW)
+  ===========================================================
   */
   const { data: regels = [] } = await supabase
     .from("v_calculatie_2jours")
@@ -64,168 +74,77 @@ export async function generate2joursPdf(project_id) {
     .order("code")
 
   /*
-  ============================
-  DATA – STELPOSTEN / CORRECTIES / UURLONEN
-  ============================
-  */
-  const { data: stelposten = [] } =
-    await supabase.from("calculatie_stelposten").select("*").eq("project_id", project_id)
-
-  const { data: correcties } =
-    await supabase.from("calculatie_correcties").select("*").eq("project_id", project_id).single()
-
-  const { data: uurlonen = [] } =
-    await supabase.from("calculatie_uurloon_overrides").select("*").eq("project_id", project_id)
-
-  /*
-  ============================
-  DATA – UPLOADS & SCAN (OPTIONEEL)
-  ============================
-  */
-  const { data: files = [] } =
-    await supabase.from("project_files").select("file_name").eq("project_id", project_id)
-
-  const { data: scanlog } =
-    await supabase
-      .from("project_initialization_log")
-      .select("*")
-      .eq("project_id", project_id)
-      .order("created_at", { ascending: true })
-
-  /*
-  ============================
+  ===========================================================
   PDF INIT
-  ============================
+  ===========================================================
   */
   const pdf = await PDFDocument.create()
   const font = await pdf.embedFont(StandardFonts.Helvetica)
 
   /*
-  ============================
-  HELPERS
-  ============================
-  */
-  const drawText = (page, t, x, y, size = NORMAL) =>
-    page.drawText(String(t ?? ""), { x, y, size, font, color: rgb(0, 0, 0) })
-
-  /*
   ===========================================================
-  VOORBLAD (STAAND – DYNAMISCH)
+  VOORBLAD
   ===========================================================
   */
   let page = pdf.addPage([A4_P.w, A4_P.h])
   let y = A4_P.h - MARGIN
 
-  drawText(page, "2jours Offerte / Calculatie", 160, y, 20)
+  draw(page, font, "2jours Offerte / Calculatie", 150, y, TITLE)
   y -= 50
 
-  drawText(page, `Project: ${project.naam || ""}`, MARGIN, y)
+  draw(page, font, `Project: ${project.naam || ""}`, MARGIN, y)
   y -= LINE
-  drawText(page, `Opdrachtgever: ${project.naam_opdrachtgever || ""}`, MARGIN, y)
+  draw(page, font, `Opdrachtgever: ${project.naam_opdrachtgever || ""}`, MARGIN, y)
   y -= LINE
-  drawText(page, `Adres: ${project.adres || ""} ${project.plaatsnaam || ""}`, MARGIN, y)
-  y -= LINE
-  drawText(page, `Telefoon: ${project.telefoon || ""}`, MARGIN, y)
+  draw(page, font, `Adres: ${project.adres || ""} ${project.plaatsnaam || ""}`, MARGIN, y)
   y -= LINE * 2
-
-  drawText(page, "Omschrijving:", MARGIN, y, 12)
-  y -= LINE
-  drawText(page, project.opmerking || "-", MARGIN, y)
+  draw(page, font, project.opmerking || "-", MARGIN, y)
 
   /*
   ===========================================================
-  OPDRACHTBEVESTIGING (STAAND)
-  ===========================================================
-  */
-  page = pdf.addPage([A4_P.w, A4_P.h])
-  y = A4_P.h - MARGIN
-
-  drawText(page, "Opdrachtbevestiging", MARGIN, y, TITLE)
-  y -= 40
-
-  drawText(
-    page,
-    "Deze offerte betreft de volledige calculatie conform STABU-systematiek en bijbehorende uitgangspunten.",
-    MARGIN,
-    y
-  )
-
-  /*
-  ===========================================================
-  UPLOAD OVERZICHT
-  ===========================================================
-  */
-  if (files.length) {
-    y -= 40
-    drawText(page, "Aangeleverde documenten", MARGIN, y, 14)
-    y -= 20
-
-    files.forEach(f => {
-      if (y < 60) {
-        page = pdf.addPage([A4_P.w, A4_P.h])
-        y = A4_P.h - MARGIN
-      }
-      drawText(page, `- ${f.file_name}`, MARGIN, y, SMALL)
-      y -= LINE
-    })
-  }
-
-  /*
-  ===========================================================
-  SCAN RESULTAAT (LOG)
-  ===========================================================
-  */
-  if (scanlog && scanlog.length) {
-    page = pdf.addPage([A4_P.w, A4_P.h])
-    y = A4_P.h - MARGIN
-
-    drawText(page, "Analyse & Scan", MARGIN, y, TITLE)
-    y -= 30
-
-    scanlog.forEach(l => {
-      if (y < 60) {
-        page = pdf.addPage([A4_P.w, A4_P.h])
-        y = A4_P.h - MARGIN
-      }
-      drawText(
-        page,
-        `${l.module}: ${l.status}`,
-        MARGIN,
-        y,
-        SMALL
-      )
-      y -= LINE
-    })
-  }
-
-  /*
-  ===========================================================
-  CALCULATIE (LIGGEND – DYNAMISCH)
+  CALCULATIE – LIGGEND
   ===========================================================
   */
   page = pdf.addPage([A4_L.w, A4_L.h])
   y = A4_L.h - MARGIN
 
+  /*
+  ===========================================================
+  KOLOMMEN (EXACT JOUW DEFINITIE)
+  ===========================================================
+  */
   const col = {
-    code: 30,
-    oms: 90,
-    aant: 340,
-    eenh: 380,
-    norm: 420,
-    loon: 470,
-    mat: 520,
-    tot: 600
+    code: 20,
+    oms: 70,
+    aantal: 250,
+    eenh: 290,
+    mnorm: 330,
+    uren: 370,
+    loonkosten: 410,
+    prijs_eenh: 460,
+    materiaal: 510,
+    oa_eenh: 565,
+    oa: 615,
+    stelp_eenh: 665,
+    stelposten: 715,
+    totaal: 785
   }
 
   function header() {
-    drawText(page, "Code", col.code, y, SMALL)
-    drawText(page, "Omschrijving", col.oms, y, SMALL)
-    drawText(page, "Aantal", col.aant, y, SMALL)
-    drawText(page, "Eenh", col.eenh, y, SMALL)
-    drawText(page, "Norm", col.norm, y, SMALL)
-    drawText(page, "Loon", col.loon, y, SMALL)
-    drawText(page, "Materiaal", col.mat, y, SMALL)
-    drawText(page, "Totaal", col.tot, y, SMALL)
+    draw(page, font, "Code", col.code, y, SMALL)
+    draw(page, font, "Omschrijving", col.oms, y, SMALL)
+    draw(page, font, "Aantal", col.aantal, y, SMALL)
+    draw(page, font, "Eenh.", col.eenh, y, SMALL)
+    draw(page, font, "M.norm", col.mnorm, y, SMALL)
+    draw(page, font, "Uren", col.uren, y, SMALL)
+    draw(page, font, "Loonkosten", col.loonkosten, y, SMALL)
+    draw(page, font, "Prijs/eenh.", col.prijs_eenh, y, SMALL)
+    draw(page, font, "Materiaal/-eel", col.materiaal, y, SMALL)
+    draw(page, font, "O.A./eenh.", col.oa_eenh, y, SMALL)
+    draw(page, font, "O.A.", col.oa, y, SMALL)
+    draw(page, font, "Stelp/eenh.", col.stelp_eenh, y, SMALL)
+    draw(page, font, "Stelposten", col.stelposten, y, SMALL)
+    draw(page, font, "Totaal", col.totaal, y, SMALL)
     y -= LINE
   }
 
@@ -240,69 +159,30 @@ export async function generate2joursPdf(project_id) {
       header()
     }
 
-    const sub = Number(r.totaal || 0)
-    kostprijs += sub
+    const totaal = Number(r.totaal || 0)
+    kostprijs += totaal
 
-    drawText(page, r.code, col.code, y, SMALL)
-    drawText(page, r.omschrijving, col.oms, y, SMALL)
-    drawText(page, r.aantal, col.aant, y, SMALL)
-    drawText(page, r.eenheid, col.eenh, y, SMALL)
-    drawText(page, r.normuren, col.norm, y, SMALL)
-    drawText(page, euro(r.loonkosten), col.loon, y, SMALL)
-    drawText(page, euro(r.materiaalkosten), col.mat, y, SMALL)
-    drawText(page, euro(sub), col.tot, y, SMALL)
+    draw(page, font, r.code, col.code, y, SMALL)
+    draw(page, font, r.omschrijving, col.oms, y, SMALL)
+    draw(page, font, r.aantal, col.aantal, y, SMALL)
+    draw(page, font, r.eenheid, col.eenh, y, SMALL)
+    draw(page, font, r.normuren, col.mnorm, y, SMALL)
+    draw(page, font, r.uren, col.uren, y, SMALL)
+    draw(page, font, euro(r.loonkosten), col.loonkosten, y, SMALL)
+    draw(page, font, euro(r.materiaalprijs), col.prijs_eenh, y, SMALL)
+    draw(page, font, euro(r.materiaalkosten), col.materiaal, y, SMALL)
+    draw(page, font, euro(r.oa_eenheidsprijs), col.oa_eenh, y, SMALL)
+    draw(page, font, euro(r.oa_kosten), col.oa, y, SMALL)
+    draw(page, font, euro(r.stelpost_eenheidsprijs), col.stelp_eenh, y, SMALL)
+    draw(page, font, euro(r.stelposten), col.stelposten, y, SMALL)
+    draw(page, font, euro(totaal), col.totaal, y, SMALL)
 
     y -= LINE
   }
 
   /*
   ===========================================================
-  STELPOSTEN
-  ===========================================================
-  */
-  if (stelposten.length) {
-    page = pdf.addPage([A4_L.w, A4_L.h])
-    y = A4_L.h - MARGIN
-
-    drawText(page, "Stelposten", 30, y, 14)
-    y -= 30
-
-    stelposten.forEach(s => {
-      drawText(page, `${s.omschrijving} – ${euro(s.bedrag)}`, 30, y)
-      y -= LINE
-    })
-  }
-
-  /*
-  ===========================================================
-  AANNAMES / OPSLAGEN / UURLONEN
-  ===========================================================
-  */
-  page = pdf.addPage([A4_L.w, A4_L.h])
-  y = A4_L.h - MARGIN
-
-  drawText(page, "Aannames & Opslagen", 30, y, 14)
-  y -= 30
-
-  drawText(
-    page,
-    `AK ${correcties?.ak_pct * 100 || 0}% | ABK ${correcties?.abk_pct * 100 || 0}% | W ${correcties?.w_pct * 100 || 0}% | R ${correcties?.r_pct * 100 || 0}%`,
-    30,
-    y
-  )
-  y -= 30
-
-  drawText(page, "Uurlonen:", 30, y, 12)
-  y -= 20
-
-  uurlonen.forEach(u => {
-    drawText(page, `${u.discipline}: € ${u.uurloon}/uur`, 30, y)
-    y -= LINE
-  })
-
-  /*
-  ===========================================================
-  OPSLAAN + PUBLIC URL
+  OPSLAAN – PUBLIC BUCKET
   ===========================================================
   */
   const bytes = await pdf.save()
