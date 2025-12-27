@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js"
+import { TwoJoursWriter } from "../../builder/pdf/TwoJoursWriter.js"
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -37,9 +38,20 @@ export async function handleUploadFiles(task) {
 
     /*
     ============================
+    2JOURS PDF INITIALISEREN
+    ============================
+    - PDF wordt hier AANGEMAAKT
+    - Nog NIET gefinaliseerd
+    */
+    const pdf = await TwoJoursWriter.open(project_id)
+
+    /*
+    ============================
     BESTANDEN REGISTREREN
     ============================
     */
+    const registeredFiles = []
+
     for (const f of files) {
       assert(f.filename, "UPLOAD_FILE_NO_FILENAME")
 
@@ -59,7 +71,25 @@ export async function handleUploadFiles(task) {
       if (insertErr) {
         throw new Error("UPLOAD_FILE_REGISTER_FAILED: " + insertErr.message)
       }
+
+      registeredFiles.push({
+        filename: f.filename,
+        storage_path,
+        uploaded_at: now
+      })
     }
+
+    /*
+    ============================
+    UPLOAD RESULTAAT → PDF
+    ============================
+    */
+    await pdf.writeSection("upload.bestanden", {
+      titel: "Aangeleverde documenten",
+      bestanden: registeredFiles
+    })
+
+    await pdf.save()
 
     /*
     ============================
