@@ -10,10 +10,9 @@ const supabase = createClient(
 ===========================================================
 2JOURS PDF GENERATOR – DEFINITIEF EINDPRODUCT
 ===========================================================
-- GEEN templates
-- GEEN aannames
-- GEEN shortcuts
-- ALLE ketenstappen zichtbaar in PDF
+- Rendert uitsluitend data uit v_calculatie_2jours
+- Crasht nooit op null / lege datasets
+- Executor-veilig
 ===========================================================
 */
 
@@ -25,19 +24,17 @@ const LINE = 12
 const SMALL = 8
 const NORMAL = 10
 const TITLE = 18
-const HOOFDSTUK = 14
-const SUBHOOFDSTUK = 11
 
 function euro(n) {
   return `€ ${Number(n || 0).toFixed(2)}`
 }
 
-function assert(cond, msg) {
-  if (!cond) throw new Error(msg)
-}
-
 function safeArray(v) {
   return Array.isArray(v) ? v : []
+}
+
+function assert(cond, msg) {
+  if (!cond) throw new Error(msg)
 }
 
 export async function generate2joursPdf(project_id) {
@@ -48,26 +45,28 @@ export async function generate2joursPdf(project_id) {
   PROJECT
   ============================
   */
-  const { data: project } = await supabase
+  const { data: project, error: projectErr } = await supabase
     .from("projects")
     .select("*")
     .eq("id", project_id)
     .single()
 
-  assert(project, "PROJECT_NOT_FOUND")
+  if (projectErr || !project) {
+    throw new Error("PROJECT_NOT_FOUND")
+  }
 
   /*
   ============================
-  CALCULATIE (STABU VIEW)
+  CALCULATIE VIEW (ENIGE BRON)
   ============================
   */
   const { data: regelsRaw } = await supabase
     .from("v_calculatie_2jours")
     .select("*")
     .eq("project_id", project_id)
-    .order("hoofdstuk_code")
-    .order("subhoofdstuk_code")
-    .order("code")
+    .order("hoofdstuk_code", { ascending: true })
+    .order("subhoofdstuk_code", { ascending: true })
+    .order("code", { ascending: true })
 
   const regels = safeArray(regelsRaw)
 
@@ -78,6 +77,7 @@ export async function generate2joursPdf(project_id) {
   */
   const { data: filesRaw } =
     await supabase.from("project_files").select("file_name").eq("project_id", project_id)
+
   const files = safeArray(filesRaw)
 
   const { data: scanlogRaw } =
@@ -86,6 +86,7 @@ export async function generate2joursPdf(project_id) {
       .select("*")
       .eq("project_id", project_id)
       .order("created_at", { ascending: true })
+
   const scanlog = safeArray(scanlogRaw)
 
   /*
@@ -96,8 +97,15 @@ export async function generate2joursPdf(project_id) {
   const pdf = await PDFDocument.create()
   const font = await pdf.embedFont(StandardFonts.Helvetica)
 
-  const draw = (page, t, x, y, size = NORMAL) =>
-    page.drawText(String(t ?? ""), { x, y, size, font, color: rgb(0, 0, 0) })
+  const draw = (page, t, x, y, size = NORMAL) => {
+    page.drawText(String(t ?? ""), {
+      x,
+      y,
+      size,
+      font,
+      color: rgb(0, 0, 0)
+    })
+  }
 
   /*
   ===========================================================
@@ -108,7 +116,7 @@ export async function generate2joursPdf(project_id) {
   let y = A4_P.h - MARGIN
 
   draw(page, "2JOURS OFFERTE / CALCULATIE", 140, y, TITLE)
-  y -= 50
+  y -= 40
 
   draw(page, `Project: ${project.naam || ""}`, MARGIN, y)
   y -= LINE
@@ -119,7 +127,41 @@ export async function generate2joursPdf(project_id) {
 
   /*
   ===========================================================
-  CALCULATIE – LIGGEND (STABU STRUCTUUR)
+  UPLOADS
+  ===========================================================
+  */
+  if (files.length > 0) {
+    y -= 20
+    draw(page, "Aangeleverde documenten:", MARGIN, y, 12)
+    y -= LINE
+
+    for (const f of files) {
+      draw(page, `- ${f.file_name}`, MARGIN, y, SMALL)
+      y -= LINE
+    }
+  }
+
+  /*
+  ===========================================================
+  SCANLOG
+  ===========================================================
+  */
+  if (scanlog.length > 0) {
+    page = pdf.addPage([A4_P.w, A4_P.h])
+    y = A4_P.h - MARGIN
+
+    draw(page, "Analyse & Scanlog", MARGIN, y, TITLE)
+    y -= 30
+
+    for (const l of scanlog) {
+      draw(page, `${l.module || ""} → ${l.status || ""}`, MARGIN, y, SMALL)
+      y -= LINE
+    }
+  }
+
+  /*
+  ===========================================================
+  CALCULATIE (LIGGEND)
   ===========================================================
   */
   page = pdf.addPage([A4_L.w, A4_L.h])
@@ -130,7 +172,7 @@ export async function generate2joursPdf(project_id) {
     oms: 70,
     aant: 300,
     eenh: 330,
-    mnorm: 360,
+    norm: 360,
     uren: 395,
     loon: 430,
     prijs: 470,
@@ -142,12 +184,12 @@ export async function generate2joursPdf(project_id) {
     tot: 715
   }
 
-  function header() {
+  const header = () => {
     draw(page, "Code", col.code, y, SMALL)
     draw(page, "Omschrijving", col.oms, y, SMALL)
     draw(page, "Aantal", col.aant, y, SMALL)
     draw(page, "Eenh.", col.eenh, y, SMALL)
-    draw(page, "M.norm", col.mnorm, y, SMALL)
+    draw(page, "Norm", col.norm, y, SMALL)
     draw(page, "Uren", col.uren, y, SMALL)
     draw(page, "Loon", col.loon, y, SMALL)
     draw(page, "Prijs/eh", col.prijs, y, SMALL)
@@ -158,58 +200,11 @@ export async function generate2joursPdf(project_id) {
     y -= LINE
   }
 
-  let currentHoofdstuk = null
-  let currentSubHoofdstuk = null
+  header()
+
   let kostprijs = 0
 
   for (const r of regels) {
-    /* =========================
-       HOOFDSTUK
-    ========================= */
-    if (r.hoofdstuk_code !== currentHoofdstuk) {
-      page = pdf.addPage([A4_L.w, A4_L.h])
-      y = A4_L.h - MARGIN
-
-      draw(
-        page,
-        `${r.hoofdstuk_code} ${r.hoofdstuk_omschrijving || ""}`,
-        MARGIN,
-        y,
-        HOOFDSTUK
-      )
-      y -= 24
-
-      header()
-
-      currentHoofdstuk = r.hoofdstuk_code
-      currentSubHoofdstuk = null
-    }
-
-    /* =========================
-       SUBHOOFDSTUK
-    ========================= */
-    if (r.subhoofdstuk_code && r.subhoofdstuk_code !== currentSubHoofdstuk) {
-      if (y < 80) {
-        page = pdf.addPage([A4_L.w, A4_L.h])
-        y = A4_L.h - MARGIN
-        header()
-      }
-
-      draw(
-        page,
-        `${r.subhoofdstuk_code} ${r.subhoofdstuk_omschrijving || ""}`,
-        MARGIN,
-        y,
-        SUBHOOFDSTUK
-      )
-      y -= 18
-
-      currentSubHoofdstuk = r.subhoofdstuk_code
-    }
-
-    /* =========================
-       REGEL
-    ========================= */
     if (y < 40) {
       page = pdf.addPage([A4_L.w, A4_L.h])
       y = A4_L.h - MARGIN
@@ -223,6 +218,44 @@ export async function generate2joursPdf(project_id) {
     draw(page, r.omschrijving, col.oms, y, SMALL)
     draw(page, r.aantal, col.aant, y, SMALL)
     draw(page, r.eenheid, col.eenh, y, SMALL)
-    draw(page, r.normuren, col.mnorm, y, SMALL)
+    draw(page, r.normuren, col.norm, y, SMALL)
     draw(page, r.uren, col.uren, y, SMALL)
-    draw(page, euro(r.loonkosten), col.lo
+    draw(page, euro(r.loonkosten), col.loon, y, SMALL)
+    draw(page, euro(r.prijs_eenheid), col.prijs, y, SMALL)
+    draw(page, euro(r.materiaalkosten), col.mat, y, SMALL)
+    draw(page, euro(r.overig_algemeen), col.oa, y, SMALL)
+    draw(page, euro(r.stelposten), col.stel, y, SMALL)
+    draw(page, euro(totaal), col.tot, y, SMALL)
+
+    y -= LINE
+  }
+
+  /*
+  ===========================================================
+  OPSLAAN
+  ===========================================================
+  */
+  const bytes = await pdf.save()
+  const path = `${project_id}/calculatie_2jours.pdf`
+
+  await supabase.storage.from("sterkcalc").upload(path, bytes, {
+    upsert: true,
+    contentType: "application/pdf"
+  })
+
+  const pdfUrl =
+    `${process.env.SUPABASE_URL}/storage/v1/object/public/sterkcalc/${path}`
+
+  await supabase
+    .from("projects")
+    .update({ pdf_url: pdfUrl })
+    .eq("id", project_id)
+
+  return {
+    status: "DONE",
+    project_id,
+    regels: regels.length,
+    pdf_url: pdfUrl,
+    kostprijs
+  }
+}
