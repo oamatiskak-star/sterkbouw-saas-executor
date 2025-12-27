@@ -4,11 +4,9 @@ import { runBuilder } from "../builder/index.js"
 import { architectFullUiBuild } from "../actions/architectFullUiBuild.js"
 import { sendTelegram } from "../integrations/telegramSender.js"
 
-// HANDLERS
+// HANDLERS (ALLEEN I/O / CONTEXT)
 import { handleUploadFiles } from "./handlers/uploadFiles.js"
 import { handleProjectScan } from "./handlers/projectScan.js"
-import { handleGenerateStabu } from "./handlers/generateStabu.js"
-import { handleStartRekenwolk } from "./handlers/startRekenwolk.js"
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -17,6 +15,11 @@ const supabase = createClient(
 
 const STRICT_MODE = true
 const TELEGRAM_MODE = true
+
+function log(...args) {
+  // ÉÉN centrale logger → Railway stdout
+  console.log("[EXECUTOR]", ...args)
+}
 
 async function telegramLog(chatId, message) {
   if (!TELEGRAM_MODE || !chatId) return
@@ -61,30 +64,49 @@ export async function runAction(task) {
     payload.project_id ||
     null
 
-  // =========================
-  // ACTIES ZONDER PROJECT
-  // =========================
+  log("TASK_START", {
+    task_id: task.id,
+    action: actionId,
+    project_id
+  })
+
+  /*
+  =========================
+  ACTIES ZONDER PROJECT
+  =========================
+  */
 
   if (actionId === "architect_full_ui_pages_build") {
+    log("BUILDER_UI_START")
     await telegramLog(chatId, "UI build gestart")
-    await architectFullUiBuild(task)
+
+    const res = await architectFullUiBuild(task)
+
     await telegramLog(chatId, "UI build afgerond")
+    log("BUILDER_UI_DONE", res)
+
     return { state: "DONE", action: actionId }
   }
 
-  // =========================
-  // PROJECT VERPLICHT
-  // =========================
+  /*
+  =========================
+  PROJECT VERPLICHT
+  =========================
+  */
 
   if (!project_id) {
     throw new Error("RUNACTION_NO_PROJECT_ID")
   }
 
-  // =========================
-  // 0. UPLOAD FILES
-  // =========================
+  /*
+  =========================
+  1. UPLOAD
+  =========================
+  */
 
-  if (actionId === "upload_files") {
+  if (actionId === "upload" || actionId === "upload_files") {
+    log("UPLOAD_START")
+
     await telegramLog(chatId, "Upload gestart")
 
     await handleUploadFiles({
@@ -94,14 +116,20 @@ export async function runAction(task) {
     })
 
     await telegramLog(chatId, "Upload afgerond")
+    log("UPLOAD_DONE")
+
     return { state: "DONE", action: actionId }
   }
 
-  // =========================
-  // 1. PROJECT SCAN
-  // =========================
+  /*
+  =========================
+  2. PROJECT SCAN
+  =========================
+  */
 
   if (actionId === "project_scan" || actionId === "analysis") {
+    log("PROJECT_SCAN_START")
+
     await telegramLog(chatId, "Projectscan gestart")
 
     await handleProjectScan({
@@ -111,51 +139,41 @@ export async function runAction(task) {
     })
 
     await telegramLog(chatId, "Projectscan afgerond")
+    log("PROJECT_SCAN_DONE")
+
     return { state: "DONE", action: actionId }
   }
 
-  // =========================
-  // 2. STABU GENEREREN
-  // =========================
+  /*
+  =========================
+  3. BUILDER (CALCULATIE / PDF / SYSTEM)
+  =========================
+  */
 
-  if (actionId === "generate_stabu") {
-    await telegramLog(chatId, "STABU gestart")
-
-    await handleGenerateStabu({
-      id: task.id,
-      project_id,
-      payload
-    })
-
-    await telegramLog(chatId, "STABU afgerond")
-    return { state: "DONE", action: actionId }
-  }
-
-  // =========================
-  // 3. REKENWOLK + PDF
-  // =========================
-
-  if (actionId === "start_rekenwolk") {
-    await telegramLog(chatId, "Rekenwolk gestart")
-
-    await handleStartRekenwolk({
-      id: task.id,
-      project_id,
-      payload
-    })
-
-    await telegramLog(chatId, "Rekenwolk afgerond")
-    return { state: "DONE", action: actionId }
-  }
-
-  // =========================
-  // BUILDER FALLBACK
-  // =========================
-
-  return await runBuilder({
-    actionId,
-    taskId: task.id,
-    project_id,
-    ...payload
+  log("BUILDER_DISPATCH_START", {
+    action: actionId,
+    project_id
   })
+
+  try {
+    const result = await runBuilder({
+      actionId,
+      taskId: task.id,
+      project_id,
+      ...payload
+    })
+
+    log("BUILDER_DISPATCH_DONE", {
+      action: actionId,
+      result
+    })
+
+    return result
+  } catch (err) {
+    log("BUILDER_DISPATCH_ERROR", {
+      action: actionId,
+      error: err.message
+    })
+    throw err
+  }
 }
