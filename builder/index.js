@@ -48,6 +48,9 @@ export async function runBuilder(payload = {}) {
       case "derive_quantities":
         return (await import("./actions/DERIVE_QUANTITIES.js")).default(payload)
 
+      case "create_calculatie":
+        return (await import("./actions/CREATE_CALCULATIE.js")).default(payload)
+
       case "start_rekenwolk":
         return (await import("./actions/START_REKENWOLK.js")).default(payload)
 
