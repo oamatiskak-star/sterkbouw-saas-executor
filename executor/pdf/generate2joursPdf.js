@@ -1,5 +1,3 @@
-// executor/pdf/generate2joursPdf.js
-
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib"
 import { createClient } from "@supabase/supabase-js"
 
@@ -36,6 +34,10 @@ function assert(cond, msg) {
   if (!cond) throw new Error(msg)
 }
 
+function safeArray(v) {
+  return Array.isArray(v) ? v : []
+}
+
 export async function generate2joursPdf(project_id) {
   assert(project_id, "NO_PROJECT_ID")
 
@@ -44,20 +46,22 @@ export async function generate2joursPdf(project_id) {
   PROJECT
   ============================
   */
-  const { data: project } = await supabase
+  const { data: project, error: projErr } = await supabase
     .from("projects")
     .select("*")
     .eq("id", project_id)
     .single()
 
-  assert(project, "PROJECT_NOT_FOUND")
+  if (projErr || !project) {
+    throw new Error("PROJECT_NOT_FOUND")
+  }
 
   /*
   ============================
   CALCULATIE (STABU VIEW)
   ============================
   */
-  const { data: regels = [] } = await supabase
+  const { data: regelsRaw } = await supabase
     .from("v_calculatie_2jours")
     .select("*")
     .eq("project_id", project_id)
@@ -65,29 +69,35 @@ export async function generate2joursPdf(project_id) {
     .order("subhoofdstuk_code")
     .order("code")
 
+  const regels = safeArray(regelsRaw)
+
   /*
   ============================
   BIJGEGEVENS
   ============================
   */
-  const { data: stelposten = [] } =
+  const { data: stelpostenRaw } =
     await supabase.from("calculatie_stelposten").select("*").eq("project_id", project_id)
+  const stelposten = safeArray(stelpostenRaw)
 
   const { data: correcties } =
-    await supabase.from("calculatie_correcties").select("*").eq("project_id", project_id).single()
+    await supabase.from("calculatie_correcties").select("*").eq("project_id", project_id).maybeSingle()
 
-  const { data: uurlonen = [] } =
+  const { data: uurlonenRaw } =
     await supabase.from("calculatie_uurloon_overrides").select("*").eq("project_id", project_id)
+  const uurlonen = safeArray(uurlonenRaw)
 
-  const { data: files = [] } =
+  const { data: filesRaw } =
     await supabase.from("project_files").select("file_name").eq("project_id", project_id)
+  const files = safeArray(filesRaw)
 
-  const { data: scanlog = [] } =
+  const { data: scanlogRaw } =
     await supabase
       .from("project_initialization_log")
       .select("*")
       .eq("project_id", project_id)
       .order("created_at", { ascending: true })
+  const scanlog = safeArray(scanlogRaw)
 
   /*
   ============================
@@ -108,7 +118,7 @@ export async function generate2joursPdf(project_id) {
   let page = pdf.addPage([A4_P.w, A4_P.h])
   let y = A4_P.h - MARGIN
 
-  draw(page, "2JOURS OFF ERTE / CALCULATIE", 140, y, TITLE)
+  draw(page, "2JOURS OFFERTE / CALCULATIE", 140, y, TITLE)
   y -= 50
 
   draw(page, `Project: ${project.naam || ""}`, MARGIN, y)
@@ -147,19 +157,19 @@ export async function generate2joursPdf(project_id) {
   UPLOAD OVERZICHT
   ===========================================================
   */
-  if (files.length) {
+  if (files.length > 0) {
     y -= 40
     draw(page, "Aangeleverde documenten", MARGIN, y, 14)
     y -= 20
 
-    files.forEach(f => {
+    for (const f of files) {
       if (y < 60) {
         page = pdf.addPage([A4_P.w, A4_P.h])
         y = A4_P.h - MARGIN
       }
       draw(page, `- ${f.file_name}`, MARGIN, y, SMALL)
       y -= LINE
-    })
+    }
   }
 
   /*
@@ -167,21 +177,21 @@ export async function generate2joursPdf(project_id) {
   SCAN LOG
   ===========================================================
   */
-  if (scanlog.length) {
+  if (scanlog.length > 0) {
     page = pdf.addPage([A4_P.w, A4_P.h])
     y = A4_P.h - MARGIN
 
     draw(page, "Analyse & Scanlog", MARGIN, y, TITLE)
     y -= 30
 
-    scanlog.forEach(l => {
+    for (const l of scanlog) {
       if (y < 60) {
         page = pdf.addPage([A4_P.w, A4_P.h])
         y = A4_P.h - MARGIN
       }
-      draw(page, `${l.module} → ${l.status}`, MARGIN, y, SMALL)
+      draw(page, `${l.module || ""} → ${l.status || ""}`, MARGIN, y, SMALL)
       y -= LINE
-    })
+    }
   }
 
   /*
@@ -258,33 +268,6 @@ export async function generate2joursPdf(project_id) {
 
     y -= LINE
   }
-
-  /*
-  ===========================================================
-  STELPOSTEN / OPSLAGEN / UURLONEN
-  ===========================================================
-  */
-  page = pdf.addPage([A4_L.w, A4_L.h])
-  y = A4_L.h - MARGIN
-
-  draw(page, "Aannames & Opslagen", 30, y, 14)
-  y -= 30
-
-  draw(
-    page,
-    `AK ${correcties?.ak_pct * 100 || 0}% | ABK ${correcties?.abk_pct * 100 || 0}% | W ${correcties?.w_pct * 100 || 0}% | R ${correcties?.r_pct * 100 || 0}%`,
-    30,
-    y
-  )
-
-  y -= 40
-  draw(page, "Uurlonen", 30, y, 12)
-  y -= 20
-
-  uurlonen.forEach(u => {
-    draw(page, `${u.discipline}: € ${u.uurloon}/uur`, 30, y)
-    y -= LINE
-  })
 
   /*
   ===========================================================
