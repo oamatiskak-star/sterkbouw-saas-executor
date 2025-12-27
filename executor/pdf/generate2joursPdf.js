@@ -212,16 +212,20 @@ export async function generate2joursPdf(project_id) {
 
   /*
   ===========================================================
-  OPSLAAN
+  OPSLAAN (GEFIXT PAD)
   ===========================================================
   */
   const bytes = await pdf.save()
-  const path = `${project_id}/calculatie_2jours.pdf`
 
-  await supabase.storage.from("sterkcalc").upload(path, bytes, {
-    upsert: true,
-    contentType: "application/pdf"
-  })
+  // ⬇⬇⬇ DIT IS DE ENIGE FUNCTIONELE WIJZIGING ⬇⬇⬇
+  const path = `projects/${project_id}/calculatie_2jours.pdf`
+
+  await supabase.storage
+    .from("sterkcalc")
+    .upload(path, bytes, {
+      upsert: true,
+      contentType: "application/pdf"
+    })
 
   const publicUrl =
     `${process.env.SUPABASE_URL}/storage/v1/object/public/sterkcalc/${path}`
