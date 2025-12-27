@@ -1,4 +1,8 @@
-// actions/generate_2jours_pdf.js
+// executor/pdf/generate2joursPdf.js
+//
+// INTERNE PDF GENERATOR
+// Wordt aangeroepen door runAction()
+// PDF = system of record
 
 import fs from "fs"
 import path from "path"
@@ -16,9 +20,6 @@ const supabase = createClient(
 // =========================
 const TEMPLATE_BUCKET = "sterkcalc"
 const TEMPLATE_PATH = "templates/2jours_layout_template_v1.xlsx"
-
-// RGB rood = dynamisch
-const DYNAMIC_RED = { r: 255, g: 0, b: 0 }
 
 // =========================
 // HELPERS
@@ -38,10 +39,9 @@ function euro(n) {
 }
 
 // =========================
-// MAIN ACTION
+// MAIN FUNCTION
 // =========================
-export default async function generate2joursPdf(task) {
-  const project_id = task.project_id
+export async function generate2joursPdf(project_id) {
   assert(project_id, "NO_PROJECT_ID")
 
   // =========================
@@ -90,18 +90,17 @@ export default async function generate2joursPdf(task) {
   // RENDER SHEETS
   // =========================
 
-  // ---------- VOORBLAD ----------
+  // VOORBLAD
   renderSheet({
     pdf,
     font,
     sheet: workbook.Sheets["Voorblad"],
     pageSize: "A4_P",
     project,
-    regels,
-    pageIndex: 1
+    regels
   })
 
-  // ---------- VOORBLAD CALCULATIE ----------
+  // VOORBLAD CALCULATIE
   renderSheet({
     pdf,
     font,
@@ -111,7 +110,7 @@ export default async function generate2joursPdf(task) {
     regels
   })
 
-  // ---------- CALCULATIE REGELS ----------
+  // CALCULATIE REGELS
   renderCalculatieRegels({
     pdf,
     font,
@@ -119,15 +118,14 @@ export default async function generate2joursPdf(task) {
     regels
   })
 
-  // ---------- STAARTBLAD ----------
+  // STAARTBLAD
   renderSheet({
     pdf,
     font,
     sheet: workbook.Sheets["Staartblad"],
     pageSize: "A4_L",
     project,
-    regels,
-    totals: true
+    regels
   })
 
   // =========================
@@ -136,10 +134,13 @@ export default async function generate2joursPdf(task) {
   const pdfBytes = await pdf.save()
   const targetPath = `${project_id}/offerte_2jours.pdf`
 
-  await supabase.storage.from("sterkcalc").upload(targetPath, pdfBytes, {
-    upsert: true,
-    contentType: "application/pdf"
-  })
+  await supabase
+    .storage
+    .from("sterkcalc")
+    .upload(targetPath, pdfBytes, {
+      upsert: true,
+      contentType: "application/pdf"
+    })
 
   const publicUrl =
     `${process.env.SUPABASE_URL}/storage/v1/object/public/sterkcalc/${targetPath}`
@@ -168,9 +169,9 @@ function renderSheet({ pdf, font, sheet, pageSize, project, regels }) {
 
   for (const addr in sheet) {
     if (addr.startsWith("!")) continue
+
     const cell = sheet[addr]
     const text = cell.v
-
     if (text == null) continue
 
     const x = 40 + (cell.c || 0) * 60
@@ -179,7 +180,7 @@ function renderSheet({ pdf, font, sheet, pageSize, project, regels }) {
     let value = text
 
     if (isRed(cell)) {
-      value = resolveDynamicValue(text, project, regels)
+      value = resolveDynamicValue(text, project)
     }
 
     page.drawText(String(value), {
@@ -195,7 +196,7 @@ function renderSheet({ pdf, font, sheet, pageSize, project, regels }) {
 // =========================
 // CALCULATIE REGELS RENDER
 // =========================
-function renderCalculatieRegels({ pdf, font, sheet, regels }) {
+function renderCalculatieRegels({ pdf, font, regels }) {
   let page = pdf.addPage([842, 595])
   let y = 555
 
@@ -216,7 +217,7 @@ function renderCalculatieRegels({ pdf, font, sheet, regels }) {
 // =========================
 // DYNAMIC VALUE RESOLVER
 // =========================
-function resolveDynamicValue(text, project, regels) {
+function resolveDynamicValue(text, project) {
   const t = String(text).toLowerCase()
 
   if (t.includes("naam opdrachtgever")) return project.opdrachtgever
