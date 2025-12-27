@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js"
+import { TwoJoursWriter } from "../../builder/pdf/TwoJoursWriter.js"
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -107,30 +108,35 @@ export async function handleGenerateStabu(task) {
 
     /*
     ============================
-    STABU REGELS
+    STABU BASIS (INHOUD)
+    ============================
+    - titels
+    - omschrijvingen
+    - normen / prijzen
+    - GEEN project-specifieke hoeveelheden
     ============================
     */
     const regels =
       type === "nieuwbouw"
         ? [
-            { omschrijving: "grondwerk en fundering", prijs: 65000 },
-            { omschrijving: "casco en draagconstructie", prijs: 145000 },
-            { omschrijving: "gevels en kozijnen", prijs: 92000 },
-            { omschrijving: "daken en isolatie", prijs: 54000 },
-            { omschrijving: "installaties e en w", prijs: 78000 },
-            { omschrijving: "afbouw en oplevering", prijs: 98000 }
+            { code: "21.10", omschrijving: "Grondwerk en fundering", norm: "per m²", prijs: 65000 },
+            { code: "22.20", omschrijving: "Casco en draagconstructie", norm: "per m²", prijs: 145000 },
+            { code: "24.30", omschrijving: "Gevels en kozijnen", norm: "per m²", prijs: 92000 },
+            { code: "31.40", omschrijving: "Daken en isolatie", norm: "per m²", prijs: 54000 },
+            { code: "41.10", omschrijving: "Installaties E en W", norm: "per woning", prijs: 78000 },
+            { code: "51.90", omschrijving: "Afbouw en oplevering", norm: "per woning", prijs: 98000 }
           ]
         : [
-            { omschrijving: "sloop en stripwerk", prijs: 42000 },
-            { omschrijving: "constructieve aanpassingen", prijs: 68000 },
-            { omschrijving: "gevel en isolatie", prijs: 51000 },
-            { omschrijving: "installaties e en w", prijs: 73000 },
-            { omschrijving: "afbouw en herindeling", prijs: 88000 }
+            { code: "12.10", omschrijving: "Sloop en stripwerk", norm: "per m²", prijs: 42000 },
+            { code: "21.30", omschrijving: "Constructieve aanpassingen", norm: "per m²", prijs: 68000 },
+            { code: "24.30", omschrijving: "Gevel en isolatie", norm: "per m²", prijs: 51000 },
+            { code: "41.10", omschrijving: "Installaties E en W", norm: "per woning", prijs: 73000 },
+            { code: "51.90", omschrijving: "Afbouw en herindeling", norm: "per woning", prijs: 88000 }
           ]
 
     /*
     ============================
-    INSERT STABU
+    INSERT STABU RESULT REGELS
     ============================
     */
     const { data: inserted, error: insertErr } = await supabase
@@ -138,8 +144,10 @@ export async function handleGenerateStabu(task) {
       .insert(
         regels.map(r => ({
           project_id,
+          stabu_code: r.code,
           omschrijving: r.omschrijving,
-          hoeveelheid: 1,
+          norm: r.norm,
+          hoeveelheid: null,        // wordt gevuld door start_rekenwolk
           eenheidsprijs: r.prijs,
           btw_tarief: 21
         }))
@@ -150,6 +158,25 @@ export async function handleGenerateStabu(task) {
     if (!inserted || inserted.length === 0) {
       throw new Error("stabu_insert_empty")
     }
+
+    /*
+    ============================
+    2JOURS PDF – STABU BASIS
+    ============================
+    */
+    const pdf = await TwoJoursWriter.open(project_id)
+
+    await pdf.writeSection("stabu.basis", {
+      titel: "STABU calculatiebasis",
+      regels: regels.map(r => ({
+        code: r.code,
+        omschrijving: r.omschrijving,
+        norm: r.norm,
+        eenheidsprijs: r.prijs
+      }))
+    })
+
+    await pdf.save()
 
     /*
     ============================
@@ -166,8 +193,7 @@ export async function handleGenerateStabu(task) {
 
     /*
     ============================
-    VOLGENDE STAP: REKENWOLK
-    (GUARDED)
+    VOLGENDE STAP: START_REKENWOLK
     ============================
     */
     const { data: existingNext } = await supabase
