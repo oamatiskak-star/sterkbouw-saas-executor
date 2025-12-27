@@ -2,21 +2,21 @@ import { registerUnknownCommand } from "../utils/registerUnknownCommand.js"
 
 /*
 ================================================
-BUILDER ENTRY – DEFINITIEVE VOLGORDE (SAMENGEVOEGD)
+BUILDER ENTRY – DEFINITIEVE UITGEBREIDE VOLGORDE
 ================================================
-VOLGORDE (LOGISCH EN INHOUDELIJK):
+
+AFGEDWONGEN VOLGORDE:
 1. upload
-2. project_scan
-3. generate_pdf
-   └─ intern:
-      - generate_stabu
-      - start_rekenwolk
-      - direct wegschrijven naar 2jours PDF
-================================================
-- PDF = drager
-- Geen tussenstate
-- Geen losse rekenwolk-output
-- Alles foutloos in één flow
+2. generate_2jours_pdf
+3. project_scan
+4. generate_stabu
+5. start_rekenwolk
+
+REGELS:
+- 2jours PDF is ALTIJD de drager
+- Elke stap schrijft zijn resultaat direct weg in de PDF
+- Geen losse outputs, geen tijdelijke staten
+- Builder bewaakt de volgorde, acties zijn idempotent
 ================================================
 */
 
@@ -45,29 +45,79 @@ export async function runBuilder(payload = {}) {
 
       /*
       ========================
-      AANLEVERING / CONTEXT
+      1. UPLOAD
       ========================
+      - Bestanden uploaden
+      - Metadata registreren
+      - PDF-context voorbereiden
       */
 
       case "upload":
-        return (await import("./actions/UPLOAD.js")).default(payload)
-
-      case "project_scan":
-        return (await import("./actions/PROJECT_SCAN.js")).default(payload)
+        return (await import("./actions/UPLOAD.js")).default({
+          ...payload,
+          pdf_mode: "2jours"
+        })
 
       /*
       ========================
-      CALCULATIE = PDF (SAMENGEVOEGD)
+      2. GENERATE 2JOURS PDF
       ========================
-      generate_pdf doet INTERN:
-      - generate_stabu
-      - start_rekenwolk
-      - direct schrijven naar 2jours PDF
+      - Initieert of opent bestaande 2jours PDF
+      - Zet basisdocumentstructuur
       */
 
       case "generate_pdf":
       case "generate_2jours_pdf":
-        return (await import("./actions/GENERATE_2JOURS_PDF.js")).default(payload)
+        return (await import("./actions/GENERATE_2JOURS_PDF.js")).default({
+          ...payload,
+          pdf_mode: "2jours",
+          pdf_role: "carrier"
+        })
+
+      /*
+      ========================
+      3. PROJECT SCAN
+      ========================
+      - Analyse tekeningen / documenten
+      - Schrijft bevindingen DIRECT in 2jours PDF
+      */
+
+      case "project_scan":
+        return (await import("./actions/PROJECT_SCAN.js")).default({
+          ...payload,
+          write_to_pdf: true,
+          pdf_mode: "2jours"
+        })
+
+      /*
+      ========================
+      4. GENERATE STABU
+      ========================
+      - Opbouw STABU-structuur
+      - Regels direct wegschrijven in 2jours PDF
+      */
+
+      case "generate_stabu":
+        return (await import("./actions/GENERATE_STABU.js")).default({
+          ...payload,
+          write_to_pdf: true,
+          pdf_mode: "2jours"
+        })
+
+      /*
+      ========================
+      5. START REKENWOLK
+      ========================
+      - Rekent STABU + projectdata door
+      - ALLE resultaten direct naar 2jours PDF
+      */
+
+      case "start_rekenwolk":
+        return (await import("./actions/START_REKENWOLK.js")).default({
+          ...payload,
+          write_to_pdf: true,
+          pdf_mode: "2jours"
+        })
 
       /*
       ========================
