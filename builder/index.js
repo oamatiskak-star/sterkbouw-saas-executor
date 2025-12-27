@@ -2,12 +2,21 @@ import { registerUnknownCommand } from "../utils/registerUnknownCommand.js"
 
 /*
 ================================================
-BUILDER ENTRY – FREEZE / SYSTEM OF RECORD
+BUILDER ENTRY – DEFINITIEVE VOLGORDE (SAMENGEVOEGD)
 ================================================
-- ALLE system / monteur / frontend / backend acties
-- SQL-gedreven (executor_tasks / builder_tasks)
-- Geen aannames
-- Geen stil falen
+VOLGORDE (LOGISCH EN INHOUDELIJK):
+1. upload
+2. project_scan
+3. generate_pdf
+   └─ intern:
+      - generate_stabu
+      - start_rekenwolk
+      - direct wegschrijven naar 2jours PDF
+================================================
+- PDF = drager
+- Geen tussenstate
+- Geen losse rekenwolk-output
+- Alles foutloos in één flow
 ================================================
 */
 
@@ -36,41 +45,36 @@ export async function runBuilder(payload = {}) {
 
       /*
       ========================
-      CORE CALCULATIE KETEN
+      AANLEVERING / CONTEXT
       ========================
       */
+
+      case "upload":
+        return (await import("./actions/UPLOAD.js")).default(payload)
+
       case "project_scan":
         return (await import("./actions/PROJECT_SCAN.js")).default(payload)
 
-      case "generate_stabu":
-        return (await import("./actions/GENERATE_STABU.js")).default(payload)
+      /*
+      ========================
+      CALCULATIE = PDF (SAMENGEVOEGD)
+      ========================
+      generate_pdf doet INTERN:
+      - generate_stabu
+      - start_rekenwolk
+      - direct schrijven naar 2jours PDF
+      */
 
-      case "derive_quantities":
-        return (await import("./actions/DERIVE_QUANTITIES.js")).default(payload)
-
-      case "create_calculatie":
-        return (await import("./actions/CREATE_CALCULATIE.js")).default(payload)
-
-      case "start_rekenwolk":
-        return (await import("./actions/START_REKENWOLK.js")).default(payload)
-
-      case "installaties_e":
-        return (await import("./actions/INSTALLATIES_E.js")).default(payload)
-
-      case "installaties_w":
-        return (await import("./actions/INSTALLATIES_W.js")).default(payload)
-
-      case "planning":
-        return (await import("./actions/PLANNING.js")).default(payload)
-
-      case "rapportage":
-        return (await import("./actions/RAPPORTAGE.js")).default(payload)
+      case "generate_pdf":
+      case "generate_2jours_pdf":
+        return (await import("./actions/GENERATE_2JOURS_PDF.js")).default(payload)
 
       /*
       ========================
-      SYSTEM / MONTEUR (CRUCIAAL)
+      SYSTEM / MONTEUR
       ========================
       */
+
       case "system_repair_full":
       case "repair_full_system":
         return (await import("./actions/SYSTEM_REPAIR_FULL.js")).default(payload)
@@ -95,6 +99,7 @@ export async function runBuilder(payload = {}) {
       FRONTEND (AUTOMATISCH)
       ========================
       */
+
       case "frontend_install_tabler":
         return (await import("./frontend/installTabler.js")).installTabler(payload)
 
@@ -115,9 +120,10 @@ export async function runBuilder(payload = {}) {
 
       /*
       ========================
-      STATUS / HEALTH (NO-OP)
+      STATUS / HEALTH
       ========================
       */
+
       case "system_status":
       case "system_health":
       case "system_post_deploy_verify":
@@ -128,6 +134,7 @@ export async function runBuilder(payload = {}) {
       FALLBACK
       ========================
       */
+
       default:
         await registerUnknownCommand("builder", action)
         return { action, state: "IGNORED" }
