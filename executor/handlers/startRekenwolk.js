@@ -6,15 +6,6 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 )
 
-/*
-===========================================================
-REKENWOLK – DEFINITIEF
-- vult STABU-regels met project-specifieke data
-- schrijft ALLES in bestaande 2jours-PDF
-- finaliseert PDF
-===========================================================
-*/
-
 const AK_PCT = 0.08
 const ABK_PCT = 0.06
 const WR_PCT = 0.08
@@ -27,59 +18,110 @@ export async function handleStartRekenwolk(task) {
   const now = new Date().toISOString()
 
   try {
-    /*
-    ============================
-    TASK → RUNNING
-    ============================
-    */
+    /* TASK → RUNNING */
     await supabase
       .from("executor_tasks")
-      .update({
-        status: "running",
-        started_at: now
-      })
+      .update({ status: "running", started_at: now })
       .eq("id", taskId)
 
     /*
-    ============================
-    STABU REGELS OPHALEN
-    ============================
+    =================================================
+    1. STABU BASIS OPHALEN (POSTEN + NORMEN + PRIJZEN)
+    =================================================
     */
-    const { data: regels, error } = await supabase
-      .from("stabu_result_regels")
-      .select("*")
-      .eq("project_id", project_id)
+    const { data: posten, error } = await supabase
+      .from("stabu_posten")
+      .select(`
+        id,
+        code,
+        omschrijving,
+        eenheid,
+        normuren,
+        materiaalprijs,
+        arbeidsprijs
+      `)
 
     if (error) throw error
-    if (!regels || regels.length === 0) {
-      throw new Error("NO_STABU_REGELS")
+    if (!posten || posten.length === 0) {
+      throw new Error("NO_STABU_POSTEN")
     }
 
     /*
-    ============================
-    REKENWOLK – PROJECT INVULLING
-    (DIT WORDT LATER VERVANGEN
-     DOOR ECHTE SCAN-LOGICA)
-    ============================
+    =================================================
+    2. RESULTREGELS OPBOUWEN
+    =================================================
     */
+    const resultRegels = []
+    const calculatieRegels = []
+
     let kostprijs = 0
 
-    const ingevuldeRegels = regels.map(r => {
-      const hoeveelheid = r.hoeveelheid ?? 1
-      const subtotaal = hoeveelheid * (r.eenheidsprijs || 0)
-      kostprijs += subtotaal
+    for (const p of posten) {
+      const hoeveelheid = 1
+      const loonkosten = (p.normuren || 0) * (p.arbeidsprijs || 0)
+      const materiaalkosten = (p.materiaalprijs || 0) * hoeveelheid
+      const totaal = loonkosten + materiaalkosten
 
-      return {
-        id: r.id,
-        stabu_code: r.stabu_code,
-        omschrijving: r.omschrijving,
-        norm: r.norm,
+      kostprijs += totaal
+
+      resultRegels.push({
+        project_id,
+        stabu_id: p.id,
+        stabu_code: p.code,
+        omschrijving: p.omschrijving,
         hoeveelheid,
-        eenheidsprijs: r.eenheidsprijs,
-        subtotaal
-      }
-    })
+        eenheid: p.eenheid,
+        normuren: p.normuren,
+        loonkosten,
+        materiaalprijs: p.materiaalprijs,
+        totaal
+      })
 
+      calculatieRegels.push({
+        project_id,
+        stabu_id: p.id,
+        hoeveelheid,
+        eenheid: p.eenheid,
+        normuren: p.normuren,
+        loonkosten,
+        materiaalprijs: p.materiaalprijs,
+        totaal
+      })
+    }
+
+    /*
+    =================================================
+    3. OPSLAAN STABU_RESULT_REGELS
+    =================================================
+    */
+    await supabase
+      .from("stabu_result_regels")
+      .delete()
+      .eq("project_id", project_id)
+
+    await supabase
+      .from("stabu_result_regels")
+      .insert(resultRegels)
+
+    /*
+    =================================================
+    4. OPSLAAN CALCULATIE_REGELS
+    =================================================
+    */
+    await supabase
+      .from("calculatie_regels")
+      .delete()
+      .eq("project_id", project_id)
+
+    await supabase
+      .from("calculatie_regels")
+      .insert(calculatieRegels)
+
+    /*
+    =================================================
+    5. TOTALEN
+    =================================================
+    */
     const verkoopprijs =
       kostprijs +
       kostprijs * AK_PCT +
@@ -87,15 +129,15 @@ export async function handleStartRekenwolk(task) {
       kostprijs * WR_PCT
 
     /*
-    ============================
-    2JOURS PDF – INVULLEN + AFRONDEN
-    ============================
+    =================================================
+    6. PDF VULLEN (NU PAS)
+    =================================================
     */
     const pdf = await TwoJoursWriter.open(project_id)
 
-    await pdf.writeSection("stabu.invulling", {
-      titel: "Project-specifieke invulling",
-      regels: ingevuldeRegels,
+    await pdf.writeSection("stabu.rekenwolk", {
+      titel: "STABU Calculatie",
+      regels: resultRegels,
       totalen: {
         kostprijs,
         verkoopprijs
@@ -104,29 +146,15 @@ export async function handleStartRekenwolk(task) {
 
     const pdfUrl = await pdf.finalize()
 
-    /*
-    ============================
-    PROJECT PDF LINK
-    ============================
-    */
     await supabase
       .from("projects")
-      .update({
-        pdf_url: pdfUrl
-      })
+      .update({ pdf_url: pdfUrl })
       .eq("id", project_id)
 
-    /*
-    ============================
-    TASK → COMPLETED
-    ============================
-    */
+    /* TASK → COMPLETED */
     await supabase
       .from("executor_tasks")
-      .update({
-        status: "completed",
-        finished_at: now
-      })
+      .update({ status: "completed", finished_at: now })
       .eq("id", taskId)
 
   } catch (err) {
