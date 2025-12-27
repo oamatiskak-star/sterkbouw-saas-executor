@@ -1,7 +1,7 @@
 import { createClient } from "@supabase/supabase-js"
 import { sendTelegram } from "../integrations/telegramSender.js"
 
-// PDF = SYSTEM OF RECORD
+// PDF = SYSTEM OF RECORD (INTERNE FUNCTIE)
 import { generate2joursPdf } from "./pdf/generate2joursPdf.js"
 
 // PURE HANDLERS (ALLEEN DATA)
@@ -109,7 +109,7 @@ export async function runAction(task) {
       payload
     })
 
-    // ⬇️ HARD: PDF AANMAKEN + UPLOAD SECTIE
+    // HARD CONTRACT: PDF MOET DIRECT BESTAAN
     await generate2joursPdf(project_id)
 
     log("UPLOAD_DONE + PDF_CREATED")
@@ -118,7 +118,7 @@ export async function runAction(task) {
 
   /*
   ==================================================
-  2. PROJECT SCAN
+  2. PROJECT SCAN / ANALYSE
   ==================================================
   */
   if (action === "project_scan" || action === "analysis") {
@@ -129,7 +129,7 @@ export async function runAction(task) {
       payload
     })
 
-    // ⬇️ HARD: PDF BIJWERKEN MET SCANRESULTAAT
+    // PDF BIJWERKEN MET SCANRESULTAAT
     await generate2joursPdf(project_id)
 
     log("PROJECT_SCAN_DONE + PDF_UPDATED")
@@ -149,7 +149,7 @@ export async function runAction(task) {
       payload
     })
 
-    // ⬇️ HARD: STABU → PDF
+    // STABU → PDF
     await generate2joursPdf(project_id)
 
     log("GENERATE_STABU_DONE + PDF_UPDATED")
@@ -169,7 +169,7 @@ export async function runAction(task) {
       payload
     })
 
-    // ⬇️ HARD: FINAL PDF
+    // FINAL PDF
     await generate2joursPdf(project_id)
 
     log("REKENWOLK_DONE + FINAL_PDF")
@@ -178,7 +178,7 @@ export async function runAction(task) {
 
   /*
   ==================================================
-  ONBEKENDE ACTIE = STOP
+  ONBEKENDE ACTIE = HARD STOP
   ==================================================
   */
   throw new Error(`UNSUPPORTED_ACTION: ${action}`)
