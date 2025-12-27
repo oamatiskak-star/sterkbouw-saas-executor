@@ -20,8 +20,6 @@ export async function handleUploadFiles(task) {
   const files = Array.isArray(payload.files) ? payload.files : []
   const now = new Date().toISOString()
 
-  assert(files.length > 0, "UPLOAD_NO_FILES")
-
   try {
     /*
     ============================
@@ -40,10 +38,37 @@ export async function handleUploadFiles(task) {
     ============================
     2JOURS PDF INITIALISEREN
     ============================
-    - PDF wordt hier AANGEMAAKT
-    - Nog NIET gefinaliseerd
+    - PDF wordt altijd aangemaakt
     */
     const pdf = await TwoJoursWriter.open(project_id)
+
+    /*
+    ============================
+    GEEN BESTANDEN = GELDIGE STATE
+    ============================
+    */
+    if (files.length === 0) {
+      await pdf.writeSection("upload.bestanden", {
+        titel: "Aangeleverde documenten",
+        bestanden: []
+      })
+
+      await pdf.save()
+
+      await supabase
+        .from("executor_tasks")
+        .update({
+          status: "completed",
+          finished_at: now
+        })
+        .eq("id", taskId)
+
+      return {
+        state: "DONE",
+        project_id,
+        files_registered: 0
+      }
+    }
 
     /*
     ============================
