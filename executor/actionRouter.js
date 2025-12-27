@@ -1,40 +1,41 @@
 // executor/actionRouter.js
+
 import { createClient } from "@supabase/supabase-js"
-import { runBuilder } from "../builder/index.js"
-import { architectFullUiBuild } from "../actions/architectFullUiBuild.js"
 import { sendTelegram } from "../integrations/telegramSender.js"
 
-// HANDLERS (ALLEEN I/O / CONTEXT)
+// PDF = SYSTEM OF RECORD
+import { generate2joursPdf } from "./pdf/generate2joursPdf.js"
+
+// PURE HANDLERS (ALLEEN DATA)
 import { handleUploadFiles } from "./handlers/uploadFiles.js"
 import { handleProjectScan } from "./handlers/projectScan.js"
+import { handleGenerateStabu } from "./handlers/generateStabu.js"
+import { handleStartRekenwolk } from "./handlers/startRekenwolk.js"
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
 )
 
-const STRICT_MODE = true
-const TELEGRAM_MODE = true
-
 function log(...args) {
-  // ÉÉN centrale logger → Railway stdout
   console.log("[EXECUTOR]", ...args)
 }
 
-async function telegramLog(chatId, message) {
-  if (!TELEGRAM_MODE || !chatId) return
-  try {
-    await sendTelegram(chatId, message)
-  } catch (_) {}
+function normalize(raw) {
+  if (!raw || typeof raw !== "string") return null
+  return raw.toLowerCase().replace(/[^a-z0-9_]+/g, "_")
 }
 
-function normalizeActionId(raw) {
-  if (!raw || typeof raw !== "string") return null
-  return raw
-    .toLowerCase()
-    .replace(/[^a-z0-9_]+/g, "_")
-    .replace(/^_|_$/g, "")
-}
+/*
+====================================================
+HARD CONTRACT – NO EXCEPTIONS
+====================================================
+1. PDF bestaat DIRECT na upload
+2. Elke task schrijft naar DEZELFDE PDF
+3. Geen enkele stap mag door zonder PDF-write
+4. PDF is leidend, database volgt
+====================================================
+*/
 
 export async function runAction(task) {
   if (!task || !task.id) {
@@ -44,19 +45,16 @@ export async function runAction(task) {
   const payload =
     task.payload && typeof task.payload === "object" ? task.payload : {}
 
-  const chatId = payload.chat_id || null
-
-  const rawAction =
+  const action = normalize(
     task.action ||
-    payload.actionId ||
     task.action_id ||
-    task.type ||
+    payload.actionId ||
+    payload.action ||
     null
+  )
 
-  const actionId = normalizeActionId(rawAction)
-
-  if (STRICT_MODE && !actionId) {
-    throw new Error("ACTION_ID_MISSING")
+  if (!action) {
+    throw new Error("ACTION_MISSING")
   }
 
   const project_id =
@@ -64,50 +62,22 @@ export async function runAction(task) {
     payload.project_id ||
     null
 
+  if (!project_id) {
+    throw new Error("PROJECT_ID_MISSING")
+  }
+
   log("TASK_START", {
-    task_id: task.id,
-    action: actionId,
+    id: task.id,
+    action,
     project_id
   })
 
   /*
-  =========================
-  ACTIES ZONDER PROJECT
-  =========================
+  ==================================================
+  1. UPLOAD FILES
+  ==================================================
   */
-
-  if (actionId === "architect_full_ui_pages_build") {
-    log("BUILDER_UI_START")
-    await telegramLog(chatId, "UI build gestart")
-
-    const res = await architectFullUiBuild(task)
-
-    await telegramLog(chatId, "UI build afgerond")
-    log("BUILDER_UI_DONE", res)
-
-    return { state: "DONE", action: actionId }
-  }
-
-  /*
-  =========================
-  PROJECT VERPLICHT
-  =========================
-  */
-
-  if (!project_id) {
-    throw new Error("RUNACTION_NO_PROJECT_ID")
-  }
-
-  /*
-  =========================
-  1. UPLOAD
-  =========================
-  */
-
-  if (actionId === "upload" || actionId === "upload_files") {
-    log("UPLOAD_START")
-
-    await telegramLog(chatId, "Upload gestart")
+  if (action === "upload" || action === "upload_files") {
 
     await handleUploadFiles({
       id: task.id,
@@ -115,22 +85,19 @@ export async function runAction(task) {
       payload
     })
 
-    await telegramLog(chatId, "Upload afgerond")
-    log("UPLOAD_DONE")
+    // ⬇️ HARD: PDF AANMAKEN + UPLOAD SECTIE
+    await generate2joursPdf(project_id)
 
-    return { state: "DONE", action: actionId }
+    log("UPLOAD_DONE + PDF_CREATED")
+    return { state: "DONE", action }
   }
 
   /*
-  =========================
+  ==================================================
   2. PROJECT SCAN
-  =========================
+  ==================================================
   */
-
-  if (actionId === "project_scan" || actionId === "analysis") {
-    log("PROJECT_SCAN_START")
-
-    await telegramLog(chatId, "Projectscan gestart")
+  if (action === "project_scan" || action === "analysis") {
 
     await handleProjectScan({
       id: task.id,
@@ -138,42 +105,57 @@ export async function runAction(task) {
       payload
     })
 
-    await telegramLog(chatId, "Projectscan afgerond")
-    log("PROJECT_SCAN_DONE")
+    // ⬇️ HARD: PDF BIJWERKEN MET SCANRESULTAAT
+    await generate2joursPdf(project_id)
 
-    return { state: "DONE", action: actionId }
+    log("PROJECT_SCAN_DONE + PDF_UPDATED")
+    return { state: "DONE", action }
   }
 
   /*
-  =========================
-  3. BUILDER (CALCULATIE / PDF / SYSTEM)
-  =========================
+  ==================================================
+  3. GENERATE STABU
+  ==================================================
   */
+  if (action === "generate_stabu") {
 
-  log("BUILDER_DISPATCH_START", {
-    action: actionId,
-    project_id
-  })
-
-  try {
-    const result = await runBuilder({
-      actionId,
-      taskId: task.id,
+    await handleGenerateStabu({
+      id: task.id,
       project_id,
-      ...payload
+      payload
     })
 
-    log("BUILDER_DISPATCH_DONE", {
-      action: actionId,
-      result
-    })
+    // ⬇️ HARD: STABU → PDF
+    await generate2joursPdf(project_id)
 
-    return result
-  } catch (err) {
-    log("BUILDER_DISPATCH_ERROR", {
-      action: actionId,
-      error: err.message
-    })
-    throw err
+    log("GENERATE_STABU_DONE + PDF_UPDATED")
+    return { state: "DONE", action }
   }
+
+  /*
+  ==================================================
+  4. START REKENWOLK (EINDPRODUCT)
+  ==================================================
+  */
+  if (action === "start_rekenwolk") {
+
+    await handleStartRekenwolk({
+      id: task.id,
+      project_id,
+      payload
+    })
+
+    // ⬇️ HARD: FINAL PDF
+    await generate2joursPdf(project_id)
+
+    log("REKENWOLK_DONE + FINAL_PDF")
+    return { state: "DONE", action }
+  }
+
+  /*
+  ==================================================
+  ONBEKENDE ACTIE = STOP
+  ==================================================
+  */
+  throw new Error(`UNSUPPORTED_ACTION: ${action}`)
 }
