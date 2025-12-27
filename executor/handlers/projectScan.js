@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js"
 import { sendTelegram } from "../../integrations/telegramSender.js"
+import { TwoJoursWriter } from "../../builder/pdf/TwoJoursWriter.js"
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -9,8 +10,8 @@ const supabase = createClient(
 /*
 ===========================================================
 PROJECT SCAN – DEFINITIEVE KETENSCHAKEL
+- schrijft scanresultaten in bestaande 2jours-PDF
 - markeert analyse voltooid
-- logt scan
 - triggert exact 1x generate_stabu
 ===========================================================
 */
@@ -53,7 +54,7 @@ export async function handleProjectScan(task) {
 
     /*
     ============================
-    INIT LOG
+    PROJECT INIT LOG
     ============================
     */
     await supabase
@@ -65,6 +66,29 @@ export async function handleProjectScan(task) {
         started_at: now,
         finished_at: now
       })
+
+    /*
+    ============================
+    2JOURS PDF – SCAN RESULTATEN
+    ============================
+    - bestaande PDF openen
+    - scan-uitkomsten toevoegen
+    */
+    const pdf = await TwoJoursWriter.open(project_id)
+
+    const scanResultaat = {
+      uitgevoerd_op: now,
+      bron: "project_scan",
+      samenvatting: "Projectscan succesvol uitgevoerd",
+      opmerkingen: payload.scan_notes || null
+    }
+
+    await pdf.writeSection("scan.resultaat", {
+      titel: "Scanresultaten",
+      resultaat: scanResultaat
+    })
+
+    await pdf.save()
 
     if (chatId) {
       await sendTelegram(chatId, "Projectscan afgerond")
