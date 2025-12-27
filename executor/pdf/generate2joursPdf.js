@@ -1,5 +1,3 @@
-// executor/pdf/generate2joursPdf.js
-
 import xlsx from "xlsx"
 import { PDFDocument, rgb, StandardFonts } from "pdf-lib"
 import { createClient } from "@supabase/supabase-js"
