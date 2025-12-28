@@ -60,7 +60,7 @@ export async function generate2joursPdf(project_id) {
     .eq("project_id", project_id)
     .order("stabu_code")
 
-  assert(Array.isArray(regels), "CALCULATIE_REGELS_INVALID")
+ const hasRegels = Array.isArray(regels) && regels.length > 0
 
   /*
   ============================
