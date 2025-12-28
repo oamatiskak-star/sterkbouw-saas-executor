@@ -1,47 +1,108 @@
 version: '3.8'
 
 services:
-  executor:
-    build: .
-    container_name: executor-service
+  # Node.js AO Executor (bestaande + uitgebreid)
+  ao-executor:
+    build:
+      context: .
+      dockerfile: Dockerfile.single  # Gebruik single-stage voor dev
+    container_name: sterkbouw-ao-executor
     environment:
+      - PORT=3000
+      - NODE_ENV=development
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+      - BACKEND_URL=${BACKEND_URL}
+      - AI_ENGINE_URL=http://ai-engine:8000
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_KEY=${SUPABASE_KEY}
+    ports:
+      - "3000:3000"
+    volumes:
+      - .:/app
+      - /app/node_modules
+      - ./logs:/app/logs
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/ping', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - sterkbouw-network
+    command: ["node", "ao.js"]
+
+  # Python AI Engine (nieuwe service)
+  ai-engine:
+    build:
+      context: .
+      dockerfile: Dockerfile.ai
+    container_name: sterkbouw-ai-engine
+    environment:
+      - PORT=8000
+      - NODE_ENV=development
       - SUPABASE_URL=${SUPABASE_URL}
       - SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_KEY}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - GEMINI_API_KEY=${GEMINI_API_KEY}
-      - LOG_LEVEL=INFO
+      - LOG_LEVEL=DEBUG
+      - REDIS_URL=redis://redis:6379
+    ports:
+      - "8000:8000"
     volumes:
+      - ./src:/ai-engine/src
       - ./data/uploads:/tmp/uploads
       - ./data/processed:/tmp/processed
       - ./data/cache:/tmp/cache
-      - ./logs:/app/logs
-    ports:
-      - "8000:8000"
+      - ./ai_logs:/app/logs
+    depends_on:
+      - redis
     healthcheck:
-      test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
+      test: ["CMD", "python", "-c", "import requests; exit(0 if requests.get('http://localhost:8000/health').status_code == 200 else 1)"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 5s
+      start_period: 10s
     restart: unless-stopped
     networks:
-      - executor-network
+      - sterkbouw-network
+    command: ["python", "-m", "src.main"]
 
+  # Redis voor caching en queue
   redis:
     image: redis:7-alpine
-    container_name: executor-redis
+    container_name: sterkbouw-redis
     ports:
       - "6379:6379"
     volumes:
       - redis-data:/data
     command: redis-server --appendonly yes
     networks:
-      - executor-network
+      - sterkbouw-network
+
+  # PostgreSQL voor AI Engine data (optioneel)
+  postgres:
+    image: postgres:15-alpine
+    container_name: sterkbouw-ai-db
+    environment:
+      - POSTGRES_USER=aiengine
+      - POSTGRES_PASSWORD=aiengine_pass
+      - POSTGRES_DB=ai_engine
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - sterkbouw-network
 
 networks:
-  executor-network:
+  sterkbouw-network:
     driver: bridge
 
 volumes:
   redis-data:
+  postgres-data:
+  uploads-data:
+  processed-data:
