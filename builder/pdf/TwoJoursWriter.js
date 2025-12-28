@@ -1,7 +1,5 @@
+import { PDFDocument, rgb, StandardFonts } from "pdf-lib"
 import { createClient } from "@supabase/supabase-js"
-import pkg from "pdf-lib"
-
-const { PDFDocument, rgb, StandardFonts } = pkg
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -10,224 +8,176 @@ const supabase = createClient(
 
 /*
 ===========================================================
-2JOURS PDF WRITER – DEFINITIEF
+2JOURS PDF WRITER – PRODUCTIEVERSIE
+- PNG = vaste achtergrond (NOOIT schalen)
+- calculatieregels = pagineren
+- ondersteunt 10 → 10.000 regels
 ===========================================================
 */
 
+const BUCKET = "sterkcalc"
+const TEMPLATE = {
+  voorblad: "templates/2jours_voorblad.png",
+  calculatie: "templates/2jours_calculatie.png",
+  staartblad: "templates/2jours_staartblad.png"
+}
+
+const A4_L = [842, 595]
+
+const PAGE = {
+  startY: 515,
+  endY: 95,
+  rowHeight: 12
+}
+
+const COL = {
+  code: 35,
+  omschrijving: 85,
+  aantal: 330,
+  eenheid: 360,
+  norm: 395,
+  uren: 430,
+  loonkosten: 480,
+  materiaal: 535,
+  totaal: 615
+}
+
 export class TwoJoursWriter {
-  constructor(project_id, pdf, font) {
+  constructor(project_id, pdf, font, images) {
     this.project_id = project_id
     this.pdf = pdf
     this.font = font
-    this.sections = {}
-    this.pages = {
-      cover: null,
-      opdracht: null,
-      calculatie: []
-    }
+    this.images = images
   }
 
+  /*
+  ============================
+  OPEN
+  ============================
+  */
   static async open(project_id) {
-    const path = `${project_id}/calculatie_2jours.pdf`
-
-    let pdf = null
-    let isExisting = false
-
-    try {
-      const { data } = await supabase.storage
-        .from("sterkcalc")
-        .download(path)
-
-      if (data) {
-        const bytes = await data.arrayBuffer()
-        pdf = await PDFDocument.load(bytes)
-        isExisting = true
-      }
-    } catch (_) {}
-
-    if (!pdf) {
-      pdf = await PDFDocument.create()
-    }
-
+    const pdf = await PDFDocument.create()
     const font = await pdf.embedFont(StandardFonts.Helvetica)
-    const writer = new TwoJoursWriter(project_id, pdf, font)
 
-    if (isExisting) {
-      writer._mapExistingPages()
-    } else {
-      writer._ensureBasePages()
+    const images = {}
+    for (const key of Object.keys(TEMPLATE)) {
+      const { data } = await supabase.storage
+        .from(BUCKET)
+        .download(TEMPLATE[key])
+
+      const bytes = await data.arrayBuffer()
+      images[key] = await pdf.embedPng(bytes)
     }
 
-    return writer
+    return new TwoJoursWriter(project_id, pdf, font, images)
   }
 
-  _mapExistingPages() {
-    const pages = this.pdf.getPages()
-
-    this.pages.cover = pages[0] || null
-    this.pages.opdracht = pages[1] || null
-    this.pages.calculatie = pages.slice(2)
-
-    if (this.pages.calculatie.length === 0) {
-      this.pages.calculatie.push(this.pdf.addPage([842, 595]))
-    }
-  }
-
-  _ensureBasePages() {
-    this.pages.cover = this.pdf.addPage([595, 842])
-    this._drawCover()
-
-    this.pages.opdracht = this.pdf.addPage([595, 842])
-    this._drawOpdracht()
-
-    this.pages.calculatie.push(this.pdf.addPage([842, 595]))
-  }
-
-  _drawCover() {
-    const p = this.pages.cover
-    p.drawText("2jours Offerte", {
-      x: 200,
-      y: 780,
-      size: 20,
-      font: this.font
+  /*
+  ============================
+  VOORBLAD
+  ============================
+  */
+  drawVoorblad(project) {
+    const page = this.pdf.addPage(A4_L)
+    page.drawImage(this.images.voorblad, {
+      x: 0,
+      y: 0,
+      width: A4_L[0],
+      height: A4_L[1]
     })
-    p.drawText(`Project: ${this.project_id}`, {
-      x: 50,
-      y: 720,
-      size: 12,
-      font: this.font
-    })
+
+    const t = (v) => String(v || "")
+
+    page.drawText(t(project.opdrachtgever), { x: 85, y: 445, size: 9, font: this.font })
+    page.drawText(t(project.naam), { x: 85, y: 415, size: 9, font: this.font })
+    page.drawText(t(project.plaatsnaam), { x: 85, y: 385, size: 9, font: this.font })
   }
 
-  _drawOpdracht() {
-    const p = this.pages.opdracht
-    p.drawText("Opdrachtbevestiging", {
-      x: 50,
-      y: 780,
-      size: 16,
-      font: this.font
-    })
-  }
+  /*
+  ============================
+  CALCULATIE REGELS (PAGINERING)
+  ============================
+  */
+  drawCalculatieRegels(regels, totalen) {
+    if (!Array.isArray(regels)) regels = []
 
-  async writeSection(key, payload) {
-    this.sections[key] = payload
-  }
+    const maxRows = Math.floor(
+      (PAGE.startY - PAGE.endY) / PAGE.rowHeight
+    )
 
-  _renderCalculatie() {
-    let page = this.pages.calculatie[0]
-    let y = 550
+    let page
+    let y = PAGE.startY
+    let row = 0
 
-    const draw = (t, x, y, size = 9) =>
-      page.drawText(String(t), {
-        x,
-        y,
-        size,
-        font: this.font,
-        color: rgb(0, 0, 0)
+    const newPage = () => {
+      page = this.pdf.addPage(A4_L)
+      page.drawImage(this.images.calculatie, {
+        x: 0,
+        y: 0,
+        width: A4_L[0],
+        height: A4_L[1]
       })
-
-    /*
-    ============================
-    UPLOAD
-    ============================
-    */
-    if (this.sections["upload.bestanden"]) {
-      draw("Aangeleverde documenten", 40, y, 11)
-      y -= 16
-      for (const b of this.sections["upload.bestanden"].bestanden || []) {
-        draw(`- ${b.filename}`, 50, y)
-        y -= 12
-      }
-      y -= 20
+      y = PAGE.startY
+      row = 0
     }
 
-    /*
-    ============================
-    SCAN
-    ============================
-    */
-    if (this.sections["scan.resultaat"]) {
-      draw("Scanresultaten", 40, y, 11)
-      y -= 16
-      draw(this.sections["scan.resultaat"].resultaat.samenvatting || "", 50, y)
-      y -= 20
+    newPage()
+
+    for (const r of regels) {
+      if (row >= maxRows) newPage()
+
+      page.drawText(String(r.stabu_code || ""), { x: COL.code, y, size: 8, font: this.font })
+      page.drawText(String(r.omschrijving || ""), { x: COL.omschrijving, y, size: 8, font: this.font })
+      page.drawText(String(r.hoeveelheid ?? ""), { x: COL.aantal, y, size: 8, font: this.font })
+      page.drawText(String(r.eenheid || ""), { x: COL.eenheid, y, size: 8, font: this.font })
+      page.drawText(String(r.normuren ?? ""), { x: COL.norm, y, size: 8, font: this.font })
+      page.drawText(String(r.uren ?? ""), { x: COL.uren, y, size: 8, font: this.font })
+      page.drawText(`€ ${Number(r.loonkosten || 0).toFixed(2)}`, { x: COL.loonkosten, y, size: 8, font: this.font })
+      page.drawText(`€ ${Number(r.materiaalprijs || 0).toFixed(2)}`, { x: COL.materiaal, y, size: 8, font: this.font })
+      page.drawText(`€ ${Number(r.totaal || 0).toFixed(2)}`, { x: COL.totaal, y, size: 8, font: this.font })
+
+      y -= PAGE.rowHeight
+      row++
     }
 
-    /*
-    ============================
-    STABU BASIS
-    ============================
-    */
-    if (this.sections["stabu.basis"]) {
-      draw("STABU basis", 40, y, 11)
-      y -= 16
-      for (const r of this.sections["stabu.basis"].regels || []) {
-        draw(`${r.code} – ${r.omschrijving}`, 50, y)
-        y -= 12
-      }
-      y -= 20
-    }
-
-    /*
-    ============================
-    STABU REKENWOLK (FIX)
-    ============================
-    */
-    if (this.sections["stabu.rekenwolk"]) {
-      draw("STABU Calculatie", 40, y, 11)
-      y -= 16
-
-      for (const r of this.sections["stabu.rekenwolk"].regels || []) {
-        draw(
-          `${r.stabu_code} | ${r.omschrijving} | ${r.hoeveelheid} × ${r.materiaalprijs} = ${r.totaal}`,
-          50,
-          y
-        )
-        y -= 12
-        if (y < 40) {
-          page = this.pdf.addPage([842, 595])
-          y = 550
-        }
-      }
-
-      y -= 16
-      const totalen = this.sections["stabu.rekenwolk"].totalen || {}
-      draw(`Kostprijs: ${totalen.kostprijs ?? ""}`, 50, y)
-      y -= 12
-      draw(`Verkoopprijs: ${totalen.verkoopprijs ?? ""}`, 50, y)
+    if (totalen) {
+      page.drawText(`€ ${Number(totalen.kostprijs || 0).toFixed(2)}`, {
+        x: COL.totaal,
+        y: 85,
+        size: 9,
+        font: this.font
+      })
     }
   }
 
+  /*
+  ============================
+  STAARTBLAD
+  ============================
+  */
+  drawStaartblad() {
+    const page = this.pdf.addPage(A4_L)
+    page.drawImage(this.images.staartblad, {
+      x: 0,
+      y: 0,
+      width: A4_L[0],
+      height: A4_L[1]
+    })
+  }
+
+  /*
+  ============================
+  SAVE
+  ============================
+  */
   async save() {
-    this._renderCalculatie()
     const bytes = await this.pdf.save()
+    const path = `${this.project_id}/offerte_2jours.pdf`
 
     await supabase.storage
-      .from("sterkcalc")
-      .upload(
-        `${this.project_id}/calculatie_2jours.pdf`,
-        bytes,
-        { upsert: true, contentType: "application/pdf" }
-      )
-  }
+      .from(BUCKET)
+      .upload(path, bytes, { upsert: true, contentType: "application/pdf" })
 
-  async finalize() {
-    this._renderCalculatie()
-    const bytes = await this.pdf.save()
-
-    const path = `${this.project_id}/calculatie_2jours.pdf`
-
-    await supabase.storage
-      .from("sterkcalc")
-      .upload(path, bytes, {
-        upsert: true,
-        contentType: "application/pdf"
-      })
-
-    const { data } = await supabase.storage
-      .from("sterkcalc")
-      .createSignedUrl(path, 3600)
-
-    return data?.signedUrl || null
+    return `${process.env.SUPABASE_URL}/storage/v1/object/public/${BUCKET}/${path}`
   }
 }
