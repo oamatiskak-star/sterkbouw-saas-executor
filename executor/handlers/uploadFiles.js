@@ -10,6 +10,45 @@ function assert(cond, msg) {
   if (!cond) throw new Error(msg)
 }
 
+/*
+=====================================
+HULPFUNCTIE: CALCULATIE BOOTSTRAP
+- Wordt exact 1x aangemaakt
+- Nodig vóór elke PDF-write
+=====================================
+*/
+async function ensureCalculatie(project_id) {
+  const { data: existing, error } = await supabase
+    .from("calculaties")
+    .select("id")
+    .eq("project_id", project_id)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  if (error) {
+    throw new Error("CALCULATIE_LOOKUP_FAILED: " + error.message)
+  }
+
+  if (existing) return existing.id
+
+  const { data: created, error: insertErr } = await supabase
+    .from("calculaties")
+    .insert({
+      project_id,
+      workflow_status: "initialized",
+      created_at: new Date().toISOString()
+    })
+    .select("id")
+    .single()
+
+  if (insertErr) {
+    throw new Error("CALCULATIE_CREATE_FAILED: " + insertErr.message)
+  }
+
+  return created.id
+}
+
 export async function handleUploadFiles(task) {
   assert(task && task.id, "UPLOAD_NO_TASK")
   assert(task.project_id || task.payload?.project_id, "UPLOAD_NO_PROJECT_ID")
@@ -36,9 +75,15 @@ export async function handleUploadFiles(task) {
 
     /*
     ============================
+    CALCULATIE GARANTEREN
+    ============================
+    */
+    await ensureCalculatie(project_id)
+
+    /*
+    ============================
     2JOURS PDF INITIALISEREN
     ============================
-    - PDF wordt altijd aangemaakt
     */
     const pdf = await TwoJoursWriter.open(project_id)
 
