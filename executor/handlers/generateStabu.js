@@ -1,4 +1,3 @@
-// executor/handlers/generateStabu.js - GECORRIGEERDE VERSIE MET JUISTE KOLOMNAMEN
 import { createClient } from "@supabase/supabase-js"
 
 const supabase = createClient(
@@ -158,29 +157,35 @@ export async function handleGenerateStabu(task) {
       .eq("project_id", project_id)
 
     const calculatieRegels = basisPosten.map((post, index) => {
-      const loonkosten = (post.normuren || 0) * 55
-      const materiaalprijs = (post.prijs_eenh || 0) * 0.6
+      const loonkostenPerEenheid = (post.normuren || 0) * 55
+      const materiaalprijsPerEenheid = (post.prijs_eenh || 0) * 0.6
       const totaal = (post.prijs_eenh || 0) * (post.hoeveelheid || 1)
+      const loonkostenTotaal = loonkostenPerEenheid * (post.hoeveelheid || 1)
+      const materiaalkostenTotaal = materiaalprijsPerEenheid * (post.hoeveelheid || 1)
       
       return {
         project_id,
         calculatie_id: calculatieId,
-        stabu_code: post.code,
+        stabu_id: null,
+        code: post.code,
         omschrijving: post.omschrijving,
         eenheid: post.eenheid,
+        aantal: post.hoeveelheid,
+        eenh: post.eenheid,
         hoeveelheid: post.hoeveelheid,
         normuren: post.normuren,
+        m_norm: post.normuren,
         uren: (post.normuren || 0) * (post.hoeveelheid || 1),
-        loonkosten: loonkosten * (post.hoeveelheid || 1),
         prijs_eenh: post.prijs_eenh,
-        materiaalprijs: materiaalprijs * (post.hoeveelheid || 1),
-        oa_perc: 8,
+        arbeidsprijs: loonkostenPerEenheid,
+        loonkosten: loonkostenTotaal,
+        materiaalprijs: materiaalprijsPerEenheid,
+        materiaalkosten: materiaalkostenTotaal,
+        oa_eenh: 8,
         oa: totaal * 0.08,
         stelp_eenh: 0,
         stelposten: 0,
-        totaal: totaal,
-        volgorde: index + 1,
-        created_at: now
+        totaal: totaal
       }
     })
 
@@ -188,7 +193,7 @@ export async function handleGenerateStabu(task) {
     const { data: insertedRegels, error: insertError } = await supabase
       .from("calculatie_regels")
       .insert(calculatieRegels)
-      .select("id, stabu_code, totaal")
+      .select("id, code, totaal")
 
     if (insertError) {
       console.error("[GENERATE_STABU] Insert error:", insertError)
@@ -200,7 +205,7 @@ export async function handleGenerateStabu(task) {
     const totalen = calculatieRegels.reduce((acc, regel) => ({
       kostprijs: (acc.kostprijs || 0) + (regel.totaal || 0),
       loonkosten: (acc.loonkosten || 0) + (regel.loonkosten || 0),
-      materiaal: (acc.materiaal || 0) + (regel.materiaalprijs || 0),
+      materiaal: (acc.materiaal || 0) + (regel.materiaalkosten || 0),
       overhead: (acc.overhead || 0) + (regel.oa || 0)
     }), {})
 
