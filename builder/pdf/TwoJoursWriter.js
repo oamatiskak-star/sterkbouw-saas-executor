@@ -37,10 +37,11 @@ export class TwoJoursWriter {
   ============================
   */
   static async open(project_id) {
-    // check of pdf al bestaat in storage
     const path = `${project_id}/calculatie_2jours.pdf`
 
-    let pdf
+    let pdf = null
+    let isExisting = false
+
     try {
       const { data } = await supabase.storage
         .from("sterkcalc")
@@ -49,6 +50,7 @@ export class TwoJoursWriter {
       if (data) {
         const bytes = await data.arrayBuffer()
         pdf = await PDFDocument.load(bytes)
+        isExisting = true
       }
     } catch (_) {}
 
@@ -59,30 +61,51 @@ export class TwoJoursWriter {
     const font = await pdf.embedFont(StandardFonts.Helvetica)
     const writer = new TwoJoursWriter(project_id, pdf, font)
 
-    writer._ensureBasePages()
+    if (isExisting) {
+      writer._mapExistingPages()
+    } else {
+      writer._ensureBasePages()
+    }
+
     return writer
   }
 
   /*
   ============================
-  BASIS PAGINA’S
+  MAP BESTAANDE PAGINA’S
   ============================
   */
-  _ensureBasePages() {
-    if (!this.pages.cover) {
-      this.pages.cover = this.pdf.addPage([595, 842]) // portrait
-      this._drawCover()
-    }
+  _mapExistingPages() {
+    const pages = this.pdf.getPages()
 
-    if (!this.pages.opdracht) {
-      this.pages.opdracht = this.pdf.addPage([595, 842]) // portrait
-      this._drawOpdracht()
+    this.pages.cover = pages[0] || null
+    this.pages.opdracht = pages[1] || null
+
+    this.pages.calculatie = []
+    for (let i = 2; i < pages.length; i++) {
+      this.pages.calculatie.push(pages[i])
     }
 
     if (this.pages.calculatie.length === 0) {
-      const page = this.pdf.addPage([842, 595]) // landscape
+      const page = this.pdf.addPage([842, 595])
       this.pages.calculatie.push(page)
     }
+  }
+
+  /*
+  ============================
+  BASIS PAGINA’S (NIEUW)
+  ============================
+  */
+  _ensureBasePages() {
+    this.pages.cover = this.pdf.addPage([595, 842])
+    this._drawCover()
+
+    this.pages.opdracht = this.pdf.addPage([595, 842])
+    this._drawOpdracht()
+
+    const page = this.pdf.addPage([842, 595])
+    this.pages.calculatie.push(page)
   }
 
   _drawCover() {
@@ -127,7 +150,7 @@ export class TwoJoursWriter {
 
   /*
   ============================
-  RENDER CALCULATIE SECTIES
+  RENDER CALCULATIE
   ============================
   */
   _renderCalculatie() {
@@ -199,7 +222,7 @@ export class TwoJoursWriter {
 
   /*
   ============================
-  OPSLAAN ZONDER AFRONDEN
+  OPSLAAN
   ============================
   */
   async save() {
