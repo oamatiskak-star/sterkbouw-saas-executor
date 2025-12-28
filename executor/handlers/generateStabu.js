@@ -1,4 +1,3 @@
-// executor/handlers/generateStabu.js - GECORRIGEERDE VERSIE
 import { createClient } from "@supabase/supabase-js"
 
 const supabase = createClient(
@@ -83,31 +82,6 @@ export async function handleGenerateStabu(task) {
   const now = new Date().toISOString()
 
   try {
-    /*
-    ============================
-    LOCK: GEEN DUBBELE RUN
-    ============================
-    */
-    const { data: running } = await supabase
-      .from("executor_tasks")
-      .select("id")
-      .eq("project_id", project_id)
-      .eq("action", "generate_stabu")
-      .eq("status", "running")
-      .maybeSingle()
-
-    if (running) {
-      console.log("[GENERATE_STABU] Already running, skipping:", running.id)
-      await supabase
-        .from("executor_tasks")
-        .update({
-          status: "skipped",
-          finished_at: now
-        })
-        .eq("id", taskId)
-      return
-    }
-
     /*
     ============================
     TASK → RUNNING
@@ -200,10 +174,14 @@ export async function handleGenerateStabu(task) {
     ============================
     */
     console.log("[GENERATE_STABU] Cleaning old calculatie_regels")
-    await supabase
+    const { error: deleteError } = await supabase
       .from("calculatie_regels")
       .delete()
       .eq("project_id", project_id)
+
+    if (deleteError) {
+      console.warn("[GENERATE_STABU] Could not delete old regels:", deleteError.message)
+    }
 
     /*
     ============================
@@ -265,7 +243,7 @@ export async function handleGenerateStabu(task) {
     console.log("[GENERATE_STABU] Calculated totalen:", totalen)
 
     // Sla totalen op
-    await supabase
+    const { error: totalenError } = await supabase
       .from("calculatie_totalen")
       .upsert({
         project_id,
@@ -281,6 +259,10 @@ export async function handleGenerateStabu(task) {
         updated_at: now
       }, { onConflict: 'project_id,calculatie_id' })
 
+    if (totalenError) {
+      console.warn("[GENERATE_STABU] Could not save totalen:", totalenError.message)
+    }
+
     /*
     ============================
     UPDATE PROJECT MET CALCULATIE INFO
@@ -290,8 +272,7 @@ export async function handleGenerateStabu(task) {
       .from("projects")
       .update({
         calculatie_status: true,
-        calculatie_generated_at: now,
-        updated_at: now
+        calculatie_generated_at: now
       })
       .eq("id", project_id)
 
