@@ -11,8 +11,7 @@ const supabase = createClient(
 2JOURS PDF GENERATOR – DEFINITIEF
 - PNG achtergrond leidend
 - Alle kolommen gemapt
-- Afkappen binnen kolombreedte
-- Multipage calculatie
+- Multipage (100–4000+ regels)
 ===========================================================
 */
 
@@ -31,11 +30,6 @@ function euro(n) {
   return `€ ${Number(n || 0).toFixed(2)}`
 }
 
-/*
-===========================================================
-TEKST AFKAPPEN BINNEN KOLOMBREEDTE
-===========================================================
-*/
 function drawClampedText(page, font, text, x, y, maxWidth, size = 8) {
   if (!text) return
   let s = String(text)
@@ -47,10 +41,10 @@ function drawClampedText(page, font, text, x, y, maxWidth, size = 8) {
 
 /*
 ===========================================================
-MAIN
+NAMED EXPORT (VERPLICHT)
 ===========================================================
 */
-export default async function generate2joursPdf(task) {
+export async function generate2joursPdf(task) {
   assert(task, "TASK_MISSING")
 
   const project_id =
@@ -75,13 +69,13 @@ export default async function generate2joursPdf(task) {
 
   assert(project, "PROJECT_NOT_FOUND")
 
-  const { data: regelsRaw, error: regelsErr } = await supabase
+  const { data: regelsRaw, error } = await supabase
     .from("v_calculatie_2jours")
     .select("*")
     .eq("project_id", project_id)
     .order("code")
 
-  if (regelsErr) throw new Error("CALCULATIE_REGELS_INVALID")
+  if (error) throw new Error("CALCULATIE_REGELS_INVALID")
 
   const regels = Array.isArray(regelsRaw) ? regelsRaw : []
 
@@ -95,7 +89,7 @@ export default async function generate2joursPdf(task) {
 
   /*
   ============================
-  TEMPLATE URLS
+  TEMPLATES
   ============================
   */
   const base =
@@ -107,7 +101,7 @@ export default async function generate2joursPdf(task) {
 
   /*
   ============================
-  PAGINA 1 – VOORBLAD
+  VOORBLAD
   ============================
   */
   {
@@ -130,8 +124,7 @@ export default async function generate2joursPdf(task) {
         x: 60,
         y,
         size: 10,
-        font,
-        color: rgb(0, 0, 0)
+        font
       })
       y -= lh
     }
@@ -167,8 +160,8 @@ export default async function generate2joursPdf(task) {
     totaal:      { x: 810, w: 60 }
   }
 
-  let page = null
-  let y = PAGE.startY
+  let page
+  let y
 
   async function newCalcPage() {
     page = pdf.addPage([PAGE.width, PAGE.height])
@@ -189,20 +182,20 @@ export default async function generate2joursPdf(task) {
       await newCalcPage()
     }
 
-    drawClampedText(page, font, r.code,           COL.code.x,        y, COL.code.w)
-    drawClampedText(page, font, r.omschrijving,  COL.omschrijving.x,y, COL.omschrijving.w)
-    drawClampedText(page, font, r.aantal,         COL.aantal.x,      y, COL.aantal.w)
-    drawClampedText(page, font, r.eenheid,        COL.eenheid.x,     y, COL.eenheid.w)
-    drawClampedText(page, font, r.norm,           COL.norm.x,        y, COL.norm.w)
-    drawClampedText(page, font, r.uren,           COL.uren.x,        y, COL.uren.w)
-    drawClampedText(page, font, euro(r.loonkosten), COL.loonkosten.x,y, COL.loonkosten.w)
-    drawClampedText(page, font, euro(r.prijs_eenh), COL.prijs.x,     y, COL.prijs.w)
-    drawClampedText(page, font, euro(r.materiaal_eenh), COL.materiaal.x,y, COL.materiaal.w)
-    drawClampedText(page, font, r.oa_perc,        COL.oa_perc.x,     y, COL.oa_perc.w)
-    drawClampedText(page, font, euro(r.oa),       COL.oa.x,          y, COL.oa.w)
-    drawClampedText(page, font, euro(r.stelp_eenh),COL.stelp_prijs.x,y, COL.stelp_prijs.w)
-    drawClampedText(page, font, euro(r.stelposten),COL.stelposten.x, y, COL.stelposten.w)
-    drawClampedText(page, font, euro(r.totaal),   COL.totaal.x,      y, COL.totaal.w)
+    drawClampedText(page, font, r.code, COL.code.x, y, COL.code.w)
+    drawClampedText(page, font, r.omschrijving, COL.omschrijving.x, y, COL.omschrijving.w)
+    drawClampedText(page, font, r.aantal, COL.aantal.x, y, COL.aantal.w)
+    drawClampedText(page, font, r.eenheid, COL.eenheid.x, y, COL.eenheid.w)
+    drawClampedText(page, font, r.norm, COL.norm.x, y, COL.norm.w)
+    drawClampedText(page, font, r.uren, COL.uren.x, y, COL.uren.w)
+    drawClampedText(page, font, euro(r.loonkosten), COL.loonkosten.x, y, COL.loonkosten.w)
+    drawClampedText(page, font, euro(r.prijs_eenh), COL.prijs.x, y, COL.prijs.w)
+    drawClampedText(page, font, euro(r.materiaal_eenh), COL.materiaal.x, y, COL.materiaal.w)
+    drawClampedText(page, font, r.oa_perc, COL.oa_perc.x, y, COL.oa_perc.w)
+    drawClampedText(page, font, euro(r.oa), COL.oa.x, y, COL.oa.w)
+    drawClampedText(page, font, euro(r.stelp_eenh), COL.stelp_prijs.x, y, COL.stelp_prijs.w)
+    drawClampedText(page, font, euro(r.stelposten), COL.stelposten.x, y, COL.stelposten.w)
+    drawClampedText(page, font, euro(r.totaal), COL.totaal.x, y, COL.totaal.w)
 
     y -= PAGE.rowH
   }
