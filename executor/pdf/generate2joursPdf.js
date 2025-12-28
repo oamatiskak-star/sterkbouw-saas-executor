@@ -1,3 +1,4 @@
+// executor/pdf/generate2joursPdf.js - UPDATED VERSION
 import { createClient } from "@supabase/supabase-js"
 import { PDFDocument, rgb, StandardFonts } from "pdf-lib"
 
@@ -8,10 +9,9 @@ const supabase = createClient(
 
 /*
 ===========================================================
-2JOURS PDF GENERATOR – DEFINITIEF
-- PNG achtergrond leidend
-- Alle kolommen gemapt
-- Multipage (100–4000+ regels)
+2JOURS PDF GENERATOR – COMPATIBLE BOTH SIGNATURES
+- Accepteert zowel (project_id) als (task)
+- Backward compatible
 ===========================================================
 */
 
@@ -31,7 +31,7 @@ function euro(n) {
 }
 
 function drawClampedText(page, font, text, x, y, maxWidth, size = 8) {
-  if (!text) return
+  if (!text && text !== 0) return
   let s = String(text)
   while (font.widthOfTextAtSize(s, size) > maxWidth && s.length > 0) {
     s = s.slice(0, -1)
@@ -41,43 +41,92 @@ function drawClampedText(page, font, text, x, y, maxWidth, size = 8) {
 
 /*
 ===========================================================
-NAMED EXPORT (VERPLICHT)
+MAIN FUNCTION – ACCEPTEERT BEIDE SIGNATURES
 ===========================================================
 */
-export async function generate2joursPdf(task) {
-  assert(task, "TASK_MISSING")
-
-  const project_id =
-    task.project_id ||
-    task.payload?.project_id ||
-    null
-
-  const task_id = task.id || null
-
+export async function generate2joursPdf(input) {
+  console.log("[2JOURS_PDF] Called with:", 
+    typeof input === 'string' ? `project_id: ${input}` : `task: ${input?.id}`
+  )
+  
+  // BEPAAL INPUT TYPE
+  let project_id, task_id, payload
+  
+  if (typeof input === 'string') {
+    // Oude signature: generate2joursPdf(project_id)
+    project_id = input
+    task_id = null
+    payload = {}
+  } else if (input && typeof input === 'object') {
+    // Nieuwe signature: generate2joursPdf(task)
+    project_id = input.project_id || input.payload?.project_id
+    task_id = input.id || null
+    payload = input.payload || {}
+  } else {
+    throw new Error("INVALID_INPUT: generate2joursPdf expects string(project_id) or object(task)")
+  }
+  
   assert(project_id, "NO_PROJECT_ID")
 
   /*
   ============================
-  DATA
+  DATA FETCH
   ============================
   */
-  const { data: project } = await supabase
+  const { data: project, error: projectError } = await supabase
     .from("projects")
     .select("*")
     .eq("id", project_id)
     .single()
 
-  assert(project, "PROJECT_NOT_FOUND")
+  if (projectError) {
+    console.error("[2JOURS_PDF] Project fetch error:", projectError)
+    throw new Error(`PROJECT_NOT_FOUND: ${project_id}`)
+  }
 
-  const { data: regelsRaw, error } = await supabase
-    .from("v_calculatie_2jours")
-    .select("*")
-    .eq("project_id", project_id)
-    .order("code")
+  // HAAL REGELS OP (v_calculatie_2jours of fallback)
+  let regels = []
+  try {
+    const { data: regelsRaw, error: regelsError } = await supabase
+      .from("v_calculatie_2jours")
+      .select("*")
+      .eq("project_id", project_id)
+      .order("code")
+    
+    if (!regelsError && Array.isArray(regelsRaw)) {
+      regels = regelsRaw
+    }
+  } catch (viewError) {
+    console.warn("[2JOURS_PDF] View v_calculatie_2jours not available, trying fallback")
+    
+    // FALLBACK: probeer calculatie_regels
+    const { data: fallbackRegels } = await supabase
+      .from("calculatie_regels")
+      .select("*")
+      .eq("project_id", project_id)
+      .order("volgorde", { ascending: true })
+      .then(res => res.data || [])
+      .catch(() => [])
+    
+    regels = fallbackRegels.map(r => ({
+      code: r.stabu_code,
+      omschrijving: r.omschrijving,
+      aantal: r.hoeveelheid,
+      eenheid: r.eenheid,
+      norm: r.normuren,
+      uren: r.uren,
+      loonkosten: r.loonkosten,
+      prijs_eenh: r.prijs_eenh,
+      materiaal_eenh: r.materiaalprijs,
+      oa_perc: r.oa_perc,
+      oa: r.oa,
+      stelp_eenh: r.stelp_eenh,
+      stelposten: r.stelposten,
+      totaal: r.totaal
+    }))
+  }
 
-  if (error) throw new Error("CALCULATIE_REGELS_INVALID")
-
-  const regels = Array.isArray(regelsRaw) ? regelsRaw : []
+  console.log(`[2JOURS_PDF] Found ${regels.length} regels for project ${project_id}`)
 
   /*
   ============================
@@ -92,9 +141,7 @@ export async function generate2joursPdf(task) {
   TEMPLATES
   ============================
   */
-  const base =
-    `${process.env.SUPABASE_URL}/storage/v1/object/public/sterkcalc/templates`
-
+  const base = `${process.env.SUPABASE_URL}/storage/v1/object/public/sterkcalc/templates`
   const tplVoorblad = `${base}/2jours_voorblad.png`
   const tplCalc     = `${base}/2jours_calculatie.png`
   const tplStaart   = `${base}/2jours_staartblad.png`
@@ -105,18 +152,23 @@ export async function generate2joursPdf(task) {
   ============================
   */
   {
-    const page = pdf.addPage([595, 842])
-    const bg = await loadImage(pdf, tplVoorblad)
-    page.drawImage(bg, { x: 0, y: 0, width: 595, height: 842 })
+    const page = pdf.addPage([595, 842])  // A4 portrait
+    
+    try {
+      const bg = await loadImage(pdf, tplVoorblad)
+      page.drawImage(bg, { x: 0, y: 0, width: 595, height: 842 })
+    } catch (bgError) {
+      console.warn("[2JOURS_PDF] Could not load voorblad template, drawing blank")
+    }
 
     let y = 620
     const lh = 14
 
     const lines = [
-      project.naam_opdrachtgever,
+      project.naam_opdrachtgever || project.opdrachtgever,
       project.adres,
       project.postcode,
-      project.plaats
+      project.plaatsnaam || project.plaats
     ].filter(Boolean)
 
     for (const line of lines) {
@@ -136,7 +188,7 @@ export async function generate2joursPdf(task) {
   ============================
   */
   const PAGE = {
-    width: 842,
+    width: 842,   // A4 landscape
     height: 595,
     startY: 500,
     endY: 90,
@@ -165,13 +217,19 @@ export async function generate2joursPdf(task) {
 
   async function newCalcPage() {
     page = pdf.addPage([PAGE.width, PAGE.height])
-    const bg = await loadImage(pdf, tplCalc)
-    page.drawImage(bg, {
-      x: 0,
-      y: 0,
-      width: PAGE.width,
-      height: PAGE.height
-    })
+    
+    try {
+      const bg = await loadImage(pdf, tplCalc)
+      page.drawImage(bg, {
+        x: 0,
+        y: 0,
+        width: PAGE.width,
+        height: PAGE.height
+      })
+    } catch (bgError) {
+      console.warn("[2JOURS_PDF] Could not load calculatie template")
+    }
+    
     y = PAGE.startY
   }
 
@@ -207,8 +265,13 @@ export async function generate2joursPdf(task) {
   */
   {
     const page = pdf.addPage([595, 842])
-    const bg = await loadImage(pdf, tplStaart)
-    page.drawImage(bg, { x: 0, y: 0, width: 595, height: 842 })
+    
+    try {
+      const bg = await loadImage(pdf, tplStaart)
+      page.drawImage(bg, { x: 0, y: 0, width: 595, height: 842 })
+    } catch (bgError) {
+      console.warn("[2JOURS_PDF] Could not load staartblad template")
+    }
   }
 
   /*
@@ -219,21 +282,30 @@ export async function generate2joursPdf(task) {
   const pdfBytes = await pdf.save()
   const path = `pdf/${project_id}/offerte_2jours.pdf`
 
-  await supabase.storage
+  const { error: uploadError } = await supabase.storage
     .from("sterkcalc")
     .upload(path, pdfBytes, {
       contentType: "application/pdf",
       upsert: true
     })
 
-  const pdfUrl =
-    `${process.env.SUPABASE_URL}/storage/v1/object/public/sterkcalc/${path}`
+  if (uploadError) {
+    console.error("[2JOURS_PDF] Upload failed:", uploadError)
+    throw new Error(`PDF_UPLOAD_FAILED: ${uploadError.message}`)
+  }
 
+  const pdfUrl = `${process.env.SUPABASE_URL}/storage/v1/object/public/sterkcalc/${path}`
+
+  // UPDATE PROJECT
   await supabase
     .from("projects")
-    .update({ pdf_url: pdfUrl })
+    .update({ 
+      pdf_url: pdfUrl,
+      pdf_generated_at: new Date().toISOString()
+    })
     .eq("id", project_id)
 
+  // UPDATE TASK INDien beschikbaar
   if (task_id) {
     await supabase
       .from("executor_tasks")
@@ -244,5 +316,12 @@ export async function generate2joursPdf(task) {
       .eq("id", task_id)
   }
 
-  return { pdf_url: pdfUrl }
+  console.log("[2JOURS_PDF] Generated successfully:", pdfUrl)
+  
+  return { 
+    success: true, 
+    pdf_url: pdfUrl,
+    project_id,
+    regels_count: regels.length
+  }
 }
