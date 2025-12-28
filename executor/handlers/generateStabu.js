@@ -206,4 +206,56 @@ export async function handleGenerateStabu(task) {
     const pdf = await TwoJoursWriter.open(project_id)
 
     await pdf.writeSection("stabu.basis", {
-      titel: "STABU calc
+      titel: "STABU calculatiebasis",
+      regels: regels.map(r => ({
+        code: r.code,
+        omschrijving: r.omschrijving,
+        norm: r.norm,
+        eenheidsprijs: r.prijs
+      }))
+    })
+
+    await pdf.save()
+
+    /*
+    ============================
+    TASK → COMPLETED
+    ============================
+    */
+    await supabase
+      .from("executor_tasks")
+      .update({
+        status: "completed",
+        finished_at: now
+      })
+      .eq("id", taskId)
+
+    /*
+    ============================
+    VOLGENDE STAP: START_REKENWOLK
+    ============================
+    */
+    const { data: existingNext } = await supabase
+      .from("executor_tasks")
+      .select("id")
+      .eq("project_id", project_id)
+      .eq("action", "start_rekenwolk")
+      .in("status", ["open", "running", "completed"])
+      .limit(1)
+      .maybeSingle()
+
+    if (!existingNext) {
+      await supabase
+        .from("executor_tasks")
+        .insert({
+          project_id,
+          action: "start_rekenwolk",
+          status: "open",
+          assigned_to: "executor"
+        })
+    }
+
+  } catch (err) {
+    await fail(taskId, err.message || "generate_stabu_error")
+  }
+}
