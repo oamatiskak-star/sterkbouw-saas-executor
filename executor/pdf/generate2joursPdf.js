@@ -1,16 +1,6 @@
 import { createClient } from "@supabase/supabase-js"
 import { PDFDocument, rgb, StandardFonts } from "pdf-lib"
 
-/*
-===========================================================
-2JOURS PDF GENERATOR – STABIELE BASIS (PNG BACKGROUND)
-- Node 18+ compatible (geen node-fetch)
-- PNG templates als full-page background
-- Absolute positionering
-- Crash-vrij
-===========================================================
-*/
-
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
@@ -18,25 +8,41 @@ const supabase = createClient(
 
 /*
 ===========================================================
-UTILS
+2JOURS PDF GENERATOR – DEFINITIEF
+- PNG achtergrond leidend
+- Alle kolommen gemapt
+- Afkappen binnen kolombreedte
+- Multipage calculatie
 ===========================================================
 */
+
+function assert(cond, msg) {
+  if (!cond) throw new Error(msg)
+}
+
 async function loadImage(pdf, url) {
-  if (!global.fetch) {
-    throw new Error("FETCH_NOT_AVAILABLE")
-  }
-
   const res = await fetch(url)
-  if (!res.ok) {
-    throw new Error(`IMAGE_LOAD_FAILED: ${url}`)
-  }
-
+  if (!res.ok) throw new Error(`IMAGE_LOAD_FAILED: ${url}`)
   const buf = await res.arrayBuffer()
   return pdf.embedPng(buf)
 }
 
-function assert(cond, msg) {
-  if (!cond) throw new Error(msg)
+function euro(n) {
+  return `€ ${Number(n || 0).toFixed(2)}`
+}
+
+/*
+===========================================================
+TEKST AFKAPPEN BINNEN KOLOMBREEDTE
+===========================================================
+*/
+function drawClampedText(page, font, text, x, y, maxWidth, size = 8) {
+  if (!text) return
+  let s = String(text)
+  while (font.widthOfTextAtSize(s, size) > maxWidth && s.length > 0) {
+    s = s.slice(0, -1)
+  }
+  page.drawText(s, { x, y, size, font, color: rgb(0, 0, 0) })
 }
 
 /*
@@ -57,19 +63,17 @@ export default async function generate2joursPdf(task) {
   assert(project_id, "NO_PROJECT_ID")
 
   /*
-  ===========================================================
-  DATA OPHALEN
-  ===========================================================
+  ============================
+  DATA
+  ============================
   */
-  const { data: project, error: projErr } = await supabase
+  const { data: project } = await supabase
     .from("projects")
     .select("*")
     .eq("id", project_id)
     .single()
 
-  if (projErr || !project) {
-    throw new Error("PROJECT_NOT_FOUND")
-  }
+  assert(project, "PROJECT_NOT_FOUND")
 
   const { data: regelsRaw, error: regelsErr } = await supabase
     .from("v_calculatie_2jours")
@@ -77,24 +81,22 @@ export default async function generate2joursPdf(task) {
     .eq("project_id", project_id)
     .order("code")
 
-  if (regelsErr) {
-    throw new Error("CALCULATIE_REGELS_INVALID")
-  }
+  if (regelsErr) throw new Error("CALCULATIE_REGELS_INVALID")
 
   const regels = Array.isArray(regelsRaw) ? regelsRaw : []
 
   /*
-  ===========================================================
+  ============================
   PDF INIT
-  ===========================================================
+  ============================
   */
   const pdf = await PDFDocument.create()
   const font = await pdf.embedFont(StandardFonts.Helvetica)
 
   /*
-  ===========================================================
-  TEMPLATE URLS (SUPABASE STORAGE – PUBLIC)
-  ===========================================================
+  ============================
+  TEMPLATE URLS
+  ============================
   */
   const base =
     `${process.env.SUPABASE_URL}/storage/v1/object/public/sterkcalc/templates`
@@ -104,20 +106,14 @@ export default async function generate2joursPdf(task) {
   const tplStaart   = `${base}/2jours_staartblad.png`
 
   /*
-  ===========================================================
+  ============================
   PAGINA 1 – VOORBLAD
-  ===========================================================
+  ============================
   */
   {
-    const page = pdf.addPage([595, 842]) // A4 portrait
+    const page = pdf.addPage([595, 842])
     const bg = await loadImage(pdf, tplVoorblad)
-
-    page.drawImage(bg, {
-      x: 0,
-      y: 0,
-      width: 595,
-      height: 842
-    })
+    page.drawImage(bg, { x: 0, y: 0, width: 595, height: 842 })
 
     let y = 620
     const lh = 14
@@ -142,62 +138,90 @@ export default async function generate2joursPdf(task) {
   }
 
   /*
-  ===========================================================
-  PAGINA 2 – CALCULATIEREGELS (1e pagina)
-  ===========================================================
-  NB: multipage komt hierna, dit is stabiele basis
-  ===========================================================
+  ============================
+  CALCULATIE – MULTIPAGE
+  ============================
   */
-  {
-    const page = pdf.addPage([842, 595]) // A4 landscape
-    const bg = await loadImage(pdf, tplCalc)
+  const PAGE = {
+    width: 842,
+    height: 595,
+    startY: 500,
+    endY: 90,
+    rowH: 12
+  }
 
+  const COL = {
+    code:        { x: 40,  w: 45 },
+    omschrijving:{ x: 90,  w: 200 },
+    aantal:      { x: 310, w: 35 },
+    eenheid:     { x: 350, w: 35 },
+    norm:        { x: 390, w: 35 },
+    uren:        { x: 430, w: 35 },
+    loonkosten:  { x: 470, w: 45 },
+    prijs:       { x: 520, w: 45 },
+    materiaal:   { x: 575, w: 45 },
+    oa_perc:     { x: 635, w: 35 },
+    oa:          { x: 675, w: 35 },
+    stelp_prijs: { x: 715, w: 35 },
+    stelposten:  { x: 760, w: 35 },
+    totaal:      { x: 810, w: 60 }
+  }
+
+  let page = null
+  let y = PAGE.startY
+
+  async function newCalcPage() {
+    page = pdf.addPage([PAGE.width, PAGE.height])
+    const bg = await loadImage(pdf, tplCalc)
     page.drawImage(bg, {
       x: 0,
       y: 0,
-      width: 842,
-      height: 595
+      width: PAGE.width,
+      height: PAGE.height
     })
+    y = PAGE.startY
+  }
 
-    let y = 500
-    const rowH = 12
+  await newCalcPage()
 
-    for (const r of regels) {
-      if (y < 90) break
-
-      page.drawText(String(r.code || ""),          { x: 40,  y, size: 8, font })
-      page.drawText(String(r.omschrijving || ""), { x: 90,  y, size: 8, font })
-      page.drawText(String(r.aantal || ""),        { x: 420, y, size: 8, font })
-      page.drawText(
-        `€ ${Number(r.totaal || 0).toFixed(2)}`,
-        { x: 720, y, size: 8, font }
-      )
-
-      y -= rowH
+  for (const r of regels) {
+    if (y < PAGE.endY) {
+      await newCalcPage()
     }
+
+    drawClampedText(page, font, r.code,           COL.code.x,        y, COL.code.w)
+    drawClampedText(page, font, r.omschrijving,  COL.omschrijving.x,y, COL.omschrijving.w)
+    drawClampedText(page, font, r.aantal,         COL.aantal.x,      y, COL.aantal.w)
+    drawClampedText(page, font, r.eenheid,        COL.eenheid.x,     y, COL.eenheid.w)
+    drawClampedText(page, font, r.norm,           COL.norm.x,        y, COL.norm.w)
+    drawClampedText(page, font, r.uren,           COL.uren.x,        y, COL.uren.w)
+    drawClampedText(page, font, euro(r.loonkosten), COL.loonkosten.x,y, COL.loonkosten.w)
+    drawClampedText(page, font, euro(r.prijs_eenh), COL.prijs.x,     y, COL.prijs.w)
+    drawClampedText(page, font, euro(r.materiaal_eenh), COL.materiaal.x,y, COL.materiaal.w)
+    drawClampedText(page, font, r.oa_perc,        COL.oa_perc.x,     y, COL.oa_perc.w)
+    drawClampedText(page, font, euro(r.oa),       COL.oa.x,          y, COL.oa.w)
+    drawClampedText(page, font, euro(r.stelp_eenh),COL.stelp_prijs.x,y, COL.stelp_prijs.w)
+    drawClampedText(page, font, euro(r.stelposten),COL.stelposten.x, y, COL.stelposten.w)
+    drawClampedText(page, font, euro(r.totaal),   COL.totaal.x,      y, COL.totaal.w)
+
+    y -= PAGE.rowH
   }
 
   /*
-  ===========================================================
-  PAGINA 3 – STAARTBLAD
-  ===========================================================
+  ============================
+  STAARTBLAD
+  ============================
   */
   {
     const page = pdf.addPage([595, 842])
     const bg = await loadImage(pdf, tplStaart)
-
-    page.drawImage(bg, {
-      x: 0,
-      y: 0,
-      width: 595,
-      height: 842
-    })
+    page.drawImage(bg, { x: 0, y: 0, width: 595, height: 842 })
   }
 
   /*
-  ===========================================================
+  ============================
   OPSLAAN
-  ===========================================================
+  ============================
   */
   const pdfBytes = await pdf.save()
   const path = `pdf/${project_id}/offerte_2jours.pdf`
