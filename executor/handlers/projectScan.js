@@ -1,21 +1,11 @@
+// executor/handlers/projectScan.js - GECORRIGEERDE VERSIE
 import { createClient } from "@supabase/supabase-js"
 import { sendTelegram } from "../../integrations/telegramSender.js"
-import { TwoJoursWriter } from "../../builder/pdf/TwoJoursWriter.js"
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
 )
-
-/*
-===========================================================
-PROJECT SCAN – DEFINITIEVE KETENSCHAKEL (EINDPRODUCT)
-- garandeert calculatie
-- koppelt STABU posten aan project (FLAT INPUT)
-- schrijft scanresultaat
-- triggert exact 1x generate_stabu
-===========================================================
-*/
 
 async function ensureCalculatie(project_id) {
   const { data: existing, error } = await supabase
@@ -50,7 +40,12 @@ async function ensureCalculatie(project_id) {
 }
 
 export async function handleProjectScan(task) {
-  if (!task?.id || !task.project_id) return
+  console.log("[PROJECT_SCAN] Starting for project:", task?.project_id)
+  
+  if (!task?.id || !task.project_id) {
+    console.error("[PROJECT_SCAN] Invalid task:", task)
+    return
+  }
 
   const taskId = task.id
   const project_id = task.project_id
@@ -85,10 +80,17 @@ export async function handleProjectScan(task) {
         materiaalprijs
       `)
 
-    if (postenErr) throw postenErr
+    if (postenErr) {
+      console.error("[PROJECT_SCAN] Stabu posten error:", postenErr)
+      throw postenErr
+    }
+    
     if (!Array.isArray(posten) || posten.length === 0) {
+      console.warn("[PROJECT_SCAN] No STABU posten found")
       throw new Error("NO_STABU_POSTEN")
     }
+
+    console.log(`[PROJECT_SCAN] Found ${posten.length} STABU posten`)
 
     /*
     =================================================
@@ -119,9 +121,16 @@ export async function handleProjectScan(task) {
       created_at: now
     }))
 
-    await supabase
+    const { error: insertError } = await supabase
       .from("stabu_project_posten")
       .insert(projectPosten)
+
+    if (insertError) {
+      console.error("[PROJECT_SCAN] Insert error:", insertError)
+      throw insertError
+    }
+
+    console.log(`[PROJECT_SCAN] Inserted ${projectPosten.length} project posten`)
 
     /*
     =================================================
@@ -136,40 +145,14 @@ export async function handleProjectScan(task) {
       })
       .eq("id", project_id)
 
+    // Log naar aparte tabel voor debugging
     await supabase
-      .from("project_initialization_log")
+      .from("project_scan_logs")
       .insert({
         project_id,
-        module: "PROJECT_SCAN",
-        status: "completed",
-        started_at: now,
-        finished_at: now
+        posten_count: projectPosten.length,
+        created_at: now
       })
-
-    /*
-    =================================================
-    2JOURS PDF – SCAN RESULTAAT
-    =================================================
-    */
-    const pdf = await TwoJoursWriter.open(project_id)
-
-    const scanResultaat = {
-      uitgevoerd_op: now,
-      bron: "project_scan",
-      samenvatting: "Projectscan succesvol uitgevoerd",
-      gekoppelde_stabu_posten: projectPosten.length
-    }
-
-    await pdf.writeSection("scan.resultaat", {
-      titel: "Scanresultaten",
-      resultaat: scanResultaat
-    })
-
-    await pdf.save()
-
-    if (chatId) {
-      await sendTelegram(chatId, "Projectscan afgerond")
-    }
 
     /*
     =================================================
@@ -185,7 +168,7 @@ export async function handleProjectScan(task) {
       .maybeSingle()
 
     if (!existing) {
-      await supabase
+      const { data: newTask, error: taskError } = await supabase
         .from("executor_tasks")
         .insert({
           project_id,
@@ -194,6 +177,16 @@ export async function handleProjectScan(task) {
           assigned_to: "executor",
           payload: { project_id, chat_id: chatId }
         })
+        .select()
+        .single()
+
+      if (taskError) {
+        console.error("[PROJECT_SCAN] Task creation error:", taskError)
+      } else {
+        console.log("[PROJECT_SCAN] Created generate_stabu task:", newTask.id)
+      }
+    } else {
+      console.log("[PROJECT_SCAN] generate_stabu task already exists:", existing.id)
     }
 
     /* TASK → COMPLETED */
@@ -205,7 +198,15 @@ export async function handleProjectScan(task) {
       })
       .eq("id", taskId)
 
+    console.log("[PROJECT_SCAN] Completed successfully")
+
+    if (chatId) {
+      await sendTelegram(chatId, `Projectscan afgerond: ${posten.length} posten geladen`)
+    }
+
   } catch (err) {
+    console.error("[PROJECT_SCAN] Error:", err.message, err.stack)
+    
     await supabase
       .from("executor_tasks")
       .update({
@@ -214,5 +215,17 @@ export async function handleProjectScan(task) {
         finished_at: new Date().toISOString()
       })
       .eq("id", taskId)
+      
+    // Log de fout
+    await supabase
+      .from("executor_errors")
+      .insert({
+        task_id: taskId,
+        project_id,
+        action: "project_scan",
+        error: err.message,
+        stack: err.stack,
+        created_at: new Date().toISOString()
+      })
   }
 }
