@@ -6,9 +6,11 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 )
 
-const AK_PCT = 0.08
-const ABK_PCT = 0.06
-const WR_PCT = 0.08
+// OPSLAGEN – STRICT GESCHEIDEN
+const AK_PCT = 0.08        // Algemene kosten
+const ABK_PCT = 0.06       // Algemene bedrijfskosten
+const WINST_PCT = 0.05     // Winst
+const RISICO_PCT = 0.03    // Risico
 
 /*
 =====================================
@@ -61,16 +63,12 @@ export async function handleStartRekenwolk(task) {
       .update({ status: "running", started_at: now })
       .eq("id", taskId)
 
-    /*
-    ============================
-    CALCULATIE GARANTEREN
-    ============================
-    */
+    /* CALCULATIE BESTAAT */
     await ensureCalculatie(project_id)
 
     /*
     =================================================
-    1. STABU BASIS OPHALEN
+    1. STABU POSTEN OPHALEN
     =================================================
     */
     const { data: posten, error } = await supabase
@@ -81,23 +79,21 @@ export async function handleStartRekenwolk(task) {
         omschrijving,
         eenheid,
         normuren,
-        materiaalprijs,
-        arbeidsprijs
+        arbeidsprijs,
+        materiaalprijs
       `)
 
     if (error) throw error
-    if (!posten || posten.length === 0) {
+    if (!Array.isArray(posten) || posten.length === 0) {
       throw new Error("NO_STABU_POSTEN")
     }
 
     /*
     =================================================
-    2. RESULTREGELS OPBOUWEN
+    2. REKENWOLK
     =================================================
     */
-    const resultRegels = []
-    const calculatieRegels = []
-
+    const regels = []
     let kostprijs = 0
 
     for (const p of posten) {
@@ -108,22 +104,9 @@ export async function handleStartRekenwolk(task) {
 
       kostprijs += totaal
 
-      resultRegels.push({
-        project_id,
-        stabu_id: p.id,
+      regels.push({
         stabu_code: p.code,
         omschrijving: p.omschrijving,
-        hoeveelheid,
-        eenheid: p.eenheid,
-        normuren: p.normuren,
-        loonkosten,
-        materiaalprijs: p.materiaalprijs,
-        totaal
-      })
-
-      calculatieRegels.push({
-        project_id,
-        stabu_id: p.id,
         hoeveelheid,
         eenheid: p.eenheid,
         normuren: p.normuren,
@@ -135,60 +118,36 @@ export async function handleStartRekenwolk(task) {
 
     /*
     =================================================
-    3. OPSLAAN STABU_RESULT_REGELS
+    3. OPSLAGEN – LOS BEREKEND
     =================================================
     */
-    await supabase
-      .from("stabu_result_regels")
-      .delete()
-      .eq("project_id", project_id)
+    const ak = kostprijs * AK_PCT
+    const abk = kostprijs * ABK_PCT
+    const winst = kostprijs * WINST_PCT
+    const risico = kostprijs * RISICO_PCT
 
-    await supabase
-      .from("stabu_result_regels")
-      .insert(resultRegels)
-
-    /*
-    =================================================
-    4. OPSLAAN CALCULATIE_REGELS
-    =================================================
-    */
-    await supabase
-      .from("calculatie_regels")
-      .delete()
-      .eq("project_id", project_id)
-
-    await supabase
-      .from("calculatie_regels")
-      .insert(calculatieRegels)
-
-    /*
-    =================================================
-    5. TOTALEN
-    =================================================
-    */
     const verkoopprijs =
-      kostprijs +
-      kostprijs * AK_PCT +
-      kostprijs * ABK_PCT +
-      kostprijs * WR_PCT
+      kostprijs + ak + abk + winst + risico
 
     /*
     =================================================
-    6. PDF VULLEN + FINALIZE
+    4. PDF GENEREREN (HUIDIGE TwoJoursWriter API)
     =================================================
     */
     const pdf = await TwoJoursWriter.open(project_id)
 
-    await pdf.writeSection("stabu.rekenwolk", {
-      titel: "STABU Calculatie",
-      regels: resultRegels,
-      totalen: {
-        kostprijs,
-        verkoopprijs
-      }
+    pdf.drawCalculatieRegels(regels, {
+      kostprijs,
+      ak,
+      abk,
+      winst,
+      risico,
+      verkoopprijs
     })
 
-    const pdfUrl = await pdf.finalize()
+    pdf.drawStaartblad()
+
+    const pdfUrl = await pdf.save()
 
     await supabase
       .from("projects")
@@ -198,7 +157,10 @@ export async function handleStartRekenwolk(task) {
     /* TASK → COMPLETED */
     await supabase
       .from("executor_tasks")
-      .update({ status: "completed", finished_at: now })
+      .update({
+        status: "completed",
+        finished_at: now
+      })
       .eq("id", taskId)
 
   } catch (err) {
