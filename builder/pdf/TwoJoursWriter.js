@@ -11,10 +11,6 @@ const supabase = createClient(
 /*
 ===========================================================
 2JOURS PDF WRITER – DEFINITIEF
-- enige PDF-logica in het systeem
-- vaste structuur
-- vaste oriëntatie
-- vaste secties
 ===========================================================
 */
 
@@ -31,11 +27,6 @@ export class TwoJoursWriter {
     }
   }
 
-  /*
-  ============================
-  OPEN / CREATE PDF
-  ============================
-  */
   static async open(project_id) {
     const path = `${project_id}/calculatie_2jours.pdf`
 
@@ -70,33 +61,18 @@ export class TwoJoursWriter {
     return writer
   }
 
-  /*
-  ============================
-  MAP BESTAANDE PAGINA’S
-  ============================
-  */
   _mapExistingPages() {
     const pages = this.pdf.getPages()
 
     this.pages.cover = pages[0] || null
     this.pages.opdracht = pages[1] || null
-
-    this.pages.calculatie = []
-    for (let i = 2; i < pages.length; i++) {
-      this.pages.calculatie.push(pages[i])
-    }
+    this.pages.calculatie = pages.slice(2)
 
     if (this.pages.calculatie.length === 0) {
-      const page = this.pdf.addPage([842, 595])
-      this.pages.calculatie.push(page)
+      this.pages.calculatie.push(this.pdf.addPage([842, 595]))
     }
   }
 
-  /*
-  ============================
-  BASIS PAGINA’S (NIEUW)
-  ============================
-  */
   _ensureBasePages() {
     this.pages.cover = this.pdf.addPage([595, 842])
     this._drawCover()
@@ -104,8 +80,7 @@ export class TwoJoursWriter {
     this.pages.opdracht = this.pdf.addPage([595, 842])
     this._drawOpdracht()
 
-    const page = this.pdf.addPage([842, 595])
-    this.pages.calculatie.push(page)
+    this.pages.calculatie.push(this.pdf.addPage([842, 595]))
   }
 
   _drawCover() {
@@ -114,8 +89,7 @@ export class TwoJoursWriter {
       x: 200,
       y: 780,
       size: 20,
-      font: this.font,
-      color: rgb(0, 0, 0)
+      font: this.font
     })
     p.drawText(`Project: ${this.project_id}`, {
       x: 50,
@@ -133,26 +107,12 @@ export class TwoJoursWriter {
       size: 16,
       font: this.font
     })
-    p.drawText(
-      "Deze offerte betreft de volledige calculatie conform STABU-systematiek.",
-      { x: 50, y: 740, size: 11, font: this.font }
-    )
   }
 
-  /*
-  ============================
-  SCHRIJVEN NAAR SECTIES
-  ============================
-  */
   async writeSection(key, payload) {
     this.sections[key] = payload
   }
 
-  /*
-  ============================
-  RENDER CALCULATIE
-  ============================
-  */
   _renderCalculatie() {
     let page = this.pages.calculatie[0]
     let y = 550
@@ -166,65 +126,78 @@ export class TwoJoursWriter {
         color: rgb(0, 0, 0)
       })
 
+    /*
+    ============================
+    UPLOAD
+    ============================
+    */
     if (this.sections["upload.bestanden"]) {
       draw("Aangeleverde documenten", 40, y, 11)
       y -= 16
-      this.sections["upload.bestanden"].bestanden.forEach(b => {
+      for (const b of this.sections["upload.bestanden"].bestanden || []) {
         draw(`- ${b.filename}`, 50, y)
         y -= 12
-      })
+      }
       y -= 20
     }
 
+    /*
+    ============================
+    SCAN
+    ============================
+    */
     if (this.sections["scan.resultaat"]) {
       draw("Scanresultaten", 40, y, 11)
       y -= 16
-      draw(this.sections["scan.resultaat"].resultaat.samenvatting, 50, y)
+      draw(this.sections["scan.resultaat"].resultaat.samenvatting || "", 50, y)
       y -= 20
     }
 
+    /*
+    ============================
+    STABU BASIS
+    ============================
+    */
     if (this.sections["stabu.basis"]) {
       draw("STABU basis", 40, y, 11)
       y -= 16
-      this.sections["stabu.basis"].regels.forEach(r => {
+      for (const r of this.sections["stabu.basis"].regels || []) {
         draw(`${r.code} – ${r.omschrijving}`, 50, y)
         y -= 12
-      })
+      }
       y -= 20
     }
 
-    if (this.sections["stabu.invulling"]) {
-      draw("Projectinvulling", 40, y, 11)
+    /*
+    ============================
+    STABU REKENWOLK (FIX)
+    ============================
+    */
+    if (this.sections["stabu.rekenwolk"]) {
+      draw("STABU Calculatie", 40, y, 11)
       y -= 16
-      this.sections["stabu.invulling"].regels.forEach(r => {
+
+      for (const r of this.sections["stabu.rekenwolk"].regels || []) {
         draw(
-          `${r.stabu_code} | ${r.hoeveelheid} × ${r.eenheidsprijs} = ${r.subtotaal}`,
+          `${r.stabu_code} | ${r.omschrijving} | ${r.hoeveelheid} × ${r.materiaalprijs} = ${r.totaal}`,
           50,
           y
         )
         y -= 12
-      })
+        if (y < 40) {
+          page = this.pdf.addPage([842, 595])
+          y = 550
+        }
+      }
 
       y -= 16
-      draw(
-        `Kostprijs: ${this.sections["stabu.invulling"].totalen.kostprijs}`,
-        50,
-        y
-      )
+      const totalen = this.sections["stabu.rekenwolk"].totalen || {}
+      draw(`Kostprijs: ${totalen.kostprijs ?? ""}`, 50, y)
       y -= 12
-      draw(
-        `Verkoopprijs: ${this.sections["stabu.invulling"].totalen.verkoopprijs}`,
-        50,
-        y
-      )
+      draw(`Verkoopprijs: ${totalen.verkoopprijs ?? ""}`, 50, y)
     }
   }
 
-  /*
-  ============================
-  OPSLAAN
-  ============================
-  */
   async save() {
     this._renderCalculatie()
     const bytes = await this.pdf.save()
@@ -238,11 +211,6 @@ export class TwoJoursWriter {
       )
   }
 
-  /*
-  ============================
-  FINALIZE + SIGNED URL
-  ============================
-  */
   async finalize() {
     this._renderCalculatie()
     const bytes = await this.pdf.save()
