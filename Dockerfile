@@ -1,17 +1,84 @@
-FROM node:22
+# Stage 1: Node.js AO Executor
+FROM node:22-slim AS node-builder
 
 WORKDIR /app
+
+# Install unzip for Monteur
+RUN apt-get update && apt-get install -y unzip && rm -rf /var/lib/apt/lists/*
 
 COPY package*.json ./
 RUN npm install
 
-# Kopieer ALLES (inclusief zip)
 COPY . .
 
-# ⬇️ MONTEUR ZIP UITPAKKEN (DIT ONTBRAK)
-RUN apt-get update \
- && apt-get install -y unzip \
- && unzip -o sterkcalc-monteur.zip -d /app \
- && rm sterkcalc-monteur.zip
+# Extract Monteur zip
+RUN unzip -o sterkcalc-monteur.zip -d /app && rm sterkcalc-monteur.zip
 
-CMD ["node", "ao.js"]
+# Stage 2: Python AI Engine
+FROM python:3.11-slim AS python-builder
+
+WORKDIR /ai-engine
+
+# Install system dependencies for AI engine
+RUN apt-get update && apt-get install -y \
+    poppler-utils \
+    tesseract-ocr \
+    tesseract-ocr-nld \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender-dev \
+    libmagic-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY src/ ./src/
+
+# Create AI engine user
+RUN useradd -m -u 1001 aiengine
+
+# Stage 3: Final image with both services
+FROM node:22-slim
+
+# Install Python and shared dependencies
+RUN apt-get update && apt-get install -y \
+    python3.11 \
+    python3-pip \
+    poppler-utils \
+    tesseract-ocr \
+    tesseract-ocr-nld \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy Node.js AO Executor from stage 1
+COPY --from=node-builder /app /app
+
+# Copy Python AI Engine from stage 2
+COPY --from=python-builder /ai-engine /ai-engine
+COPY --from=python-builder /etc/passwd /etc/passwd
+COPY --from=python-builder /etc/group /etc/group
+
+# Create directories for AI Engine
+RUN mkdir -p /tmp/uploads /tmp/processed /tmp/cache /ai-logs \
+    && chown -R node:node /app /tmp/uploads /tmp/processed /tmp/cache /ai-logs
+
+# Install Python dependencies in final image
+RUN pip3 install --no-cache-dir -r /ai-engine/requirements.txt
+
+USER node
+
+# Health checks
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD node -e "require('http').get('http://localhost:3000/ping', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
+
+# Start both services using a process manager
+CMD ["sh", "-c", "node ao.js & cd /ai-engine && python3 -m src.main"]
