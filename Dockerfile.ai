@@ -1,0 +1,39 @@
+FROM python:3.11-slim
+
+WORKDIR /ai-engine
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    poppler-utils \
+    tesseract-ocr \
+    tesseract-ocr-nld \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender-dev \
+    libmagic-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements
+COPY requirements.txt .
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy source code
+COPY src/ ./src/
+
+# Create directories
+RUN mkdir -p /tmp/uploads /tmp/processed /tmp/cache /app/logs
+
+# Create non-root user
+RUN useradd -m -u 1001 aiengine && chown -R aiengine:aiengine /ai-engine /tmp/uploads /tmp/processed /tmp/cache /app/logs
+
+USER aiengine
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD python -c "import sys; sys.exit(0)"
+
+CMD ["python", "-m", "src.main"]
