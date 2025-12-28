@@ -18,6 +18,43 @@ async function fail(taskId, msg) {
     .eq("id", taskId)
 }
 
+/*
+=====================================
+CALCULATIE GARANTEREN
+=====================================
+*/
+async function ensureCalculatie(project_id) {
+  const { data: existing, error } = await supabase
+    .from("calculaties")
+    .select("id")
+    .eq("project_id", project_id)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  if (error) {
+    throw new Error("CALCULATIE_LOOKUP_FAILED: " + error.message)
+  }
+
+  if (existing) return existing.id
+
+  const { data: created, error: insertErr } = await supabase
+    .from("calculaties")
+    .insert({
+      project_id,
+      workflow_status: "initialized",
+      created_at: new Date().toISOString()
+    })
+    .select("id")
+    .single()
+
+  if (insertErr) {
+    throw new Error("CALCULATIE_CREATE_FAILED: " + insertErr.message)
+  }
+
+  return created.id
+}
+
 export async function handleGenerateStabu(task) {
   if (!task?.id || !task.project_id) return
 
@@ -83,6 +120,13 @@ export async function handleGenerateStabu(task) {
 
     /*
     ============================
+    CALCULATIE GARANTEREN
+    ============================
+    */
+    await ensureCalculatie(project_id)
+
+    /*
+    ============================
     OUDE STABU OPSCHONEN
     ============================
     */
@@ -109,11 +153,6 @@ export async function handleGenerateStabu(task) {
     /*
     ============================
     STABU BASIS (INHOUD)
-    ============================
-    - titels
-    - omschrijvingen
-    - normen / prijzen
-    - GEEN project-specifieke hoeveelheden
     ============================
     */
     const regels =
@@ -147,7 +186,7 @@ export async function handleGenerateStabu(task) {
           stabu_code: r.code,
           omschrijving: r.omschrijving,
           norm: r.norm,
-          hoeveelheid: null,        // wordt gevuld door start_rekenwolk
+          hoeveelheid: null,
           eenheidsprijs: r.prijs,
           btw_tarief: 21
         }))
@@ -167,56 +206,4 @@ export async function handleGenerateStabu(task) {
     const pdf = await TwoJoursWriter.open(project_id)
 
     await pdf.writeSection("stabu.basis", {
-      titel: "STABU calculatiebasis",
-      regels: regels.map(r => ({
-        code: r.code,
-        omschrijving: r.omschrijving,
-        norm: r.norm,
-        eenheidsprijs: r.prijs
-      }))
-    })
-
-    await pdf.save()
-
-    /*
-    ============================
-    TASK → COMPLETED
-    ============================
-    */
-    await supabase
-      .from("executor_tasks")
-      .update({
-        status: "completed",
-        finished_at: now
-      })
-      .eq("id", taskId)
-
-    /*
-    ============================
-    VOLGENDE STAP: START_REKENWOLK
-    ============================
-    */
-    const { data: existingNext } = await supabase
-      .from("executor_tasks")
-      .select("id")
-      .eq("project_id", project_id)
-      .eq("action", "start_rekenwolk")
-      .in("status", ["open", "running", "completed"])
-      .limit(1)
-      .maybeSingle()
-
-    if (!existingNext) {
-      await supabase
-        .from("executor_tasks")
-        .insert({
-          project_id,
-          action: "start_rekenwolk",
-          status: "open",
-          assigned_to: "executor"
-        })
-    }
-
-  } catch (err) {
-    await fail(taskId, err.message || "generate_stabu_error")
-  }
-}
+      titel: "STABU calc
