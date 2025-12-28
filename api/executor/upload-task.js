@@ -1,6 +1,6 @@
 import express from 'express'
 import multer from 'multer'
-import { supabase } from ../lib/supabase'
+import { supabase } from '../lib/supabase'
 import fs from 'fs'
 import path from 'path'
 import { exec } from 'child_process'
