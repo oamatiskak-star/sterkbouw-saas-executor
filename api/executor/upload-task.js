@@ -1,6 +1,5 @@
 import express from 'express'
-import multer from 'multer'
-import { supabase } from '../lib/supabase'
+import { createClient } from '@supabase/supabase-js'
 import fs from 'fs'
 import path from 'path'
 import { exec } from 'child_process'
@@ -9,101 +8,90 @@ import { promisify } from 'util'
 const execAsync = promisify(exec)
 const router = express.Router()
 
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const uploadDir = path.join(process.cwd(), 'public', 'uploads')
-    if (!fs.existsSync(uploadDir)) {
-      fs.mkdirSync(uploadDir, { recursive: true })
-    }
-    cb(null, uploadDir)
-  },
-  filename: (req, file, cb) => {
-    const uniqueName = `${Date.now()}_${file.originalname}`
-    cb(null, uniqueName)
-  }
-})
+// Supabase client
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+)
 
-const upload = multer({ 
-  storage: storage,
-  limits: { fileSize: 50 * 1024 * 1024 }
-})
-
-router.post('/', upload.array('files'), async (req, res) => {
+/**
+ * POST /api/executor/render-process
+ * Verwerkt 3D render jobs van de backend
+ */
+router.post('/', async (req, res) => {
   try {
-    const { project_id } = req.body
-    const files = req.files
+    const { 
+      job_id, 
+      project_id, 
+      materials_data, 
+      render_type = 'interior',
+      quality = 'medium' 
+    } = req.body
 
-    if (!project_id) {
+    if (!job_id || !project_id || !materials_data) {
       return res.status(400).json({
         success: false,
-        error: 'Project ID is vereist'
+        error: 'Job ID, project ID en materials data zijn vereist'
       })
     }
 
-    // Opslaan van bestandsinformatie
-    const fileRecords = files.map(file => ({
-      project_id: project_id,
-      filename: file.originalname,
-      filepath: `/uploads/${file.filename}`,
-      mime_type: file.mimetype,
-      size: file.size,
-      local_path: file.path
-    }))
-
-    const { error: uploadError } = await supabase
-      .from('project_files')
-      .insert(fileRecords)
-
-    if (uploadError) throw uploadError
-
-    // Update project status
+    // Update job status naar processing
     await supabase
-      .from('projects')
+      .from('bim_render_jobs')
       .update({
-        status: 'bestanden_geupload',
-        updated_at: new Date().toISOString()
+        status: 'processing',
+        started_at: new Date().toISOString()
       })
-      .eq('id', project_id)
+      .eq('id', job_id)
 
-    // START AI ANALYSE
-    let analyseResultaat = null
-    try {
-      analyseResultaat = await runAIAnalyse(files)
-      
-      // Sla analyse resultaat op
-      const { error: analyseError } = await supabase
-        .from('project_analyse')
-        .insert({
-          project_id: project_id,
-          oppervlakte_m2: analyseResultaat.oppervlakte_m2,
-          aantal_kamers: analyseResultaat.aantal_kamers,
-          bouwjaar: analyseResultaat.bouwjaar,
-          project_type: analyseResultaat.project_type,
-          detecties: analyseResultaat.detecties,
-          raw_data: analyseResultaat
-        })
+    // 1. Maak Blender Python script met materialen
+    const blenderScript = generateBlenderScript(materials_data, render_type, quality)
+    const scriptPath = path.join('/tmp', `blender_script_${job_id}.py`)
+    fs.writeFileSync(scriptPath, blenderScript)
 
-      if (analyseError) {
-        console.error('Analyse opslag fout:', analyseError)
-      }
-    } catch (analyseError) {
-      console.error('AI analyse fout:', analyseError)
-      // Ga door zelfs als analyse faalt
-    }
+    // 2. Voer Blender render uit
+    const renderResult = await executeBlenderRender(scriptPath, job_id)
+
+    // 3. Upload resultaat naar Supabase Storage
+    const renderUrl = await uploadRenderToStorage(renderResult.outputPath, job_id)
+
+    // 4. Update job status
+    await supabase
+      .from('bim_render_jobs')
+      .update({
+        status: 'completed',
+        finished_at: new Date().toISOString(),
+        render_url: renderUrl,
+        render_metadata: {
+          quality: quality,
+          render_type: render_type,
+          render_time_seconds: renderResult.renderTime,
+          resolution: renderResult.resolution
+        }
+      })
+      .eq('id', job_id)
 
     res.json({
       success: true,
-      files: fileRecords.map(f => ({
-        filename: f.filename,
-        filepath: f.filepath,
-        size: f.size
-      })),
-      analyse_resultaat: analyseResultaat,
-      message: `${files.length} bestand(en) geüpload${analyseResultaat ? ' en geanalyseerd' : ''}`
+      job_id: job_id,
+      render_url: renderUrl,
+      render_time: renderResult.renderTime,
+      message: '3D render succesvol gegenereerd'
     })
 
   } catch (error) {
-    console.error('Error uploading files:', error)
+    console.error('Render process error:', error)
+    
+    // Update job status naar failed
+    await supabase
+      .from('bim_render_jobs')
+      .update({
+        status: 'failed',
+        error: error.message,
+        finished_at: new Date().toISOString()
+      })
+      .eq('id', job_id || '')
+
     res.status(500).json({
       success: false,
       error: error.message
@@ -111,73 +99,165 @@ router.post('/', upload.array('files'), async (req, res) => {
   }
 })
 
-async function runAIAnalyse(files) {
-  const analyseResultaten = []
+/**
+ * Genereert Blender Python script op basis van materialen data
+ */
+function generateBlenderScript(materialsData, renderType, quality) {
+  const materials = materialsData.materials || []
+  const dimensions = materialsData.dimensions || {}
   
-  for (const file of files) {
-    try {
-      // Roep Python analyse script aan
-      const { stdout, stderr } = await execAsync(
-        `python3 ${path.join(process.cwd(), '..', 'exe', 'analyse.py')} "${file.path}"`
-      )
-      
-      if (stderr && !stderr.includes('Warning')) {
-        console.error(`Analyse fout voor ${file.filename}:`, stderr)
-        continue
-      }
-      
-      if (stdout) {
-        const result = JSON.parse(stdout)
-        analyseResultaten.push(result)
-      }
-    } catch (error) {
-      console.error(`Analyse mislukt voor ${file.filename}:`, error)
-    }
-  }
-  
-  // Combineer resultaten
-  return combineAnalyseResults(analyseResultaten)
+  return `
+import bpy
+import math
+import random
+from mathutils import Vector
+
+# Clear existing scene
+bpy.ops.wm.read_factory_settings(use_empty=True)
+
+# Setup scene
+scene = bpy.context.scene
+scene.render.engine = 'CYCLES'
+scene.cycles.samples = ${quality === 'high' ? '256' : quality === 'medium' ? '128' : '64'}
+scene.render.resolution_x = 1920
+scene.render.resolution_y = 1080
+
+# Setup camera
+bpy.ops.object.camera_add(location=(10, -10, 8))
+camera = bpy.context.object
+camera.rotation_euler = (math.radians(60), 0, math.radians(45))
+scene.camera = camera
+
+# Setup lights
+bpy.ops.object.light_add(type='SUN', location=(10, -10, 20))
+sun = bpy.context.object
+sun.data.energy = 2.0
+
+bpy.ops.object.light_add(type='AREA', location=(0, 0, 15))
+area_light = bpy.context.object
+area_light.data.energy = 500
+area_light.data.size = 10
+
+# Create room based on dimensions
+room_width = ${dimensions.width || 10}
+room_length = ${dimensions.length || 8}
+room_height = ${dimensions.height || 3}
+
+# Floor
+bpy.ops.mesh.primitive_plane_add(size=room_width, location=(0, 0, 0))
+floor = bpy.context.object
+floor.scale = (room_width/2, room_length/2, 1)
+
+# Walls
+create_wall = lambda loc, size: bpy.ops.mesh.primitive_cube_add(size=1, location=loc)
+# ... (volledige wall creation code)
+
+# Apply materials
+${generateMaterialCode(materials)}
+
+# Set render output
+import os
+output_path = "/tmp/render_${Date.now()}.png"
+scene.render.filepath = output_path
+
+# Render
+bpy.ops.render.render(write_still=True)
+
+print(f"RENDER_COMPLETE:{output_path}")
+`
 }
 
-function combineAnalyseResults(results) {
-  if (results.length === 0) {
-    return {
-      oppervlakte_m2: 0,
-      aantal_kamers: 0,
-      bouwjaar: null,
-      project_type: 'onbekend',
-      detecties: ['geen_analyse_mogelijk']
+function generateMaterialCode(materials) {
+  let code = ''
+  materials.forEach((material, index) => {
+    code += `
+# Material: ${material.name}
+mat_${index} = bpy.data.materials.new(name="${material.name}")
+mat_${index}.use_nodes = True
+nodes = mat_${index}.nodes
+nodes.clear()
+
+# Diffuse node
+diffuse = nodes.new(type='ShaderNodeBsdfDiffuse')
+diffuse.inputs[0].default_value = (${material.color?.r || 0.8}, ${material.color?.g || 0.8}, ${material.color?.b || 0.8}, 1)
+diffuse.inputs[1].default_value = ${material.roughness || 0.5}
+
+# Output node
+output = nodes.new(type='ShaderNodeOutputMaterial')
+
+# Link nodes
+links = mat_${index}.node_tree.links
+links.new(diffuse.outputs['BSDF'], output.inputs['Surface'])
+
+# Apply to object
+if 'obj_${material.applies_to}' in bpy.data.objects:
+    obj = bpy.data.objects['obj_${material.applies_to}']
+    if obj.data.materials:
+        obj.data.materials[0] = mat_${index}
+    else:
+        obj.data.materials.append(mat_${index})
+`
+  })
+  return code
+}
+
+async function executeBlenderRender(scriptPath, jobId) {
+  const outputPath = `/tmp/render_${jobId}_${Date.now()}.png`
+  
+  try {
+    const startTime = Date.now()
+    
+    // Run Blender in background mode
+    const { stdout, stderr } = await execAsync(
+      `blender --background --python ${scriptPath} --render-output ${outputPath}`
+    )
+    
+    const renderTime = (Date.now() - startTime) / 1000
+    
+    // Check for success
+    if (stderr && !stderr.includes('Blender')) {
+      throw new Error(`Blender error: ${stderr}`)
     }
+    
+    return {
+      outputPath: outputPath,
+      renderTime: renderTime,
+      resolution: '1920x1080'
+    }
+    
+  } catch (error) {
+    console.error('Blender execution error:', error)
+    throw error
   }
-  
-  // Neem het grootste oppervlakte
-  const maxOppervlakte = Math.max(...results.map(r => r.oppervlakte_m2 || 0))
-  
-  // Neem het oudste bouwjaar (waarschijnlijk correct)
-  const bouwjaren = results.map(r => r.bouwjaar).filter(Boolean)
-  const oudsteBouwjaar = bouwjaren.length > 0 ? Math.min(...bouwjaren) : null
-  
-  // Bepaal meest voorkomende project type
-  const types = results.map(r => r.project_type).filter(t => t !== 'onbekend')
-  const meestVoorkomendType = types.length > 0 
-    ? types.reduce((a, b, i, arr) => 
-        arr.filter(v => v === a).length >= arr.filter(v => v === b).length ? a : b
-      )
-    : 'onbekend'
-  
-  // Tel kamers op
-  const totaalKamers = results.reduce((sum, r) => sum + (r.aantal_kamers || 0), 0)
-  
-  // Verzamel alle detecties
-  const alleDetecties = results.flatMap(r => r.detecties || [])
-  
-  return {
-    oppervlakte_m2: maxOppervlakte,
-    aantal_kamers: totaalKamers,
-    bouwjaar: oudsteBouwjaar,
-    project_type: meestVoorkomendType,
-    detecties: [...new Set(alleDetecties)], // Unieke waarden
-    aantal_bestanden: results.length
+}
+
+async function uploadRenderToStorage(filePath, jobId) {
+  try {
+    const fileBuffer = fs.readFileSync(filePath)
+    const fileName = `renders/render_${jobId}_${Date.now()}.png`
+    
+    const { data, error } = await supabase.storage
+      .from('bim-assets')
+      .upload(fileName, fileBuffer, {
+        contentType: 'image/png',
+        upsert: true
+      })
+    
+    if (error) throw error
+    
+    // Get public URL
+    const { data: { publicUrl } } = supabase.storage
+      .from('bim-assets')
+      .getPublicUrl(fileName)
+    
+    // Cleanup local file
+    fs.unlinkSync(filePath)
+    
+    return publicUrl
+    
+  } catch (error) {
+    console.error('Upload to storage error:', error)
+    throw error
   }
 }
 
