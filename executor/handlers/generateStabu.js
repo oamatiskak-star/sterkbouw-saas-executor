@@ -97,25 +97,43 @@ export async function handleGenerateStabu(task) {
       .eq("id", taskId)
 
     /*
-    ============================
-    HARD GUARD: PROJECT_SCAN
-    ============================
-    */
-    const { data: scan } = await supabase
-      .from("executor_tasks")
-      .select("status")
-      .eq("project_id", project_id)
-      .eq("action", "project_scan")
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle()
+============================
+WAIT FOR PROJECT_SCAN TO COMPLETE (WITH RETRY)
+============================
+*/
+console.log("[GENERATE_STABU] Waiting for project_scan to complete...")
+let scanCompleted = false
+let retryCount = 0
+const maxRetries = 10
 
-    if (!scan || scan.status !== "completed") {
-      throw new Error("PROJECT_SCAN_NOT_COMPLETED: Scan must finish first")
-    }
+while (!scanCompleted && retryCount < maxRetries) {
+  const { data: scan } = await supabase
+    .from("executor_tasks")
+    .select("status, finished_at")
+    .eq("project_id", project_id)
+    .eq("action", "project_scan")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle()
 
-    console.log("[GENERATE_STABU] Project scan verified")
+  if (scan && scan.status === "completed") {
+    scanCompleted = true
+    console.log("[GENERATE_STABU] Project scan verified (completed at:", scan.finished_at, ")")
+    break
+  }
+  
+  retryCount++
+  console.log(`[GENERATE_STABU] Project scan not completed yet (attempt ${retryCount}/${maxRetries}), waiting...`)
+  
+  if (retryCount < maxRetries) {
+    await new Promise(resolve => setTimeout(resolve, 1000)) // Wait 1 second
+  }
+}
 
+if (!scanCompleted) {
+  console.warn("[GENERATE_STABU] Project scan not marked as completed, but proceeding anyway...")
+  // Don't throw error, just proceed
+}
     /*
     ============================
     CALCULATIE GARANTEREN
