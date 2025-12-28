@@ -108,7 +108,6 @@ export class TwoJoursWriter {
 
     const t = (v) => String(v || "")
 
-    // Pas deze posities aan als jouw PNG exact anders is
     page.drawText(t(project.naam_opdrachtgever || project.opdrachtgever), {
       x: 85, y: 445, size: 9, font: this.font
     })
@@ -150,26 +149,25 @@ export class TwoJoursWriter {
     for (const r of regels) {
       if (row >= maxRows) newPage()
 
-      drawClampedText(page, this.font, r.stabu_code,      COL.code.x,        y, COL.code.w)
-      drawClampedText(page, this.font, r.omschrijving,   COL.omschrijving.x,y, COL.omschrijving.w)
-      drawClampedText(page, this.font, r.hoeveelheid,    COL.aantal.x,      y, COL.aantal.w)
-      drawClampedText(page, this.font, r.eenheid,        COL.eenheid.x,     y, COL.eenheid.w)
-      drawClampedText(page, this.font, r.normuren,       COL.norm.x,        y, COL.norm.w)
-      drawClampedText(page, this.font, r.uren,           COL.uren.x,        y, COL.uren.w)
-      drawClampedText(page, this.font, euro(r.loonkosten),COL.loonkosten.x, y, COL.loonkosten.w)
-      drawClampedText(page, this.font, euro(r.prijs_eenh),COL.prijs_eenh.x, y, COL.prijs_eenh.w)
-      drawClampedText(page, this.font, euro(r.materiaalprijs),COL.materiaal.x,y, COL.materiaal.w)
-      drawClampedText(page, this.font, r.oa_perc,         COL.oa_perc.x,     y, COL.oa_perc.w)
-      drawClampedText(page, this.font, euro(r.oa),        COL.oa.x,          y, COL.oa.w)
-      drawClampedText(page, this.font, euro(r.stelp_eenh),COL.stelp_eenh.x, y, COL.stelp_eenh.w)
-      drawClampedText(page, this.font, euro(r.stelposten),COL.stelposten.x, y, COL.stelposten.w)
-      drawClampedText(page, this.font, euro(r.totaal),    COL.totaal.x,      y, COL.totaal.w)
+      drawClampedText(page, this.font, r.stabu_code,      COL.code.x,         y, COL.code.w)
+      drawClampedText(page, this.font, r.omschrijving,   COL.omschrijving.x, y, COL.omschrijving.w)
+      drawClampedText(page, this.font, r.hoeveelheid,    COL.aantal.x,       y, COL.aantal.w)
+      drawClampedText(page, this.font, r.eenheid,        COL.eenheid.x,      y, COL.eenheid.w)
+      drawClampedText(page, this.font, r.normuren,       COL.norm.x,         y, COL.norm.w)
+      drawClampedText(page, this.font, r.uren,           COL.uren.x,         y, COL.uren.w)
+      drawClampedText(page, this.font, euro(r.loonkosten),     COL.loonkosten.x, y, COL.loonkosten.w)
+      drawClampedText(page, this.font, euro(r.prijs_eenh),     COL.prijs_eenh.x, y, COL.prijs_eenh.w)
+      drawClampedText(page, this.font, euro(r.materiaalprijs), COL.materiaal.x,  y, COL.materiaal.w)
+      drawClampedText(page, this.font, r.oa_perc,         COL.oa_perc.x,      y, COL.oa_perc.w)
+      drawClampedText(page, this.font, euro(r.oa),        COL.oa.x,           y, COL.oa.w)
+      drawClampedText(page, this.font, euro(r.stelp_eenh),COL.stelp_eenh.x,   y, COL.stelp_eenh.w)
+      drawClampedText(page, this.font, euro(r.stelposten),COL.stelposten.x,   y, COL.stelposten.w)
+      drawClampedText(page, this.font, euro(r.totaal),    COL.totaal.x,       y, COL.totaal.w)
 
       y -= PAGE.rowHeight
       row++
     }
 
-    // Totalen (op laatste calculatiepagina)
     if (totalen) {
       drawClampedText(
         page,
@@ -197,7 +195,7 @@ export class TwoJoursWriter {
 
   /*
   ============================
-  SAVE
+  SAVE  (FIX: correcte upload-volgorde)
   ============================
   */
   async save() {
@@ -206,10 +204,11 @@ export class TwoJoursWriter {
 
     await supabase.storage
       .from(BUCKET)
-      .upload(path, {
-        contentType: "application/pdf",
-        upsert: true
-      }, bytes)
+      .upload(
+        path,
+        bytes,
+        { contentType: "application/pdf", upsert: true }
+      )
 
     return `${process.env.SUPABASE_URL}/storage/v1/object/public/${BUCKET}/${path}`
   }
