@@ -9,10 +9,11 @@ const supabase = createClient(
 
 /*
 ===========================================================
-2JOURS PDF – TEMPLATE GEDREVEN (EXCEL = SOURCE OF TRUTH)
-- Geen task-object
+2JOURS PDF – EXCEL LAYOUT = SOURCE OF TRUTH
+===========================================================
 - Alleen project_id
-- Layout exact uit Excel
+- Excel bepaalt exact positie
+- Rode cellen = dynamisch
 ===========================================================
 */
 
@@ -31,8 +32,8 @@ function euro(n) {
 }
 
 function isRed(cell) {
-  const rgbVal = cell?.s?.font?.color?.rgb
-  return rgbVal && rgbVal.toUpperCase() === "FFFF0000"
+  const c = cell?.s?.font?.color?.rgb
+  return c && c.toUpperCase() === "FFFF0000"
 }
 
 /*
@@ -60,101 +61,83 @@ export async function generate2joursPdf(project_id) {
 
   assert(Array.isArray(regels) && regels.length > 0, "NO_CALCULATIE_DATA")
 
-  const { data: templateFile } = await supabase
+  const { data: tpl } = await supabase
     .storage
     .from(TEMPLATE_BUCKET)
     .download(TEMPLATE_PATH)
 
-  assert(templateFile, "TEMPLATE_NOT_FOUND")
+  assert(tpl, "TEMPLATE_NOT_FOUND")
 
-  const buffer = Buffer.from(await templateFile.arrayBuffer())
+  const buffer = Buffer.from(await tpl.arrayBuffer())
   const workbook = xlsx.read(buffer, { cellStyles: true })
 
   const pdf = await PDFDocument.create()
   const font = await pdf.embedFont(StandardFonts.Helvetica)
 
-  renderSheet({
-    pdf,
-    font,
-    sheet: workbook.Sheets["Voorblad"],
-    size: A4_P,
-    project,
-    regels
-  })
+  renderSheet(pdf, font, workbook.Sheets["Voorblad"], A4_P, project, regels)
+  renderSheet(pdf, font, workbook.Sheets["Voorblad calculatie_regels"], A4_L, project, regels)
+  renderCalculatieRegels(pdf, font, regels)
+  renderSheet(pdf, font, workbook.Sheets["Staartblad"], A4_L, project, regels)
 
-  renderSheet({
-    pdf,
-    font,
-    sheet: workbook.Sheets["Voorblad calculatie_regels"],
-    size: A4_L,
-    project,
-    regels
-  })
+  const bytes = await pdf.save()
+  const target = `${project_id}/offerte_2jours.pdf`
 
-  renderCalculatieRegels({
-    pdf,
-    font,
-    regels
-  })
-
-  renderSheet({
-    pdf,
-    font,
-    sheet: workbook.Sheets["Staartblad"],
-    size: A4_L,
-    project,
-    regels
-  })
-
-  const pdfBytes = await pdf.save()
-  const path = `${project_id}/offerte_2jours.pdf`
-
-  await supabase.storage.from("sterkcalc").upload(path, pdfBytes, {
+  await supabase.storage.from("sterkcalc").upload(target, bytes, {
     upsert: true,
     contentType: "application/pdf"
   })
 
-  const publicUrl =
-    `${process.env.SUPABASE_URL}/storage/v1/object/public/sterkcalc/${path}`
+  const url =
+    `${process.env.SUPABASE_URL}/storage/v1/object/public/sterkcalc/${target}`
 
-  await supabase
-    .from("projects")
-    .update({ pdf_url: publicUrl })
-    .eq("id", project_id)
+  await supabase.from("projects").update({ pdf_url: url }).eq("id", project_id)
 
-  return { status: "DONE", pdf_url: publicUrl }
+  return { status: "DONE", pdf_url: url }
 }
 
 /*
 ===========================================================
-GENERIC SHEET RENDERER (EXCEL → PDF)
+EXCEL → PDF RENDER (ECHTE METINGEN)
 ===========================================================
 */
-function renderSheet({ pdf, font, sheet, size, project, regels }) {
+function renderSheet(pdf, font, sheet, pageSize, project, regels) {
   if (!sheet) return
 
-  const page = pdf.addPage(size)
+  const page = pdf.addPage(pageSize)
+
+  const cols = sheet["!cols"] || []
+  const rows = sheet["!rows"] || []
+
+  const colWidths = cols.map(c => (c?.wpx ?? 64))
+  const rowHeights = rows.map(r => (r?.hpx ?? 20))
+
+  function xPos(c) {
+    let x = 40
+    for (let i = 0; i < c; i++) x += colWidths[i] || 64
+    return x
+  }
+
+  function yPos(r) {
+    let y = pageSize[1] - 40
+    for (let i = 0; i < r; i++) y -= rowHeights[i] || 20
+    return y
+  }
 
   for (const addr in sheet) {
     if (addr.startsWith("!")) continue
-
     const cell = sheet[addr]
     if (cell.v == null) continue
 
     const { c, r } = xlsx.utils.decode_cell(addr)
 
-    const x = 40 + c * 60
-    const y = size[1] - 40 - r * 18
-
     let value = cell.v
-
     if (isRed(cell)) {
       value = resolveDynamicValue(String(cell.v), project, regels)
     }
 
     page.drawText(String(value), {
-      x,
-      y,
+      x: xPos(c),
+      y: yPos(r),
       size: 8,
       font,
       color: rgb(0, 0, 0)
@@ -164,10 +147,10 @@ function renderSheet({ pdf, font, sheet, size, project, regels }) {
 
 /*
 ===========================================================
-CALCULATIE REGELS (MEERPAGINA, DYNAMISCH)
+CALCULATIE REGELS (MEERPAGINA)
 ===========================================================
 */
-function renderCalculatieRegels({ pdf, font, regels }) {
+function renderCalculatieRegels(pdf, font, regels) {
   let page = pdf.addPage(A4_L)
   let y = A4_L[1] - 40
 
@@ -178,8 +161,8 @@ function renderCalculatieRegels({ pdf, font, regels }) {
     }
 
     page.drawText(r.code || "", { x: 40, y, size: 8, font })
-    page.drawText(r.omschrijving || "", { x: 100, y, size: 8, font })
-    page.drawText(euro(r.totaal), { x: 740, y, size: 8, font })
+    page.drawText(r.omschrijving || "", { x: 120, y, size: 8, font })
+    page.drawText(euro(r.totaal), { x: 760, y, size: 8, font })
 
     y -= 18
   }
@@ -187,7 +170,7 @@ function renderCalculatieRegels({ pdf, font, regels }) {
 
 /*
 ===========================================================
-DYNAMIC VALUE RESOLVER (RODE CELLEN)
+DYNAMISCHE VELDEN (ROOD)
 ===========================================================
 */
 function resolveDynamicValue(text, project, regels) {
@@ -195,15 +178,13 @@ function resolveDynamicValue(text, project, regels) {
 
   if (t.includes("opdrachtgever")) return project.opdrachtgever || ""
   if (t.includes("projectnaam")) return project.naam || ""
-  if (t.includes("projectomschrijving")) return project.omschrijving || ""
+  if (t.includes("omschrijving")) return project.omschrijving || ""
   if (t.includes("plaats")) return project.plaatsnaam || ""
   if (t.includes("offertenummer")) return project.offertenummer || ""
   if (t.includes("datum")) return project.offertedatum || ""
 
   if (t.includes("aanneemsom")) {
-    return euro(
-      regels.reduce((s, r) => s + Number(r.totaal || 0), 0)
-    )
+    return euro(regels.reduce((s, r) => s + Number(r.totaal || 0), 0))
   }
 
   return ""
