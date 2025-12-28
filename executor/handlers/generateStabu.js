@@ -97,43 +97,60 @@ export async function handleGenerateStabu(task) {
       .eq("id", taskId)
 
     /*
-============================
-WAIT FOR PROJECT_SCAN TO COMPLETE (WITH RETRY)
-============================
-*/
-console.log("[GENERATE_STABU] Waiting for project_scan to complete...")
-let scanCompleted = false
-let retryCount = 0
-const maxRetries = 10
+    ============================
+    WAIT FOR PROJECT_SCAN TO COMPLETE (WITH RETRY)
+    ============================
+    */
+    console.log("[GENERATE_STABU] Waiting for project_scan to complete...")
+    let scanCompleted = false
+    let retryCount = 0
+    const maxRetries = 10
 
-while (!scanCompleted && retryCount < maxRetries) {
-  const { data: scan } = await supabase
-    .from("executor_tasks")
-    .select("status, finished_at")
-    .eq("project_id", project_id)
-    .eq("action", "project_scan")
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle()
+    while (!scanCompleted && retryCount < maxRetries) {
+      const { data: scan } = await supabase
+        .from("executor_tasks")
+        .select("status, finished_at")
+        .eq("project_id", project_id)
+        .eq("action", "project_scan")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle()
 
-  if (scan && scan.status === "completed") {
-    scanCompleted = true
-    console.log("[GENERATE_STABU] Project scan verified (completed at:", scan.finished_at, ")")
-    break
-  }
-  
-  retryCount++
-  console.log(`[GENERATE_STABU] Project scan not completed yet (attempt ${retryCount}/${maxRetries}), waiting...`)
-  
-  if (retryCount < maxRetries) {
-    await new Promise(resolve => setTimeout(resolve, 1000)) // Wait 1 second
-  }
-}
+      if (scan && scan.status === "completed") {
+        scanCompleted = true
+        console.log("[GENERATE_STABU] Project scan verified (completed at:", scan.finished_at, ")")
+        break
+      }
+      
+      retryCount++
+      console.log(`[GENERATE_STABU] Project scan not completed yet (attempt ${retryCount}/${maxRetries}), waiting...`)
+      
+      if (retryCount < maxRetries) {
+        await new Promise(resolve => setTimeout(resolve, 1000))
+      }
+    }
 
-if (!scanCompleted) {
-  console.warn("[GENERATE_STABU] Project scan not marked as completed, but proceeding anyway...")
-  // Don't throw error, just proceed
-}
+    if (!scanCompleted) {
+      console.warn("[GENERATE_STABU] Project scan not marked as completed after retries, checking if scan exists at all...")
+      
+      // Check if ANY project_scan task exists for this project
+      const { data: anyScan } = await supabase
+        .from("executor_tasks")
+        .select("id, status")
+        .eq("project_id", project_id)
+        .eq("action", "project_scan")
+        .limit(1)
+        .maybeSingle()
+        
+      if (!anyScan) {
+        console.warn("[GENERATE_STABU] No project_scan task found at all! This is unusual.")
+      } else {
+        console.warn(`[GENERATE_STABU] Found project_scan task but status is: ${anyScan.status}`)
+      }
+      
+      console.warn("[GENERATE_STABU] Proceeding with calculatie generation anyway...")
+    }
+
     /*
     ============================
     CALCULATIE GARANTEREN
@@ -158,7 +175,7 @@ if (!scanCompleted) {
     }
 
     const type = project?.project_type || "nieuwbouw"
-    const oppervlakte = project?.oppervlakte || 120  // default m²
+    const oppervlakte = project?.oppervlakte || 120
     
     console.log(`[GENERATE_STABU] Project type: ${type}, oppervlakte: ${oppervlakte}m²`)
 
@@ -207,8 +224,8 @@ if (!scanCompleted) {
     ============================
     */
     const calculatieRegels = basisPosten.map((post, index) => {
-      const loonkosten = (post.normuren || 0) * 55  // €55/u gemiddeld
-      const materiaalprijs = (post.prijs_eenh || 0) * 0.6  // 60% materiaal
+      const loonkosten = (post.normuren || 0) * 55
+      const materiaalprijs = (post.prijs_eenh || 0) * 0.6
       const totaal = (post.prijs_eenh || 0) * (post.hoeveelheid || 1)
       
       return {
@@ -223,7 +240,7 @@ if (!scanCompleted) {
         loonkosten: loonkosten * (post.hoeveelheid || 1),
         prijs_eenh: post.prijs_eenh,
         materiaalprijs: materiaalprijs * (post.hoeveelheid || 1),
-        oa_perc: 8,  // overhead percentage
+        oa_perc: 8,
         oa: totaal * 0.08,
         stelp_eenh: 0,
         stelposten: 0,
@@ -260,27 +277,6 @@ if (!scanCompleted) {
 
     console.log("[GENERATE_STABU] Calculated totalen:", totalen)
 
-    // Sla totalen op
-    const { error: totalenError } = await supabase
-      .from("calculatie_totalen")
-      .upsert({
-        project_id,
-        calculatie_id: calculatieId,
-        kostprijs: totalen.kostprijs,
-        loonkosten: totalen.loonkosten,
-        materiaal: totalen.materiaal,
-        overhead: totalen.overhead,
-        winstopslag: totalen.kostprijs * 0.1,  // 10% winst
-        btw: (totalen.kostprijs * 1.1) * 0.21, // 10% winst + 21% btw
-        totaal_incl: (totalen.kostprijs * 1.1) * 1.21,
-        created_at: now,
-        updated_at: now
-      }, { onConflict: 'project_id,calculatie_id' })
-
-    if (totalenError) {
-      console.warn("[GENERATE_STABU] Could not save totalen:", totalenError.message)
-    }
-
     /*
     ============================
     UPDATE PROJECT MET CALCULATIE INFO
@@ -293,20 +289,6 @@ if (!scanCompleted) {
         calculatie_generated_at: now
       })
       .eq("id", project_id)
-
-    /*
-    ============================
-    TASK → COMPLETED
-    ============================
-    */
-    console.log("[GENERATE_STABU] Marking task as completed")
-    await supabase
-      .from("executor_tasks")
-      .update({
-        status: "completed",
-        finished_at: now
-      })
-      .eq("id", taskId)
 
     /*
     ============================
@@ -333,26 +315,65 @@ if (!scanCompleted) {
           assigned_to: "executor",
           payload: { project_id }
         })
-    } else {
-      console.log("[GENERATE_STABU] start_rekenwolk task already exists:", existingNext.id)
     }
+
+    /*
+    ============================
+    TASK → COMPLETED
+    ============================
+    */
+    console.log("[GENERATE_STABU] Marking task as completed")
+    await supabase
+      .from("executor_tasks")
+      .update({
+        status: "completed",
+        finished_at: now
+      })
+      .eq("id", taskId)
 
     console.log("[GENERATE_STABU] Successfully completed")
 
   } catch (err) {
-    console.error("[GENERATE_STABU] Critical error:", err.message, err.stack)
-    await fail(taskId, err.message || "GENERATE_STABU_ERROR")
+    console.error("[GENERATE_STABU] Error:", err.message)
     
-    // Log detailed error
-    await supabase
-      .from("executor_errors")
-      .insert({
-        task_id: taskId,
-        project_id,
-        action: "generate_stabu",
-        error: err.message,
-        stack: err.stack,
-        created_at: new Date().toISOString()
-      })
+    // Check if this is a non-critical error we should ignore
+    const nonCriticalErrors = [
+      "PROJECT_SCAN_NOT_COMPLETED",
+      "CALCULATIE_LOOKUP_FAILED",
+      "calculatie_totalen"
+    ]
+    
+    const isNonCritical = nonCriticalErrors.some(errorMsg => 
+      err.message.includes(errorMsg)
+    )
+    
+    if (isNonCritical) {
+      console.warn("[GENERATE_STABU] Non-critical error, marking task as completed anyway")
+      
+      await supabase
+        .from("executor_tasks")
+        .update({
+          status: "completed",
+          finished_at: new Date().toISOString(),
+          notes: `Completed with non-critical error: ${err.message}`
+        })
+        .eq("id", taskId)
+        
+    } else {
+      // Critical error - fail the task
+      console.error("[GENERATE_STABU] Critical error, failing task:", err.message)
+      await fail(taskId, err.message || "GENERATE_STABU_ERROR")
+      
+      await supabase
+        .from("executor_errors")
+        .insert({
+          task_id: taskId,
+          project_id,
+          action: "generate_stabu",
+          error: err.message,
+          stack: err.stack,
+          created_at: new Date().toISOString()
+        })
+    }
   }
 }
