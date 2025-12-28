@@ -1,0 +1,47 @@
+version: '3.8'
+
+services:
+  executor:
+    build: .
+    container_name: executor-service
+    environment:
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - LOG_LEVEL=INFO
+    volumes:
+      - ./data/uploads:/tmp/uploads
+      - ./data/processed:/tmp/processed
+      - ./data/cache:/tmp/cache
+      - ./logs:/app/logs
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+    restart: unless-stopped
+    networks:
+      - executor-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: executor-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    networks:
+      - executor-network
+
+networks:
+  executor-network:
+    driver: bridge
+
+volumes:
+  redis-data:
