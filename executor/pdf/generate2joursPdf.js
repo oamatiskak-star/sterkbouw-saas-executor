@@ -1,6 +1,15 @@
 import { createClient } from "@supabase/supabase-js"
 import { PDFDocument, rgb, StandardFonts } from "pdf-lib"
-import fetch from "node-fetch"
+
+/*
+===========================================================
+2JOURS PDF GENERATOR – STABIELE BASIS (PNG BACKGROUND)
+- Node 18+ compatible (geen node-fetch)
+- PNG templates als full-page background
+- Absolute positionering
+- Crash-vrij
+===========================================================
+*/
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -9,54 +18,90 @@ const supabase = createClient(
 
 /*
 ===========================================================
-2JOURS PDF GENERATOR – STABIELE EINDVERSIE
-- PNG templates als full-page background
-- Tekst absoluut gepositioneerd
-- Lege regels toegestaan
+UTILS
 ===========================================================
 */
-
 async function loadImage(pdf, url) {
+  if (!global.fetch) {
+    throw new Error("FETCH_NOT_AVAILABLE")
+  }
+
   const res = await fetch(url)
+  if (!res.ok) {
+    throw new Error(`IMAGE_LOAD_FAILED: ${url}`)
+  }
+
   const buf = await res.arrayBuffer()
   return pdf.embedPng(buf)
 }
 
-export default async function generate2joursPdf(task) {
-  const { project_id, id: task_id } = task
-  if (!project_id) throw new Error("NO_PROJECT_ID")
+function assert(cond, msg) {
+  if (!cond) throw new Error(msg)
+}
 
-  const pdf = await PDFDocument.create()
-  const font = await pdf.embedFont(StandardFonts.Helvetica)
+/*
+===========================================================
+MAIN
+===========================================================
+*/
+export default async function generate2joursPdf(task) {
+  assert(task, "TASK_MISSING")
+
+  const project_id =
+    task.project_id ||
+    task.payload?.project_id ||
+    null
+
+  const task_id = task.id || null
+
+  assert(project_id, "NO_PROJECT_ID")
 
   /*
   ===========================================================
   DATA OPHALEN
   ===========================================================
   */
-  const { data: project } = await supabase
+  const { data: project, error: projErr } = await supabase
     .from("projects")
     .select("*")
     .eq("id", project_id)
     .single()
 
-  const { data: regelsRaw } = await supabase
+  if (projErr || !project) {
+    throw new Error("PROJECT_NOT_FOUND")
+  }
+
+  const { data: regelsRaw, error: regelsErr } = await supabase
     .from("v_calculatie_2jours")
     .select("*")
     .eq("project_id", project_id)
+    .order("code")
+
+  if (regelsErr) {
+    throw new Error("CALCULATIE_REGELS_INVALID")
+  }
 
   const regels = Array.isArray(regelsRaw) ? regelsRaw : []
 
   /*
   ===========================================================
-  TEMPLATE URLS (SUPABASE STORAGE)
+  PDF INIT
   ===========================================================
   */
-  const base = `${process.env.SUPABASE_URL}/storage/v1/object/public/sterkcalc/templates`
+  const pdf = await PDFDocument.create()
+  const font = await pdf.embedFont(StandardFonts.Helvetica)
+
+  /*
+  ===========================================================
+  TEMPLATE URLS (SUPABASE STORAGE – PUBLIC)
+  ===========================================================
+  */
+  const base =
+    `${process.env.SUPABASE_URL}/storage/v1/object/public/sterkcalc/templates`
 
   const tplVoorblad = `${base}/2jours_voorblad.png`
-  const tplCalc = `${base}/2jours_calculatie.png`
-  const tplStaart = `${base}/2jours_staartblad.png`
+  const tplCalc     = `${base}/2jours_calculatie.png`
+  const tplStaart   = `${base}/2jours_staartblad.png`
 
   /*
   ===========================================================
@@ -64,19 +109,24 @@ export default async function generate2joursPdf(task) {
   ===========================================================
   */
   {
-    const page = pdf.addPage([595, 842]) // A4
+    const page = pdf.addPage([595, 842]) // A4 portrait
     const bg = await loadImage(pdf, tplVoorblad)
-    page.drawImage(bg, { x: 0, y: 0, width: 595, height: 842 })
 
-    // NAW – ABSOLUUT (exact onder elkaar)
+    page.drawImage(bg, {
+      x: 0,
+      y: 0,
+      width: 595,
+      height: 842
+    })
+
     let y = 620
     const lh = 14
 
     const lines = [
-      project?.naam_opdrachtgever,
-      project?.adres,
-      project?.postcode,
-      project?.plaats
+      project.naam_opdrachtgever,
+      project.adres,
+      project.postcode,
+      project.plaats
     ].filter(Boolean)
 
     for (const line of lines) {
@@ -93,24 +143,37 @@ export default async function generate2joursPdf(task) {
 
   /*
   ===========================================================
-  PAGINA 2 – CALCULATIEREGELS
+  PAGINA 2 – CALCULATIEREGELS (1e pagina)
+  ===========================================================
+  NB: multipage komt hierna, dit is stabiele basis
   ===========================================================
   */
   {
-    const page = pdf.addPage([595, 842])
+    const page = pdf.addPage([842, 595]) // A4 landscape
     const bg = await loadImage(pdf, tplCalc)
-    page.drawImage(bg, { x: 0, y: 0, width: 595, height: 842 })
 
-    let y = 650
+    page.drawImage(bg, {
+      x: 0,
+      y: 0,
+      width: 842,
+      height: 595
+    })
+
+    let y = 500
     const rowH = 12
 
     for (const r of regels) {
-      page.drawText(String(r.code || ""), { x: 40, y, size: 8, font })
-      page.drawText(String(r.omschrijving || ""), { x: 80, y, size: 8, font })
-      page.drawText(String(r.aantal || ""), { x: 300, y, size: 8, font })
-      page.drawText(`€ ${r.totaal || "0,00"}`, { x: 460, y, size: 8, font })
+      if (y < 90) break
+
+      page.drawText(String(r.code || ""),          { x: 40,  y, size: 8, font })
+      page.drawText(String(r.omschrijving || ""), { x: 90,  y, size: 8, font })
+      page.drawText(String(r.aantal || ""),        { x: 420, y, size: 8, font })
+      page.drawText(
+        `€ ${Number(r.totaal || 0).toFixed(2)}`,
+        { x: 720, y, size: 8, font }
+      )
+
       y -= rowH
-      if (y < 80) break
     }
   }
 
@@ -122,7 +185,13 @@ export default async function generate2joursPdf(task) {
   {
     const page = pdf.addPage([595, 842])
     const bg = await loadImage(pdf, tplStaart)
-    page.drawImage(bg, { x: 0, y: 0, width: 595, height: 842 })
+
+    page.drawImage(bg, {
+      x: 0,
+      y: 0,
+      width: 595,
+      height: 842
+    })
   }
 
   /*
@@ -131,7 +200,6 @@ export default async function generate2joursPdf(task) {
   ===========================================================
   */
   const pdfBytes = await pdf.save()
-
   const path = `pdf/${project_id}/offerte_2jours.pdf`
 
   await supabase.storage
@@ -141,17 +209,23 @@ export default async function generate2joursPdf(task) {
       upsert: true
     })
 
-  const pdfUrl = `${process.env.SUPABASE_URL}/storage/v1/object/public/sterkcalc/${path}`
+  const pdfUrl =
+    `${process.env.SUPABASE_URL}/storage/v1/object/public/sterkcalc/${path}`
 
   await supabase
     .from("projects")
     .update({ pdf_url: pdfUrl })
     .eq("id", project_id)
 
-  await supabase
-    .from("executor_tasks")
-    .update({ status: "completed" })
-    .eq("id", task_id)
+  if (task_id) {
+    await supabase
+      .from("executor_tasks")
+      .update({
+        status: "completed",
+        finished_at: new Date().toISOString()
+      })
+      .eq("id", task_id)
+  }
 
   return { pdf_url: pdfUrl }
 }
