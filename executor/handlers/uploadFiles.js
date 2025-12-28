@@ -1,5 +1,4 @@
 import { createClient } from "@supabase/supabase-js"
-import { TwoJoursWriter } from "../../builder/pdf/TwoJoursWriter.js"
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -13,8 +12,6 @@ function assert(cond, msg) {
 /*
 =====================================
 HULPFUNCTIE: CALCULATIE BOOTSTRAP
-- Wordt exact 1x aangemaakt
-- Nodig vóór elke PDF-write
 =====================================
 */
 async function ensureCalculatie(project_id) {
@@ -26,10 +23,7 @@ async function ensureCalculatie(project_id) {
     .limit(1)
     .maybeSingle()
 
-  if (error) {
-    throw new Error("CALCULATIE_LOOKUP_FAILED: " + error.message)
-  }
-
+  if (error) throw new Error("CALCULATIE_LOOKUP_FAILED: " + error.message)
   if (existing) return existing.id
 
   const { data: created, error: insertErr } = await supabase
@@ -60,74 +54,37 @@ export async function handleUploadFiles(task) {
   const now = new Date().toISOString()
 
   try {
-    /*
-    ============================
-    TASK → RUNNING
-    ============================
-    */
+    /* TASK → RUNNING */
     await supabase
       .from("executor_tasks")
-      .update({
-        status: "running",
-        started_at: now
-      })
+      .update({ status: "running", started_at: now })
       .eq("id", taskId)
 
-    /*
-    ============================
-    CALCULATIE GARANTEREN
-    ============================
-    */
+    /* CALCULATIE GARANTEREN */
     await ensureCalculatie(project_id)
 
-    /*
-    ============================
-    2JOURS PDF INITIALISEREN
-    ============================
-    */
-    const pdf = await TwoJoursWriter.open(project_id)
-
-    /*
-    ============================
-    GEEN BESTANDEN = GELDIGE STATE
-    ============================
-    */
+    /* GEEN BESTANDEN = GELDIGE STATE */
     if (files.length === 0) {
-      await pdf.writeSection("upload.bestanden", {
-        titel: "Aangeleverde documenten",
-        bestanden: []
-      })
-
-      await pdf.save()
+      await supabase
+        .from("projects")
+        .update({ files_uploaded: false, updated_at: now })
+        .eq("id", project_id)
 
       await supabase
         .from("executor_tasks")
-        .update({
-          status: "completed",
-          finished_at: now
-        })
+        .update({ status: "completed", finished_at: now })
         .eq("id", taskId)
 
-      return {
-        state: "DONE",
-        project_id,
-        files_registered: 0
-      }
+      return { state: "DONE", project_id, files_registered: 0 }
     }
 
-    /*
-    ============================
-    BESTANDEN REGISTREREN
-    ============================
-    */
-    const registeredFiles = []
-
+    /* BESTANDEN REGISTREREN */
     for (const f of files) {
       assert(f.filename, "UPLOAD_FILE_NO_FILENAME")
 
       const storage_path = `${project_id}/${f.filename}`
 
-      const { error: insertErr } = await supabase
+      const { error } = await supabase
         .from("project_files")
         .insert({
           project_id,
@@ -138,47 +95,18 @@ export async function handleUploadFiles(task) {
           created_at: now
         })
 
-      if (insertErr) {
-        throw new Error("UPLOAD_FILE_REGISTER_FAILED: " + insertErr.message)
+      if (error) {
+        throw new Error("UPLOAD_FILE_REGISTER_FAILED: " + error.message)
       }
-
-      registeredFiles.push({
-        filename: f.filename,
-        storage_path,
-        uploaded_at: now
-      })
     }
 
-    /*
-    ============================
-    UPLOAD RESULTAAT → PDF
-    ============================
-    */
-    await pdf.writeSection("upload.bestanden", {
-      titel: "Aangeleverde documenten",
-      bestanden: registeredFiles
-    })
-
-    await pdf.save()
-
-    /*
-    ============================
-    PROJECT STATUS BIJWERKEN
-    ============================
-    */
+    /* PROJECT STATUS */
     await supabase
       .from("projects")
-      .update({
-        files_uploaded: true,
-        updated_at: now
-      })
+      .update({ files_uploaded: true, updated_at: now })
       .eq("id", project_id)
 
-    /*
-    ============================
-    VOLGENDE STAP: PROJECT_SCAN
-    ============================
-    */
+    /* VOLGENDE STAP: PROJECT_SCAN */
     const { data: existingScan } = await supabase
       .from("executor_tasks")
       .select("id")
@@ -199,24 +127,13 @@ export async function handleUploadFiles(task) {
         })
     }
 
-    /*
-    ============================
-    TASK → COMPLETED
-    ============================
-    */
+    /* TASK → COMPLETED */
     await supabase
       .from("executor_tasks")
-      .update({
-        status: "completed",
-        finished_at: now
-      })
+      .update({ status: "completed", finished_at: now })
       .eq("id", taskId)
 
-    return {
-      state: "DONE",
-      project_id,
-      files_registered: files.length
-    }
+    return { state: "DONE", project_id, files_registered: files.length }
 
   } catch (err) {
     await supabase
@@ -227,7 +144,6 @@ export async function handleUploadFiles(task) {
         finished_at: new Date().toISOString()
       })
       .eq("id", taskId)
-
     throw err
   }
 }
