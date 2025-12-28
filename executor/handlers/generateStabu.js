@@ -185,7 +185,6 @@ export async function handleGenerateStabu(task) {
         oa: totaal * 0.08,
         stelp_eenh: 0,
         stelposten: 0,
-        totaal: totaal
       }
     })
 
