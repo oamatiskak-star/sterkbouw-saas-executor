@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js"
 import { PDFDocument, rgb, StandardFonts } from "pdf-lib"
+import fetch from "node-fetch"
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -8,177 +9,149 @@ const supabase = createClient(
 
 /*
 ===========================================================
-2JOURS PDF GENERATOR – PNG BACKGROUND (DEFINITIEF)
-- Excel layout = PNG background
-- PDF bestaat altijd
-- Calculatie vult zich pas na rekenwolk
+2JOURS PDF GENERATOR – STABIELE EINDVERSIE
+- PNG templates als full-page background
+- Tekst absoluut gepositioneerd
+- Lege regels toegestaan
 ===========================================================
 */
 
-const BUCKET = "sterkcalc"
-
-const PNGS = {
-  voorblad: "templates/2jours_voorblad.png",
-  calculatie: "templates/2jours_calculatie.png",
-  staartblad: "templates/2jours_staartblad.png"
+async function loadImage(pdf, url) {
+  const res = await fetch(url)
+  const buf = await res.arrayBuffer()
+  return pdf.embedPng(buf)
 }
 
-const A4_P = [595, 842]
-const A4_L = [842, 595]
+export default async function generate2joursPdf(task) {
+  const { project_id, id: task_id } = task
+  if (!project_id) throw new Error("NO_PROJECT_ID")
 
-function assert(cond, msg) {
-  if (!cond) throw new Error(msg)
-}
+  const pdf = await PDFDocument.create()
+  const font = await pdf.embedFont(StandardFonts.Helvetica)
 
-function euro(n) {
-  return `€ ${Number(n || 0).toFixed(2)}`
-}
-
-async function loadPng(pdf, path) {
-  const { data, error } = await supabase.storage
-    .from(BUCKET)
-    .download(path)
-
-  assert(!error && data, `PNG_NOT_FOUND: ${path}`)
-
-  const bytes = await data.arrayBuffer()
-  return await pdf.embedPng(bytes)
-}
-
-function drawBackground(page, img) {
-  page.drawImage(img, {
-    x: 0,
-    y: 0,
-    width: page.getWidth(),
-    height: page.getHeight()
-  })
-}
-
-/*
-===========================================================
-MAIN
-===========================================================
-*/
-export async function generate2joursPdf(project_id) {
-  assert(project_id, "NO_PROJECT_ID")
-
+  /*
+  ===========================================================
+  DATA OPHALEN
+  ===========================================================
+  */
   const { data: project } = await supabase
     .from("projects")
     .select("*")
     .eq("id", project_id)
     .single()
 
-  assert(project, "PROJECT_NOT_FOUND")
-
-  const { data: regels } = await supabase
+  const { data: regelsRaw } = await supabase
     .from("v_calculatie_2jours")
     .select("*")
     .eq("project_id", project_id)
-    .order("hoofdstuk_code")
-    .order("code")
 
-  const hasRegels = Array.isArray(regels) && regels.length > 0
-
-  const pdf = await PDFDocument.create()
-  const font = await pdf.embedFont(StandardFonts.Helvetica)
+  const regels = Array.isArray(regelsRaw) ? regelsRaw : []
 
   /*
-  ============================
-  VOORBLAD
-  ============================
+  ===========================================================
+  TEMPLATE URLS (SUPABASE STORAGE)
+  ===========================================================
   */
-  const imgVoorblad = await loadPng(pdf, PNGS.voorblad)
-  const pageVoorblad = pdf.addPage(A4_P)
-  drawBackground(pageVoorblad, imgVoorblad)
+  const base = `${process.env.SUPABASE_URL}/storage/v1/object/public/sterkcalc/templates`
 
-  pageVoorblad.drawText(project.naam || "", {
-    x: 50,
-    y: 360,
-    size: 11,
-    font,
-    color: rgb(0, 0, 0)
-  })
-
-  pageVoorblad.drawText(project.plaatsnaam || "", {
-    x: 50,
-    y: 340,
-    size: 11,
-    font
-  })
+  const tplVoorblad = `${base}/2jours_voorblad.png`
+  const tplCalc = `${base}/2jours_calculatie.png`
+  const tplStaart = `${base}/2jours_staartblad.png`
 
   /*
-  ============================
-  CALCULATIEBLAD (MEERPAGINA)
-  ============================
+  ===========================================================
+  PAGINA 1 – VOORBLAD
+  ===========================================================
   */
-  const imgCalc = await loadPng(pdf, PNGS.calculatie)
+  {
+    const page = pdf.addPage([595, 842]) // A4
+    const bg = await loadImage(pdf, tplVoorblad)
+    page.drawImage(bg, { x: 0, y: 0, width: 595, height: 842 })
 
-  let page = pdf.addPage(A4_L)
-  drawBackground(page, imgCalc)
+    // NAW – ABSOLUUT (exact onder elkaar)
+    let y = 620
+    const lh = 14
 
-  let y = 360
+    const lines = [
+      project?.naam_opdrachtgever,
+      project?.adres,
+      project?.postcode,
+      project?.plaats
+    ].filter(Boolean)
 
-  if (hasRegels) {
-    for (const r of regels) {
-      if (y < 80) {
-        page = pdf.addPage(A4_L)
-        drawBackground(page, imgCalc)
-        y = 360
-      }
-
-      page.drawText(r.code || "", { x: 40, y, size: 8, font })
-      page.drawText(r.omschrijving || "", { x: 120, y, size: 8, font })
-      page.drawText(euro(r.totaal), { x: 760, y, size: 8, font })
-
-      y -= 14
+    for (const line of lines) {
+      page.drawText(String(line), {
+        x: 60,
+        y,
+        size: 10,
+        font,
+        color: rgb(0, 0, 0)
+      })
+      y -= lh
     }
   }
 
   /*
-  ============================
-  STAARTBLAD / TOTALEN
-  ============================
+  ===========================================================
+  PAGINA 2 – CALCULATIEREGELS
+  ===========================================================
   */
-  const imgStaart = await loadPng(pdf, PNGS.staartblad)
-  const pageStaart = pdf.addPage(A4_L)
-  drawBackground(pageStaart, imgStaart)
+  {
+    const page = pdf.addPage([595, 842])
+    const bg = await loadImage(pdf, tplCalc)
+    page.drawImage(bg, { x: 0, y: 0, width: 595, height: 842 })
 
-  if (hasRegels) {
-    const totaal = regels.reduce(
-      (s, r) => s + Number(r.totaal || 0),
-      0
-    )
+    let y = 650
+    const rowH = 12
 
-    pageStaart.drawText(euro(totaal), {
-      x: 760,
-      y: 160,
-      size: 10,
-      font
-    })
+    for (const r of regels) {
+      page.drawText(String(r.code || ""), { x: 40, y, size: 8, font })
+      page.drawText(String(r.omschrijving || ""), { x: 80, y, size: 8, font })
+      page.drawText(String(r.aantal || ""), { x: 300, y, size: 8, font })
+      page.drawText(`€ ${r.totaal || "0,00"}`, { x: 460, y, size: 8, font })
+      y -= rowH
+      if (y < 80) break
+    }
   }
 
   /*
-  ============================
-  OPSLAAN
-  ============================
+  ===========================================================
+  PAGINA 3 – STAARTBLAD
+  ===========================================================
   */
-  const bytes = await pdf.save()
-  const path = `${project_id}/offerte_2jours.pdf`
+  {
+    const page = pdf.addPage([595, 842])
+    const bg = await loadImage(pdf, tplStaart)
+    page.drawImage(bg, { x: 0, y: 0, width: 595, height: 842 })
+  }
+
+  /*
+  ===========================================================
+  OPSLAAN
+  ===========================================================
+  */
+  const pdfBytes = await pdf.save()
+
+  const path = `pdf/${project_id}/offerte_2jours.pdf`
 
   await supabase.storage
-    .from(BUCKET)
-    .upload(path, bytes, {
-      upsert: true,
-      contentType: "application/pdf"
+    .from("sterkcalc")
+    .upload(path, pdfBytes, {
+      contentType: "application/pdf",
+      upsert: true
     })
 
-  const pdfUrl =
-    `${process.env.SUPABASE_URL}/storage/v1/object/public/${BUCKET}/${path}`
+  const pdfUrl = `${process.env.SUPABASE_URL}/storage/v1/object/public/sterkcalc/${path}`
 
   await supabase
     .from("projects")
     .update({ pdf_url: pdfUrl })
     .eq("id", project_id)
 
-  return { status: "DONE", pdf_url: pdfUrl }
+  await supabase
+    .from("executor_tasks")
+    .update({ status: "completed" })
+    .eq("id", task_id)
+
+  return { pdf_url: pdfUrl }
 }
