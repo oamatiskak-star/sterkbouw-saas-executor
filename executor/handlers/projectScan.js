@@ -1,32 +1,60 @@
-// executor/handlers/projectScan.js - MET BETER ERROR HANDLING
+// executor/handlers/projectScan.js - DEBUG VERSIE
 import { createClient } from "@supabase/supabase-js"
 import { sendTelegram } from "../../integrations/telegramSender.js"
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY
+  process.env.SUPABASE_SERVICE_ROLE_KEY,
+  {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false
+    }
+  }
 )
 
+console.log("[PROJECT_SCAN] Module loaded with URL:", process.env.SUPABASE_URL)
+
 async function ensureCalculatie(project_id) {
-  // ... bestaande code ...
+  console.log("[PROJECT_SCAN] ensureCalculatie for:", project_id)
+  // ... keep existing code ...
 }
 
 export async function handleProjectScan(task) {
-  console.log("[PROJECT_SCAN] Starting for project:", task?.project_id)
+  console.log("[PROJECT_SCAN] === START ===", {
+    taskId: task?.id,
+    projectId: task?.project_id,
+    action: task?.action
+  })
   
   if (!task?.id || !task.project_id) {
-    console.error("[PROJECT_SCAN] Invalid task:", task)
+    console.error("[PROJECT_SCAN] Invalid task")
     return
   }
 
   const taskId = task.id
   const project_id = task.project_id
-  const payload = task.payload || {}
-  const chatId = payload.chat_id || null
   const now = new Date().toISOString()
 
   try {
+    // 1. TEST DATABASE CONNECTION FIRST
+    console.log("[PROJECT_SCAN] Testing DB connection...")
+    const { data: testData, error: testError } = await supabase
+      .from("projects")
+      .select("id")
+      .eq("id", project_id)
+      .limit(1)
+      .single()
+    
+    if (testError) {
+      console.error("[PROJECT_SCAN] DB Connection test FAILED:", testError)
+      throw new Error(`Database connection failed: ${testError.message}`)
+    }
+    
+    console.log("[PROJECT_SCAN] DB Connection OK")
+
     /* TASK → RUNNING */
+    console.log("[PROJECT_SCAN] Updating task to running")
     await supabase
       .from("executor_tasks")
       .update({ status: "running", started_at: now })
@@ -37,159 +65,72 @@ export async function handleProjectScan(task) {
 
     /*
     =================================================
-    STABU POSTEN OPHALEN - MET FALLBACK
+    TEST STABU POSTEN QUERY MET DETAILED LOGGING
     =================================================
     */
-    let posten = []
+    console.log("[PROJECT_SCAN] Testing stabu_project_posten query...")
     
-    try {
-      // PROBEER EERST: stabu_project_posten (moet leeg zijn voor nieuw project)
-      const { data: existingProjectPosten, error: existingError } = await supabase
-        .from("stabu_project_posten")
-        .select("id")
-        .eq("project_id", project_id)
-        .limit(1)
-        
-      if (existingError) {
-        console.warn("[PROJECT_SCAN] Cannot query stabu_project_posten:", existingError.message)
-        console.log("[PROJECT_SCAN] This is likely RLS issue, trying workaround...")
-      }
-      
-      // HAAL STABU POSTEN UIT stabu_posten OF stabu_posts
-      const { data: stabuData, error: stabuError } = await supabase
-        .from("stabu_posten")  // Probeer eerst stabu_posten
-        .select(`
-          id,
-          code,
-          omschrijving,
-          eenheid,
-          normuren,
-          arbeidsprijs,
-          materiaalprijs
-        `)
-        .limit(100)  // Beperk voor nu
-      
-      if (stabuError) {
-        console.warn("[PROJECT_SCAN] stabu_posten failed, trying stabu_posts:", stabuError.message)
-        
-        // FALLBACK: probeer stabu_posts
-        const { data: postsData, error: postsError } = await supabase
-          .from("stabu_posts")
-          .select(`
-            id,
-            code,
-            description as omschrijving,
-            unit as eenheid,
-            norm_hours as normuren,
-            labor_price as arbeidsprijs,
-            material_price as materiaalprijs
-          `)
-          .limit(100)
-          
-        if (postsError) {
-          console.error("[PROJECT_SCAN] All stabu queries failed:", postsError.message)
-          // Gebruik hardcoded fallback
-          posten = getHardcodedStabuPosten()
-        } else {
-          posten = postsData || []
-        }
-      } else {
-        posten = stabuData || []
-      }
-      
-    } catch (fetchError) {
-      console.error("[PROJECT_SCAN] Fetch error, using hardcoded posten:", fetchError.message)
-      posten = getHardcodedStabuPosten()
-    }
-
-    if (!Array.isArray(posten) || posten.length === 0) {
-      console.warn("[PROJECT_SCAN] No STABU posten found, using fallback")
-      posten = getHardcodedStabuPosten()
-    }
-
-    console.log(`[PROJECT_SCAN] Working with ${posten.length} STABU posten`)
-
-    /*
-    =================================================
-    PROJECT-STABU OPBOUWEN
-    =================================================
-    */
-    // EERST: Probeer te inserten in stabu_project_posten
-    const projectPosten = posten.map(p => ({
+    // TEST 1: Simple count query
+    const { count, error: countError } = await supabase
+      .from("stabu_project_posten")
+      .select("*", { count: 'exact', head: true })
+      .eq("project_id", project_id)
+    
+    console.log("[PROJECT_SCAN] Count query result:", { count, error: countError?.message })
+    
+    // TEST 2: Try to insert one record
+    const testRecord = {
       project_id,
-      stabu_post_id: p.id,
-      stabu_code: p.code || `STABU-${Math.random().toString(36).substr(2, 9)}`,
-      omschrijving: p.omschrijving || `Stabu post ${p.id}`,
-      eenheid: p.eenheid || "stuk",
-      normuren: p.normuren || 1.0,
-      arbeidsprijs: p.arbeidsprijs || 50.0,
-      materiaalprijs: p.materiaalprijs || 100.0,
+      stabu_code: "TEST-001",
+      omschrijving: "Test post voor debugging",
+      eenheid: "stuk",
+      normuren: 1.0,
+      arbeidsprijs: 100.0,
+      materiaalprijs: 50.0,
       hoeveelheid: 1,
       geselecteerd: true,
       created_at: now
-    }))
-
-    let insertSuccess = false
-    
-    try {
-      const { error: insertError } = await supabase
-        .from("stabu_project_posten")
-        .insert(projectPosten)
-
-      if (insertError) {
-        console.warn("[PROJECT_SCAN] Cannot insert into stabu_project_posten (RLS?):", insertError.message)
-        console.log("[PROJECT_SCAN] Using alternative table: project_stabu_regels")
-        
-        // FALLBACK: gebruik project_stabu_regels
-        const fallbackData = projectPosten.map(p => ({
-          project_id: p.project_id,
-          stabu_code: p.stabu_code,
-          omschrijving: p.omschrijving,
-          eenheid: p.eenheid,
-          norm_uren: p.normuren,
-          arbeidsloon: p.arbeidsprijs,
-          materiaalprijs: p.materiaalprijs,
-          hoeveelheid: p.hoeveelheid,
-          created_at: p.created_at
-        }))
-        
-        await supabase
-          .from("project_stabu_regels")
-          .insert(fallbackData)
-          
-        insertSuccess = true
-        console.log("[PROJECT_SCAN] Inserted into project_stabu_regels instead")
-        
-      } else {
-        insertSuccess = true
-        console.log(`[PROJECT_SCAN] Inserted ${projectPosten.length} posten into stabu_project_posten`)
-      }
-      
-    } catch (insertException) {
-      console.error("[PROJECT_SCAN] Insert exception:", insertException.message)
-      // Ga gewoon door, we hebben tenminste posten in memory
     }
-
-    /*
-    =================================================
-    PROJECT STATUS
-    =================================================
-    */
-    await supabase
-      .from("projects")
-      .update({
-        analysis_status: true,
-        updated_at: now
+    
+    console.log("[PROJECT_SCAN] Trying to insert test record...")
+    const { data: insertedTest, error: insertTestError } = await supabase
+      .from("stabu_project_posten")
+      .insert(testRecord)
+      .select()
+      .single()
+    
+    if (insertTestError) {
+      console.error("[PROJECT_SCAN] INSERT TEST FAILED:", {
+        error: insertTestError,
+        message: insertTestError.message,
+        details: insertTestError.details,
+        hint: insertTestError.hint,
+        code: insertTestError.code
       })
-      .eq("id", project_id)
-
-    console.log(`[PROJECT_SCAN] Updated project status`)
-
+      
+      // Check if it's RLS or missing column
+      if (insertTestError.code === '42501') {
+        console.error("[PROJECT_SCAN] PERMISSION DENIED (RLS)")
+      } else if (insertTestError.code === '42703') {
+        console.error("[PROJECT_SCAN] UNDEFINED COLUMN - check table schema")
+      }
+    } else {
+      console.log("[PROJECT_SCAN] INSERT TEST SUCCESS:", insertedTest)
+      
+      // Clean up test record
+      await supabase
+        .from("stabu_project_posten")
+        .delete()
+        .eq("id", insertedTest.id)
+    }
+    
     /*
     =================================================
-    VOLGENDE STAP: GENERATE_STABU
+    BYPASS: Ga direct naar generate_stabu
     =================================================
     */
+    console.log("[PROJECT_SCAN] Bypassing stabu logic, going directly to generate_stabu")
+    
     const { data: existing } = await supabase
       .from("executor_tasks")
       .select("id")
@@ -199,6 +140,7 @@ export async function handleProjectScan(task) {
       .maybeSingle()
 
     if (!existing) {
+      console.log("[PROJECT_SCAN] Creating generate_stabu task")
       const { data: newTask, error: taskError } = await supabase
         .from("executor_tasks")
         .insert({
@@ -206,43 +148,51 @@ export async function handleProjectScan(task) {
           action: "generate_stabu",
           status: "open",
           assigned_to: "executor",
-          payload: { project_id, chat_id: chatId, posten_count: posten.length }
+          payload: { 
+            project_id, 
+            bypass_scan: true,
+            created_at: now
+          }
         })
         .select()
         .single()
 
       if (taskError) {
-        console.error("[PROJECT_SCAN] Task creation error:", taskError)
-      } else {
-        console.log("[PROJECT_SCAN] Created generate_stabu task:", newTask.id)
+        console.error("[PROJECT_SCAN] Task creation failed:", taskError)
+        throw new Error(`Failed to create generate_stabu task: ${taskError.message}`)
       }
+      
+      console.log("[PROJECT_SCAN] Created task:", newTask.id)
     } else {
-      console.log("[PROJECT_SCAN] generate_stabu task already exists:", existing.id)
+      console.log("[PROJECT_SCAN] Task already exists:", existing.id)
     }
 
     /* TASK → COMPLETED */
+    console.log("[PROJECT_SCAN] Marking task as completed")
     await supabase
       .from("executor_tasks")
       .update({
         status: "completed",
-        finished_at: now
+        finished_at: now,
+        notes: "Bypassed stabu logic due to RLS/table issues"
       })
       .eq("id", taskId)
 
-    console.log("[PROJECT_SCAN] Completed successfully")
-
-    if (chatId) {
-      await sendTelegram(chatId, `Projectscan afgerond: ${posten.length} posten geladen`)
-    }
+    console.log("[PROJECT_SCAN] === COMPLETED SUCCESSFULLY ===")
 
   } catch (err) {
-    console.error("[PROJECT_SCAN] Critical error:", err.message, err.stack)
+    console.error("[PROJECT_SCAN] === CRITICAL ERROR ===", {
+      message: err.message,
+      stack: err.stack,
+      taskId,
+      project_id
+    })
     
     await supabase
       .from("executor_tasks")
       .update({
         status: "failed",
-        error: `Project scan failed: ${err.message}`,
+        error: `Project scan error: ${err.message}`,
         finished_at: new Date().toISOString()
       })
       .eq("id", taskId)
@@ -255,40 +205,11 @@ export async function handleProjectScan(task) {
         action: "project_scan",
         error: err.message,
         stack: err.stack,
+        debug_info: JSON.stringify({
+          supabase_url: process.env.SUPABASE_URL,
+          timestamp: new Date().toISOString()
+        }),
         created_at: new Date().toISOString()
       })
   }
-}
-
-// Helper functie voor hardcoded fallback
-function getHardcodedStabuPosten() {
-  return [
-    {
-      id: 'fallback-1',
-      code: '21.10',
-      omschrijving: 'Grondwerk en fundering',
-      eenheid: 'm²',
-      normuren: 2.5,
-      arbeidsprijs: 85,
-      materiaalprijs: 120
-    },
-    {
-      id: 'fallback-2', 
-      code: '22.20',
-      omschrijving: 'Casco en draagconstructie',
-      eenheid: 'm²',
-      normuren: 6.0,
-      arbeidsprijs: 195,
-      materiaalprijs: 280
-    },
-    {
-      id: 'fallback-3',
-      code: '41.10',
-      omschrijving: 'Installaties E en W',
-      eenheid: 'stuk',
-      normuren: 120,
-      arbeidsprijs: 45000,
-      materiaalprijs: 55000
-    }
-  ]
 }
