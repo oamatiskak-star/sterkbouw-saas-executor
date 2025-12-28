@@ -1,0 +1,61 @@
+services:
+  # AO Executor (Node.js)
+  - type: web
+    name: ao-executor
+    env: node
+    buildCommand: npm install
+    startCommand: node ao.js
+    envVars:
+      - key: PORT
+        value: 10000
+      - key: NODE_ENV
+        value: production
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+      - key: AI_ENGINE_URL
+        value: https://ai-engine.onrender.com
+      - key: BACKEND_URL
+        value: https://sterkbouw-saas-back.onrender.com
+    healthCheckPath: /ping
+    autoDeploy: true
+
+  # AI Engine (Python)
+  - type: web
+    name: ai-engine
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m src.main
+    envVars:
+      - key: PORT
+        value: 8000
+      - key: AI_ENGINE_PORT
+        value: 8000
+      - key: NODE_ENV
+        value: production
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: REDIS_URL
+        value: redis://red-cv9n2uun6mpkrqk9tvm0:6379
+    healthCheckPath: /health
+    autoDeploy: true
+
+  # Redis (voor AI Engine task queue)
+  - type: redis
+    name: sterkbouw-redis
+    ipAllowList: []
+    plan: free
+    maxmemoryPolicy: allkeys-lru
