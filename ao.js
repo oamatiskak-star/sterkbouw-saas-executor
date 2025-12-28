@@ -7,6 +7,8 @@ import { handleTelegramWebhook } from "./integrations/telegramWebhook.js"
 import { sendTelegram } from "./integrations/telegramSender.js"
 import uploadTaskRouter from "./api/executor/upload-task.js"
 import aiDrawingRouter from "./api/ai/generate-drawing.js"
+import renderProcessRouter from "./api/executor/render-process.js"        // NIEUW
+import aiProcessingRouter from "./api/executor/ai-processing.js"          // NIEUW
 
 console.log("AO ENTRYPOINT ao.js LOADED")
 
@@ -104,30 +106,13 @@ app.post("/telegram/webhook", async (req, res) => {
 
 /*
 ========================
-NEW API ROUTES
+API ROUTES - EXECUTOR FUNCTIONALITEIT
 ========================
 */
-app.use("/api/projecten", projectenRouter)
-app.use("/api/generate-calculatie", generateCalculatieRouter)
 app.use("/api/executor/upload-task", uploadTaskRouter)
 app.use("/api/ai/generate-drawing", aiDrawingRouter)
-
-// Health endpoint voor nieuwe API's
-app.get("/api/calculatie/health", (_req, res) => {
-  res.json({ 
-    status: "ok", 
-    service: "calculatie-api",
-    timestamp: new Date().toISOString()
-  })
-})
-
-app.get("/api/ai/health", (_req, res) => {
-  res.json({
-    status: "ok",
-    service: "ai-api",
-    timestamp: new Date().toISOString()
-  })
-})
+app.use("/api/executor/render-process", renderProcessRouter)      // NIEUW
+app.use("/api/executor/ai-processing", aiProcessingRouter)        // NIEUW
 
 /*
 ========================
@@ -188,6 +173,9 @@ async function pollExecutorTasks() {
 
 if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
   console.log("AO EXECUTOR STARTED")
+  console.log("Nieuwe BIM functionaliteiten geladen:")
+  console.log("  - /api/executor/render-process")
+  console.log("  - /api/executor/ai-processing")
   setInterval(pollExecutorTasks, 3000)
 }
 
@@ -197,14 +185,14 @@ SERVER
 ========================
 */
 app.listen(PORT, "0.0.0.0", async () => {
-  console.log("AO SERVICE LIVE", AO_ROLE, PORT)
-  console.log("NEW API ROUTES ACTIVE")
-
+  console.log("AO EXECUTOR SERVICE LIVE", AO_ROLE, PORT)
+  console.log("BIM Render & AI processing beschikbaar")
+  
   if (process.env.TELEGRAM_CHAT_ID) {
     try {
       await sendTelegram(
         process.env.TELEGRAM_CHAT_ID,
-        `ao live\nrole: ${AO_ROLE}\nport: ${PORT}\napis: active`
+        `ao executor live\nrole: ${AO_ROLE}\nport: ${PORT}\nbim: render+ai actief`
       )
     } catch (_) {}
   }
