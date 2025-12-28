@@ -59,10 +59,9 @@ export async function generate2joursPdf(project_id) {
     .order("hoofdstuk_code")
     .order("code")
 
-  assert(Array.isArray(regels) && regels.length > 0, "NO_CALCULATIE_DATA")
+  // LET OP: regels MOGEN leeg zijn (vroege workflow)
 
-  const { data: tpl } = await supabase
-    .storage
+  const { data: tpl } = await supabase.storage
     .from(TEMPLATE_BUCKET)
     .download(TEMPLATE_PATH)
 
@@ -74,10 +73,21 @@ export async function generate2joursPdf(project_id) {
   const pdf = await PDFDocument.create()
   const font = await pdf.embedFont(StandardFonts.Helvetica)
 
-  renderSheet(pdf, font, workbook.Sheets["Voorblad"], A4_P, project, regels)
-  renderSheet(pdf, font, workbook.Sheets["Voorblad calculatie_regels"], A4_L, project, regels)
-  renderCalculatieRegels(pdf, font, regels)
-  renderSheet(pdf, font, workbook.Sheets["Staartblad"], A4_L, project, regels)
+  renderSheet(pdf, font, workbook.Sheets["Voorblad"], A4_P, project, regels || [])
+  renderSheet(
+    pdf,
+    font,
+    workbook.Sheets["Voorblad calculatie_regels"],
+    A4_L,
+    project,
+    regels || []
+  )
+
+  if (Array.isArray(regels) && regels.length > 0) {
+    renderCalculatieRegels(pdf, font, regels)
+  }
+
+  renderSheet(pdf, font, workbook.Sheets["Staartblad"], A4_L, project, regels || [])
 
   const bytes = await pdf.save()
   const target = `${project_id}/offerte_2jours.pdf`
@@ -90,14 +100,17 @@ export async function generate2joursPdf(project_id) {
   const url =
     `${process.env.SUPABASE_URL}/storage/v1/object/public/sterkcalc/${target}`
 
-  await supabase.from("projects").update({ pdf_url: url }).eq("id", project_id)
+  await supabase
+    .from("projects")
+    .update({ pdf_url: url })
+    .eq("id", project_id)
 
   return { status: "DONE", pdf_url: url }
 }
 
 /*
 ===========================================================
-EXCEL → PDF RENDER (ECHTE METINGEN)
+EXCEL → PDF RENDER
 ===========================================================
 */
 function renderSheet(pdf, font, sheet, pageSize, project, regels) {
@@ -108,8 +121,8 @@ function renderSheet(pdf, font, sheet, pageSize, project, regels) {
   const cols = sheet["!cols"] || []
   const rows = sheet["!rows"] || []
 
-  const colWidths = cols.map(c => (c?.wpx ?? 64))
-  const rowHeights = rows.map(r => (r?.hpx ?? 20))
+  const colWidths = cols.map(c => c?.wpx ?? 64)
+  const rowHeights = rows.map(r => r?.hpx ?? 20)
 
   function xPos(c) {
     let x = 40
@@ -184,7 +197,11 @@ function resolveDynamicValue(text, project, regels) {
   if (t.includes("datum")) return project.offertedatum || ""
 
   if (t.includes("aanneemsom")) {
-    return euro(regels.reduce((s, r) => s + Number(r.totaal || 0), 0))
+    return euro(
+      Array.isArray(regels)
+        ? regels.reduce((s, r) => s + Number(r.totaal || 0), 0)
+        : 0
+    )
   }
 
   return ""
