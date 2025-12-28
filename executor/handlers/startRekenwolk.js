@@ -7,16 +7,11 @@ const supabase = createClient(
 )
 
 // OPSLAGEN – STRICT GESCHEIDEN
-const AK_PCT = 0.08        // Algemene kosten
-const ABK_PCT = 0.06       // Algemene bedrijfskosten
-const WINST_PCT = 0.05     // Winst
-const RISICO_PCT = 0.03    // Risico
+const AK_PCT = 0.08
+const ABK_PCT = 0.06
+const WINST_PCT = 0.05
+const RISICO_PCT = 0.03
 
-/*
-=====================================
-CALCULATIE GARANTEREN
-=====================================
-*/
 async function ensureCalculatie(project_id) {
   const { data: existing, error } = await supabase
     .from("calculaties")
@@ -26,13 +21,10 @@ async function ensureCalculatie(project_id) {
     .limit(1)
     .maybeSingle()
 
-  if (error) {
-    throw new Error("CALCULATIE_LOOKUP_FAILED: " + error.message)
-  }
-
+  if (error) throw error
   if (existing) return existing.id
 
-  const { data: created, error: insertErr } = await supabase
+  const { data, error: insertErr } = await supabase
     .from("calculaties")
     .insert({
       project_id,
@@ -42,11 +34,8 @@ async function ensureCalculatie(project_id) {
     .select("id")
     .single()
 
-  if (insertErr) {
-    throw new Error("CALCULATIE_CREATE_FAILED: " + insertErr.message)
-  }
-
-  return created.id
+  if (insertErr) throw insertErr
+  return data.id
 }
 
 export async function handleStartRekenwolk(task) {
@@ -57,31 +46,21 @@ export async function handleStartRekenwolk(task) {
   const now = new Date().toISOString()
 
   try {
-    /* TASK → RUNNING */
     await supabase
       .from("executor_tasks")
       .update({ status: "running", started_at: now })
       .eq("id", taskId)
 
-    /* CALCULATIE BESTAAT */
     await ensureCalculatie(project_id)
 
     /*
     =================================================
-    1. STABU POSTEN OPHALEN
+    1. STABU POSTEN – ALLE KOLOMMEN
     =================================================
     */
     const { data: posten, error } = await supabase
       .from("stabu_posten")
-      .select(`
-        id,
-        code,
-        omschrijving,
-        eenheid,
-        normuren,
-        arbeidsprijs,
-        materiaalprijs
-      `)
+      .select("*")
 
     if (error) throw error
     if (!Array.isArray(posten) || posten.length === 0) {
@@ -90,18 +69,19 @@ export async function handleStartRekenwolk(task) {
 
     /*
     =================================================
-    2. REKENWOLK
+    2. REKENWOLK (VOLLEDIGE KOLMMAPPING)
     =================================================
     */
     const regels = []
     let kostprijs = 0
 
     for (const p of posten) {
-      const hoeveelheid = 1
-      const loonkosten = (p.normuren || 0) * (p.arbeidsprijs || 0)
-      const materiaalkosten = (p.materiaalprijs || 0) * hoeveelheid
-      const totaal = loonkosten + materiaalkosten
-
+      const hoeveelheid = p.hoeveelheid ?? 1
+      const normuren = p.normuren ?? 0
+      const uren = normuren
+      const loonkosten = uren * (p.arbeidsprijs ?? 0)
+      const materiaal = (p.materiaalprijs ?? 0) * hoeveelheid
+      const totaal = loonkosten + materiaal
       kostprijs += totaal
 
       regels.push({
@@ -109,33 +89,42 @@ export async function handleStartRekenwolk(task) {
         omschrijving: p.omschrijving,
         hoeveelheid,
         eenheid: p.eenheid,
-        normuren: p.normuren,
+
+        normuren,
+        uren,
+
         loonkosten,
+        prijs_eenh: hoeveelheid ? totaal / hoeveelheid : 0,
         materiaalprijs: p.materiaalprijs,
+        materiaal,
+
+        oa_perc: p.oa_perc ?? null,
+        oa: p.oa ?? 0,
+
+        stelp_eenh: p.stelp_eenh ?? null,
+        stelposten: p.stelposten ?? 0,
+
         totaal
       })
     }
 
     /*
     =================================================
-    3. OPSLAGEN – LOS BEREKEND
+    3. PROJECTTOTALEN
     =================================================
     */
     const ak = kostprijs * AK_PCT
     const abk = kostprijs * ABK_PCT
     const winst = kostprijs * WINST_PCT
     const risico = kostprijs * RISICO_PCT
-
-    const verkoopprijs =
-      kostprijs + ak + abk + winst + risico
+    const verkoopprijs = kostprijs + ak + abk + winst + risico
 
     /*
     =================================================
-    4. PDF GENEREREN (HUIDIGE TwoJoursWriter API)
+    4. PDF
     =================================================
     */
     const pdf = await TwoJoursWriter.open(project_id)
-
     pdf.drawCalculatieRegels(regels, {
       kostprijs,
       ak,
@@ -144,9 +133,7 @@ export async function handleStartRekenwolk(task) {
       risico,
       verkoopprijs
     })
-
     pdf.drawStaartblad()
-
     const pdfUrl = await pdf.save()
 
     await supabase
@@ -154,13 +141,9 @@ export async function handleStartRekenwolk(task) {
       .update({ pdf_url: pdfUrl })
       .eq("id", project_id)
 
-    /* TASK → COMPLETED */
     await supabase
       .from("executor_tasks")
-      .update({
-        status: "completed",
-        finished_at: now
-      })
+      .update({ status: "completed", finished_at: now })
       .eq("id", taskId)
 
   } catch (err) {
