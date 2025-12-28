@@ -9,9 +9,10 @@ const supabase = createClient(
 
 /*
 ===========================================================
-PROJECT SCAN – DEFINITIEVE KETENSCHAKEL
-- schrijft scanresultaten in bestaande 2jours-PDF
-- markeert analyse voltooid
+PROJECT SCAN – DEFINITIEVE KETENSCHAKEL (EINDPRODUCT)
+- garandeert calculatie
+- koppelt STABU posten aan project (FLAT INPUT)
+- schrijft scanresultaat
 - triggert exact 1x generate_stabu
 ===========================================================
 */
@@ -58,30 +59,74 @@ export async function handleProjectScan(task) {
   const now = new Date().toISOString()
 
   try {
-    /*
-    ============================
-    TASK → RUNNING
-    ============================
-    */
+    /* TASK → RUNNING */
     await supabase
       .from("executor_tasks")
-      .update({
-        status: "running",
-        started_at: now
-      })
+      .update({ status: "running", started_at: now })
       .eq("id", taskId)
 
-    /*
-    ============================
-    CALCULATIE GARANTEREN
-    ============================
-    */
+    /* CALCULATIE GARANTEREN */
     await ensureCalculatie(project_id)
 
     /*
-    ============================
-    PROJECT STATUS
-    ============================
+    =================================================
+    STABU POSTEN OPHALEN (BRON)
+    =================================================
+    */
+    const { data: posten, error: postenErr } = await supabase
+      .from("stabu_posten")
+      .select(`
+        id,
+        code,
+        omschrijving,
+        eenheid,
+        normuren,
+        arbeidsprijs,
+        materiaalprijs
+      `)
+
+    if (postenErr) throw postenErr
+    if (!Array.isArray(posten) || posten.length === 0) {
+      throw new Error("NO_STABU_POSTEN")
+    }
+
+    /*
+    =================================================
+    OUDE PROJECT-STABU OPSCHONEN
+    =================================================
+    */
+    await supabase
+      .from("stabu_project_posten")
+      .delete()
+      .eq("project_id", project_id)
+
+    /*
+    =================================================
+    PROJECT-STABU OPBOUWEN (FLAT, REKENWOLK-INPUT)
+    =================================================
+    */
+    const projectPosten = posten.map(p => ({
+      project_id,
+      stabu_post_id: p.id,
+      stabu_code: p.code,
+      omschrijving: p.omschrijving,
+      eenheid: p.eenheid,
+      normuren: p.normuren,
+      arbeidsprijs: p.arbeidsprijs,
+      materiaalprijs: p.materiaalprijs,
+      hoeveelheid: 1,
+      geselecteerd: true,
+      created_at: now
+    }))
+
+    await supabase
+      .from("stabu_project_posten")
+      .insert(projectPosten)
+
+    /*
+    =================================================
+    PROJECT STATUS + INIT LOG
+    =================================================
     */
     await supabase
       .from("projects")
@@ -91,11 +136,6 @@ export async function handleProjectScan(task) {
       })
       .eq("id", project_id)
 
-    /*
-    ============================
-    PROJECT INIT LOG
-    ============================
-    */
     await supabase
       .from("project_initialization_log")
       .insert({
@@ -107,9 +147,9 @@ export async function handleProjectScan(task) {
       })
 
     /*
-    ============================
-    2JOURS PDF – SCAN RESULTATEN
-    ============================
+    =================================================
+    2JOURS PDF – SCAN RESULTAAT
+    =================================================
     */
     const pdf = await TwoJoursWriter.open(project_id)
 
@@ -117,7 +157,7 @@ export async function handleProjectScan(task) {
       uitgevoerd_op: now,
       bron: "project_scan",
       samenvatting: "Projectscan succesvol uitgevoerd",
-      opmerkingen: payload.scan_notes || null
+      gekoppelde_stabu_posten: projectPosten.length
     }
 
     await pdf.writeSection("scan.resultaat", {
@@ -132,10 +172,9 @@ export async function handleProjectScan(task) {
     }
 
     /*
-    ============================
-    VOLGENDE STAP: GENERATE_STABU
-    (HARD GUARD – NOOIT DUBBEL)
-    ============================
+    =================================================
+    VOLGENDE STAP: GENERATE_STABU (HARD GUARD)
+    =================================================
     */
     const { data: existing } = await supabase
       .from("executor_tasks")
@@ -157,11 +196,7 @@ export async function handleProjectScan(task) {
         })
     }
 
-    /*
-    ============================
-    TASK → COMPLETED
-    ============================
-    */
+    /* TASK → COMPLETED */
     await supabase
       .from("executor_tasks")
       .update({
