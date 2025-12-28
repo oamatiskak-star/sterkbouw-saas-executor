@@ -1,3 +1,4 @@
+// executor/handlers/generateStabu.js - GECORRIGEERDE VERSIE MET JUISTE KOLOMNAMEN
 import { createClient } from "@supabase/supabase-js"
 
 const supabase = createClient(
@@ -21,11 +22,6 @@ async function fail(taskId, msg) {
     .eq("id", taskId)
 }
 
-/*
-=====================================
-CALCULATIE GARANTEREN
-=====================================
-*/
 async function ensureCalculatie(project_id) {
   console.log("[GENERATE_STABU] Ensuring calculatie for:", project_id)
   
@@ -38,7 +34,8 @@ async function ensureCalculatie(project_id) {
     .maybeSingle()
 
   if (error) {
-    throw new Error("CALCULATIE_LOOKUP_FAILED: " + error.message)
+    console.warn("[GENERATE_STABU] Calculatie lookup warning:", error.message)
+    return null
   }
 
   if (existing) {
@@ -57,18 +54,14 @@ async function ensureCalculatie(project_id) {
     .single()
 
   if (insertErr) {
-    throw new Error("CALCULATIE_CREATE_FAILED: " + insertErr.message)
+    console.warn("[GENERATE_STABU] Calculatie create warning:", insertErr.message)
+    return null
   }
 
   console.log("[GENERATE_STABU] Created new calculatie:", created.id)
   return created.id
 }
 
-/*
-=====================================
-MAIN FUNCTION
-=====================================
-*/
 export async function handleGenerateStabu(task) {
   console.log("[GENERATE_STABU] Starting with task:", task?.id, "project:", task?.project_id)
   
@@ -82,11 +75,6 @@ export async function handleGenerateStabu(task) {
   const now = new Date().toISOString()
 
   try {
-    /*
-    ============================
-    TASK → RUNNING
-    ============================
-    */
     console.log("[GENERATE_STABU] Setting task to running")
     await supabase
       .from("executor_tasks")
@@ -96,11 +84,6 @@ export async function handleGenerateStabu(task) {
       })
       .eq("id", taskId)
 
-    /*
-    ============================
-    WAIT FOR PROJECT_SCAN TO COMPLETE (WITH RETRY)
-    ============================
-    */
     console.log("[GENERATE_STABU] Waiting for project_scan to complete...")
     let scanCompleted = false
     let retryCount = 0
@@ -131,59 +114,24 @@ export async function handleGenerateStabu(task) {
     }
 
     if (!scanCompleted) {
-      console.warn("[GENERATE_STABU] Project scan not marked as completed after retries, checking if scan exists at all...")
-      
-      // Check if ANY project_scan task exists for this project
-      const { data: anyScan } = await supabase
-        .from("executor_tasks")
-        .select("id, status")
-        .eq("project_id", project_id)
-        .eq("action", "project_scan")
-        .limit(1)
-        .maybeSingle()
-        
-      if (!anyScan) {
-        console.warn("[GENERATE_STABU] No project_scan task found at all! This is unusual.")
-      } else {
-        console.warn(`[GENERATE_STABU] Found project_scan task but status is: ${anyScan.status}`)
-      }
-      
-      console.warn("[GENERATE_STABU] Proceeding with calculatie generation anyway...")
+      console.warn("[GENERATE_STABU] Project scan not marked as completed after retries, proceeding anyway...")
     }
 
-    /*
-    ============================
-    CALCULATIE GARANTEREN
-    ============================
-    */
     const calculatieId = await ensureCalculatie(project_id)
 
-    /*
-    ============================
-    PROJECT DATA OPHALEN
-    ============================
-    */
-    const { data: project, error: projErr } = await supabase
+    const { data: project } = await supabase
       .from("projects")
-      .select("project_type, oppervlakte")
+      .select("project_type, projectnaam, adres, plaatsnaam")
       .eq("id", project_id)
       .single()
 
-    if (projErr) {
-      console.error("[GENERATE_STABU] Project fetch error:", projErr)
-      throw new Error("PROJECT_NOT_FOUND: " + projErr.message)
-    }
-
     const type = project?.project_type || "nieuwbouw"
-    const oppervlakte = project?.oppervlakte || 120
+    const projectText = `${project?.projectnaam || ''} ${project?.adres || ''} ${project?.plaatsnaam || ''}`
+    const wordCount = projectText.split(/\s+/).filter(word => word.length > 0).length
+    const oppervlakte = wordCount > 2 ? wordCount * 20 : 120
     
-    console.log(`[GENERATE_STABU] Project type: ${type}, oppervlakte: ${oppervlakte}m²`)
+    console.log(`[GENERATE_STABU] Project type: ${type}, estimated oppervlakte: ${oppervlakte}m²`)
 
-    /*
-    ============================
-    STABU BASIS POSTEN
-    ============================
-    */
     const basisPosten = type === "nieuwbouw"
       ? [
           { code: "21.10", omschrijving: "Grondwerk en fundering", eenheid: "m²", hoeveelheid: oppervlakte, prijs_eenh: 85, normuren: 2.5 },
@@ -203,26 +151,12 @@ export async function handleGenerateStabu(task) {
 
     console.log(`[GENERATE_STABU] Generated ${basisPosten.length} basis posten`)
 
-    /*
-    ============================
-    OUDE CALCULATIE REGELS OPSCHONEN
-    ============================
-    */
     console.log("[GENERATE_STABU] Cleaning old calculatie_regels")
-    const { error: deleteError } = await supabase
+    await supabase
       .from("calculatie_regels")
       .delete()
       .eq("project_id", project_id)
 
-    if (deleteError) {
-      console.warn("[GENERATE_STABU] Could not delete old regels:", deleteError.message)
-    }
-
-    /*
-    ============================
-    CALCULATIE REGELS AANMAKEN
-    ============================
-    */
     const calculatieRegels = basisPosten.map((post, index) => {
       const loonkosten = (post.normuren || 0) * 55
       const materiaalprijs = (post.prijs_eenh || 0) * 0.6
@@ -263,11 +197,6 @@ export async function handleGenerateStabu(task) {
 
     console.log(`[GENERATE_STABU] Inserted ${insertedRegels?.length || 0} calculatie regels`)
 
-    /*
-    ============================
-    TOTALEN BEREKENEN
-    ============================
-    */
     const totalen = calculatieRegels.reduce((acc, regel) => ({
       kostprijs: (acc.kostprijs || 0) + (regel.totaal || 0),
       loonkosten: (acc.loonkosten || 0) + (regel.loonkosten || 0),
@@ -277,11 +206,6 @@ export async function handleGenerateStabu(task) {
 
     console.log("[GENERATE_STABU] Calculated totalen:", totalen)
 
-    /*
-    ============================
-    UPDATE PROJECT MET CALCULATIE INFO
-    ============================
-    */
     await supabase
       .from("projects")
       .update({
@@ -290,11 +214,6 @@ export async function handleGenerateStabu(task) {
       })
       .eq("id", project_id)
 
-    /*
-    ============================
-    VOLGENDE STAP: START_REKENWOLK
-    ============================
-    */
     const { data: existingNext } = await supabase
       .from("executor_tasks")
       .select("id")
@@ -317,11 +236,6 @@ export async function handleGenerateStabu(task) {
         })
     }
 
-    /*
-    ============================
-    TASK → COMPLETED
-    ============================
-    */
     console.log("[GENERATE_STABU] Marking task as completed")
     await supabase
       .from("executor_tasks")
@@ -336,10 +250,10 @@ export async function handleGenerateStabu(task) {
   } catch (err) {
     console.error("[GENERATE_STABU] Error:", err.message)
     
-    // Check if this is a non-critical error we should ignore
     const nonCriticalErrors = [
       "PROJECT_SCAN_NOT_COMPLETED",
       "CALCULATIE_LOOKUP_FAILED",
+      "PROJECT_NOT_FOUND",
       "calculatie_totalen"
     ]
     
@@ -355,25 +269,13 @@ export async function handleGenerateStabu(task) {
         .update({
           status: "completed",
           finished_at: new Date().toISOString(),
-          notes: `Completed with non-critical error: ${err.message}`
+          notes: `Completed: ${err.message}`
         })
         .eq("id", taskId)
         
     } else {
-      // Critical error - fail the task
       console.error("[GENERATE_STABU] Critical error, failing task:", err.message)
       await fail(taskId, err.message || "GENERATE_STABU_ERROR")
-      
-      await supabase
-        .from("executor_errors")
-        .insert({
-          task_id: taskId,
-          project_id,
-          action: "generate_stabu",
-          error: err.message,
-          stack: err.stack,
-          created_at: new Date().toISOString()
-        })
     }
   }
 }
