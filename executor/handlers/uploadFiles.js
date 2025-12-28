@@ -45,10 +45,21 @@ async function ensureCalculatie(project_id) {
 
 export async function handleUploadFiles(task) {
   assert(task && task.id, "UPLOAD_NO_TASK")
-  assert(task.project_id || task.payload?.project_id, "UPLOAD_NO_PROJECT_ID")
+
+  /*
+  =================================================
+  PROJECT_ID – HARD NORMALISATIE (FIX)
+  =================================================
+  */
+  const project_id =
+    task.project_id ??
+    task.payload?.project_id ??
+    task.payload?.data?.project_id ??
+    null
+
+  assert(project_id, "UPLOAD_NO_PROJECT_ID")
 
   const taskId = task.id
-  const project_id = task.project_id || task.payload.project_id
   const payload = task.payload || {}
   const files = Array.isArray(payload.files) ? payload.files : []
   const now = new Date().toISOString()
@@ -144,6 +155,7 @@ export async function handleUploadFiles(task) {
         finished_at: new Date().toISOString()
       })
       .eq("id", taskId)
+
     throw err
   }
 }
