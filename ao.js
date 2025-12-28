@@ -5,6 +5,10 @@ import { createClient } from "@supabase/supabase-js"
 import { runAction } from "./executor/actionRouter.js"
 import { handleTelegramWebhook } from "./integrations/telegramWebhook.js"
 import { sendTelegram } from "./integrations/telegramSender.js"
+import projectenRouter from "./api/projecten.js"
+import generateCalculatieRouter from "./api/generate-calculatie.js"
+import uploadTaskRouter from "./api/executor/upload-task.js"
+import aiDrawingRouter from "./api/ai/generate-drawing.js"
 
 console.log("AO ENTRYPOINT ao.js LOADED")
 
@@ -102,6 +106,33 @@ app.post("/telegram/webhook", async (req, res) => {
 
 /*
 ========================
+NEW API ROUTES
+========================
+*/
+app.use("/api/projecten", projectenRouter)
+app.use("/api/generate-calculatie", generateCalculatieRouter)
+app.use("/api/executor/upload-task", uploadTaskRouter)
+app.use("/api/ai/generate-drawing", aiDrawingRouter)
+
+// Health endpoint voor nieuwe API's
+app.get("/api/calculatie/health", (_req, res) => {
+  res.json({ 
+    status: "ok", 
+    service: "calculatie-api",
+    timestamp: new Date().toISOString()
+  })
+})
+
+app.get("/api/ai/health", (_req, res) => {
+  res.json({
+    status: "ok",
+    service: "ai-api",
+    timestamp: new Date().toISOString()
+  })
+})
+
+/*
+========================
 EXECUTOR LOOP
 ========================
 */
@@ -169,12 +200,13 @@ SERVER
 */
 app.listen(PORT, "0.0.0.0", async () => {
   console.log("AO SERVICE LIVE", AO_ROLE, PORT)
+  console.log("NEW API ROUTES ACTIVE")
 
   if (process.env.TELEGRAM_CHAT_ID) {
     try {
       await sendTelegram(
         process.env.TELEGRAM_CHAT_ID,
-        `ao live\nrole: ${AO_ROLE}\nport: ${PORT}`
+        `ao live\nrole: ${AO_ROLE}\nport: ${PORT}\napis: active`
       )
     } catch (_) {}
   }
