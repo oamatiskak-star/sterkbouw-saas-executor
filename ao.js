@@ -5,8 +5,6 @@ import { createClient } from "@supabase/supabase-js"
 import { runAction } from "./executor/actionRouter.js"
 import { handleTelegramWebhook } from "./integrations/telegramWebhook.js"
 import { sendTelegram } from "./integrations/telegramSender.js"
-import projectenRouter from "./api/projecten.js"
-import generateCalculatieRouter from "./api/generate-calculatie.js"
 import uploadTaskRouter from "./api/executor/upload-task.js"
 import aiDrawingRouter from "./api/ai/generate-drawing.js"
 
