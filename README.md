@@ -1,34 +1,38 @@
-# AO Executor – SterkBouw SaaS Agent
+# AO Executor – SterkBouw SaaS Platform
 
-Dit is de officiële AO Agent (executor) van het SterkBouw SaaS platform. De Agent draait als een zelfstandige Render-service en is gekoppeld aan de backend, frontend en Telegram.
+Dit is de officiële AO Agent (executor) van het SterkBouw SaaS platform. De Agent bestaat uit twee componenten:
 
-## Takenpakket
+1. **Node.js AO Executor** - Monitoring, notificaties, webhooks
+2. **Python AI Engine** - Document analyse, STABU calculaties, AI processing
 
-✅ Telegrammeldingen verzenden bij:
-- Start van de AO Executor
-- Fouten in de backend (ping-fout)
-- Ontvangen webhooks van GitHub en Vercel
+## Componenten
 
-✅ Healthchecks:
-- `/ping` → status van de AO Agent
-- `/test` → versiecontrole van de AO Agent
+### 1. Node.js AO Executor
+✅ **Taken:**
+- Telegrammeldingen verzenden
+- Healthchecks (`/ping`, `/test`)
+- Webhooks verwerken (GitHub, Vercel)
+- Backend monitoring
+- Status updates naar frontend
 
-✅ Webhooks:
-- `/api/webhook` → ontvangt POSTs van GitHub & Vercel
-- Stuurt inhoud van webhook direct door naar Telegram
-
-✅ Backend monitoring:
-- Pingt backend (`sterkbouw-saas-back`) automatisch bij opstart
-- Stuurt statusmelding naar Telegram
+### 2. Python AI Engine (NIEUW)
+✅ **Taken:**
+- Documentanalyse (tekeningen, rapporten, vergunningen)
+- STABU-gebaseerde kostencalculaties
+- AI-gestuurde data-extractie
+- Haalbaarheidsrapporten genereren
+- Real-time prijsberekeningen
 
 ## Verbonden componenten
 
 - **Backend**: [`sterkbouw-saas-back`](https://github.com/oamatiskak-star/sterkbouw-saas-back)
 - **Frontend**: [`sterkbouw-saas-front`](https://github.com/oamatiskak-star/sterkbouw-saas-front)
 - **Telegram Bot**: @ao_autopilot_bot
+- **Supabase Database**: Prijzen, projecten, calculaties
 
-## Installatie (lokaal)
+## Installatie (volledige setup)
 
+### 1. Node.js AO Executor
 ```bash
 npm install
 node ao.js
