@@ -31,7 +31,8 @@
     "cors": "^2.8.5",
     "redis": "^4.6.10",
     "module-alias": "^2.2.3",
-     "pdf-lib": "^1.17.1"
+    "pdf-lib": "^1.17.1",
+    "openai": "^4.20.1"
   },
   "devDependencies": {
     "nodemon": "^3.0.1",
