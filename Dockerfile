@@ -61,7 +61,7 @@ RUN useradd -m -u 1001 aiengine
 
 WORKDIR /app
 
-# Copy Node.js AO Executor from stage 1
+# Copy Node.js AO Executor from stage 1 (INCLUDING node_modules)
 COPY --from=node-builder /app /app
 
 # Copy Python AI Engine from stage 2
@@ -72,12 +72,8 @@ RUN mkdir -p /tmp/uploads /tmp/processed /tmp/cache /ai-logs \
     && chown -R node:node /app /tmp/uploads /tmp/processed /tmp/cache /ai-logs \
     && chown -R aiengine:aiengine /ai-engine
 
-# Option 1: Gebruik --break-system-packages (eenvoudiger)
+# Install Python dependencies in final image
 RUN pip3 install --break-system-packages --no-cache-dir -r /ai-engine/requirements.txt
-
-# OF Option 2: Gebruik een virtual environment (beste praktijk)
-# RUN python3 -m venv /opt/ai-engine-venv \
-#     && /opt/ai-engine-venv/bin/pip install --no-cache-dir -r /ai-engine/requirements.txt
 
 USER node
 
