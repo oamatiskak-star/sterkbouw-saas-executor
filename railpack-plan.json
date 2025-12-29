@@ -1,7 +1,24 @@
 {
   "phases": {
     "install": {
-      "apt": ["git"]
+      "apt": [
+        "git", 
+        "python3.11", 
+        "python3-pip",
+        "poppler-utils",
+        "tesseract-ocr",
+        "tesseract-ocr-nld",
+        "libgl1",
+        "libglib2.0-0",
+        "nodejs",
+        "npm"
+      ]
+    },
+    "setup": {
+      "cmd": "pip install --break-system-packages -r requirements.txt && npm install"
     }
+  },
+  "start": {
+    "cmd": "/start.sh"
   }
 }
