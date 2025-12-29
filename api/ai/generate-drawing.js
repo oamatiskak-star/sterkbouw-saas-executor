@@ -1,6 +1,5 @@
 // /backend/api/ai/generate-drawing.js
 import express from 'express'
-import { supabase } from '@/lib/supabase'
 import fs from 'fs'
 import path from 'path'
 import { exec } from 'child_process'
@@ -9,6 +8,12 @@ import axios from 'axios'
 
 const execAsync = promisify(exec)
 const router = express.Router()
+
+// Import supabase via relative path
+// Pas dit pad aan op basis van je folder structuur
+// Vanuit /backend/api/ai/generate-drawing.js naar /backend/lib/supabase.js
+const { createClient } = await import('../../lib/supabase.js')
+const supabase = createClient()
 
 // Configuratie
 const AI_API_URL = process.env.AI_API_URL || "http://localhost:8000"
