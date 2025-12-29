@@ -7,11 +7,12 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y unzip && rm -rf /var/lib/apt/lists/*
 
 COPY package*.json ./
-RUN npm ci --only=production
+# FIX: Gebruik npm install i.p.v. npm ci (ci heeft package-lock.json nodig)
+RUN npm install --only=production
 
 COPY . .
 
-# Extract Monteur zip
+# Extract Monteur zip als deze bestaat
 RUN if [ -f "sterkcalc-monteur.zip" ]; then \
         unzip -o sterkcalc-monteur.zip -d /app && rm sterkcalc-monteur.zip; \
     fi
@@ -76,21 +77,18 @@ RUN mkdir -p /tmp/uploads /tmp/processed /tmp/cache /ai-logs
 # Install Python dependencies in final image
 RUN pip3 install --break-system-packages --no-cache-dir -r /ai-engine/requirements.txt
 
-# Create health check endpoint for Railway
+# Simple health check endpoint
 RUN echo '#!/bin/bash\n\
-if curl -f http://localhost:8000/health 2>/dev/null; then\n\
+# Check if Python process is running\n\
+if pgrep -f "python.*src.main" > /dev/null; then\n\
+    echo "Python AI Engine is running"\n\
     exit 0\n\
-elif curl -f http://localhost:3000/health 2>/dev/null; then\n\
-    exit 0\n\
-elif curl -f http://localhost:3000/ping 2>/dev/null; then\n\
+elif pgrep -f "node.*ao.js" > /dev/null; then\n\
+    echo "Node.js AO Executor is running"\n\
     exit 0\n\
 else\n\
-    # Check if processes are running\n\
-    if pgrep -f "src.main" > /dev/null || pgrep -f "ao.js" > /dev/null; then\n\
-        exit 0\n\
-    else\n\
-        exit 1\n\
-    fi\n\
+    echo "No services running"\n\
+    exit 1\n\
 fi' > /healthcheck.sh && chmod +x /healthcheck.sh
 
 # Create improved start script
