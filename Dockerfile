@@ -37,8 +37,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY src/ ./src/
 
-# Note: Don't create user here, do it in final stage
-
 # Stage 3: Final image with both services
 FROM node:22-slim
 
@@ -46,6 +44,8 @@ FROM node:22-slim
 RUN apt-get update && apt-get install -y \
     python3.11 \
     python3-pip \
+    python3-venv \
+    python3-full \
     poppler-utils \
     tesseract-ocr \
     tesseract-ocr-nld \
@@ -72,8 +72,12 @@ RUN mkdir -p /tmp/uploads /tmp/processed /tmp/cache /ai-logs \
     && chown -R node:node /app /tmp/uploads /tmp/processed /tmp/cache /ai-logs \
     && chown -R aiengine:aiengine /ai-engine
 
-# Install Python dependencies in final image
-RUN pip3 install --no-cache-dir -r /ai-engine/requirements.txt
+# Option 1: Gebruik --break-system-packages (eenvoudiger)
+RUN pip3 install --break-system-packages --no-cache-dir -r /ai-engine/requirements.txt
+
+# OF Option 2: Gebruik een virtual environment (beste praktijk)
+# RUN python3 -m venv /opt/ai-engine-venv \
+#     && /opt/ai-engine-venv/bin/pip install --no-cache-dir -r /ai-engine/requirements.txt
 
 USER node
 
