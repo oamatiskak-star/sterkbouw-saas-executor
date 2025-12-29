@@ -37,8 +37,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY src/ ./src/
 
-# Create AI engine user
-RUN useradd -m -u 1001 aiengine
+# Note: Don't create user here, do it in final stage
 
 # Stage 3: Final image with both services
 FROM node:22-slim
@@ -57,6 +56,9 @@ RUN apt-get update && apt-get install -y \
     libxrender-dev \
     && rm -rf /var/lib/apt/lists/*
 
+# Create the aiengine user
+RUN useradd -m -u 1001 aiengine
+
 WORKDIR /app
 
 # Copy Node.js AO Executor from stage 1
@@ -64,12 +66,11 @@ COPY --from=node-builder /app /app
 
 # Copy Python AI Engine from stage 2
 COPY --from=python-builder /ai-engine /ai-engine
-COPY --from=python-builder /etc/passwd /etc/passwd
-COPY --from=python-builder /etc/group /etc/group
 
 # Create directories for AI Engine
 RUN mkdir -p /tmp/uploads /tmp/processed /tmp/cache /ai-logs \
-    && chown -R node:node /app /tmp/uploads /tmp/processed /tmp/cache /ai-logs
+    && chown -R node:node /app /tmp/uploads /tmp/processed /tmp/cache /ai-logs \
+    && chown -R aiengine:aiengine /ai-engine
 
 # Install Python dependencies in final image
 RUN pip3 install --no-cache-dir -r /ai-engine/requirements.txt
