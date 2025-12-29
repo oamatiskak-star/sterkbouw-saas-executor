@@ -18,9 +18,19 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from core.document_processor import DocumentProcessor, ProjectContext, get_document_processor
-from database.supabase_client import SupabaseClient, get_supabase_client
-from utils.file_handler import FileHandler, get_file_handler
+# FIXED IMPORTS - werken zowel voor python -m src.main als python src/main.py
+try:
+    # Voor python -m src.main (in Docker container)
+    from .core.document_processor import DocumentProcessor, ProjectContext, get_document_processor
+    from .database.supabase_client import SupabaseClient, get_supabase_client
+    from .utils.file_handler import FileHandler, get_file_handler
+    print("✅ Imports successful using relative imports", file=sys.stderr)
+except ImportError:
+    # Voor python src/main.py (lokaal testen)
+    from core.document_processor import DocumentProcessor, ProjectContext, get_document_processor
+    from database.supabase_client import SupabaseClient, get_supabase_client
+    from utils.file_handler import FileHandler, get_file_handler
+    print("✅ Imports successful using absolute imports", file=sys.stderr)
 
 # Configure logging
 logging.basicConfig(
@@ -77,27 +87,35 @@ async def lifespan(app: FastAPI):
     
     # Startup
     logger.info("🚀 Starting SterkBouw AI Engine")
+    print("🚀 Starting AI Engine lifespan", file=sys.stderr)
     
     try:
         # Initialize components
+        print("🔧 Initializing Supabase client...", file=sys.stderr)
         supabase_client = get_supabase_client()
+        print("🔧 Initializing Document Processor...", file=sys.stderr)
         document_processor = get_document_processor()
+        print("🔧 Initializing File Handler...", file=sys.stderr)
         file_handler = get_file_handler()
         
         # Test connections
+        print("🔌 Testing connections...", file=sys.stderr)
         await supabase_client.test_connection()
+        
         logger.info("✅ All components initialized successfully")
+        print("✅ AI Engine startup complete", file=sys.stderr)
         
         yield
         
     except Exception as e:
-        logger.error(f"❌ Startup failed: {e}")
+        logger.error(f"❌ Startup failed: {e}", exc_info=True)
+        print(f"❌ AI Engine startup failed: {e}", file=sys.stderr)
         raise
         
     finally:
         # Shutdown
         logger.info("👋 Shutting down SterkBouw AI Engine")
-        # Cleanup code here
+        print("👋 AI Engine shutting down", file=sys.stderr)
 
 # Create FastAPI app
 app = FastAPI(
@@ -120,6 +138,7 @@ app.add_middleware(
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
+    print("🔍 Health check called", file=sys.stderr)
     return {
         "status": "healthy",
         "service": "sterkbouw-ai-engine",
@@ -135,6 +154,7 @@ async def health_check():
 @app.get("/")
 async def root():
     """Root endpoint"""
+    print("🌐 Root endpoint called", file=sys.stderr)
     return {
         "message": "SterkBouw AI Engine",
         "version": "1.0.0",
@@ -160,6 +180,7 @@ async def analyze_documents(
     - **project_context**: Project information and context
     """
     try:
+        print(f"📊 Analyze endpoint called with {len(request.file_paths)} files", file=sys.stderr)
         task_id = f"task_{datetime.now().strftime('%Y%m%d%H%M%S')}_{hash(str(request.file_paths)) % 10000:04d}"
         
         # Store task
@@ -227,6 +248,7 @@ async def process_documents_task(task_id: str, file_paths: List[str], project_co
 @app.get("/api/v1/tasks/{task_id}/status")
 async def get_task_status(task_id: str):
     """Get the status of a processing task"""
+    print(f"📋 Task status requested: {task_id}", file=sys.stderr)
     task = task_store.get(task_id)
     
     if not task:
@@ -256,6 +278,7 @@ async def upload_file(
     - **file_type**: Type of file (document, drawing, report, etc.)
     """
     try:
+        print(f"📁 Upload endpoint called for project {project_id}", file=sys.stderr)
         # Save uploaded file
         temp_file_path = f"/tmp/{file.filename}"
         
@@ -304,6 +327,7 @@ async def upload_file(
 async def get_project_calculations(project_id: str):
     """Get all calculations for a project"""
     try:
+        print(f"🧮 Calculations requested for project {project_id}", file=sys.stderr)
         calculations = await supabase_client.get_project_calculations(project_id)
         
         if not calculations:
@@ -327,6 +351,7 @@ async def generate_feasibility_report(
 ):
     """Generate feasibility report for a project"""
     try:
+        print(f"📄 Feasibility report requested for project {project_id}", file=sys.stderr)
         if not analysis_results:
             # Get analysis results from database
             analyses = await supabase_client.get_document_analyses(project_id)
@@ -356,6 +381,7 @@ async def generate_savings_report(
 ):
     """Generate savings analysis report"""
     try:
+        print(f"💰 Savings report requested for project {project_id}", file=sys.stderr)
         # Get calculation
         if calculation_id:
             calculation = await supabase_client.get_calculation(calculation_id)
@@ -394,6 +420,7 @@ async def generate_savings_report(
 async def get_stabu_prices(category: str):
     """Get STABU prices for a specific category"""
     try:
+        print(f"🏗️ STABU prices requested for category {category}", file=sys.stderr)
         prices = await supabase_client.get_stabu_prices_by_category(category)
         
         return {
@@ -410,6 +437,7 @@ async def get_stabu_prices(category: str):
 async def search_stabu_prices(search_term: str, limit: int = 20):
     """Search STABU prices"""
     try:
+        print(f"🔍 STABU search for: {search_term}", file=sys.stderr)
         prices = await supabase_client.search_stabu_prices(search_term, limit)
         
         return {
@@ -425,6 +453,7 @@ async def search_stabu_prices(search_term: str, limit: int = 20):
 # Error handlers
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request, exc):
+    print(f"⚠️ HTTP Exception: {exc.status_code} - {exc.detail}", file=sys.stderr)
     return JSONResponse(
         status_code=exc.status_code,
         content={
@@ -437,6 +466,7 @@ async def http_exception_handler(request, exc):
 @app.exception_handler(Exception)
 async def general_exception_handler(request, exc):
     logger.error(f"Unhandled exception: {exc}", exc_info=True)
+    print(f"❌ Unhandled exception: {exc}", file=sys.stderr)
     return JSONResponse(
         status_code=500,
         content={
@@ -448,9 +478,16 @@ async def general_exception_handler(request, exc):
     )
 
 if __name__ == "__main__":
+    # Voor directe uitvoering
+    host = "0.0.0.0"
+    port = int(os.getenv("AI_ENGINE_PORT", "8000"))
+    
+    print(f"🌐 Starting server on {host}:{port}", file=sys.stderr)
+    print(f"📁 Working directory: {os.getcwd()}", file=sys.stderr)
+    
     uvicorn.run(
-        "main:app",
-        host="0.0.0.0",
-        port=int(os.getenv("AI_ENGINE_PORT", 8000)),
+        app,
+        host=host,
+        port=port,
         reload=os.getenv("NODE_ENV", "development") == "development"
     )
