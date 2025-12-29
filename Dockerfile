@@ -44,8 +44,9 @@ COPY --from=python-builder /ai-engine /ai-engine
 RUN mkdir -p /tmp/uploads /tmp/processed /tmp/cache /ai-logs
 RUN pip3 install --break-system-packages --no-cache-dir -r /ai-engine/requirements.txt
 
-# DEFINITIEF WERKEND START SCRIPT
-RUN echo '#!/bin/bash
+# CORRECT START SCRIPT - gebruik cat i.p.v. echo met multiline
+RUN cat > /start.sh << 'EOF'
+#!/bin/bash
 set -e
 
 echo "🚀 Starting SterkBouw Multi-Service Container"
@@ -78,7 +79,9 @@ if [ -n "$NODE_PID" ]; then
 else
     wait $AI_PID
 fi
-' > /start.sh && chmod +x /start.sh
+EOF
+
+RUN chmod +x /start.sh
 
 EXPOSE 3000 8000
 CMD ["/start.sh"]
