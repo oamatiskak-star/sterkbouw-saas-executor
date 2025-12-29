@@ -12,7 +12,7 @@ services:
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
       - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
       - BACKEND_URL=${BACKEND_URL}
-      - AI_ENGINE_URL=http://ai-engine:8000
+      - AI_ENGINE_URL=http://ai-engine:8000  # ✅ Goed - service naam
       - SUPABASE_URL=${SUPABASE_URL}
       - SUPABASE_KEY=${SUPABASE_KEY}
     ports:
@@ -31,7 +31,8 @@ services:
       - sterkbouw-network
     command: ["node", "ao.js"]
     depends_on:
-      - ai-engine
+      ai-engine:
+        condition: service_healthy  # ✅ Wacht tot ai-engine gezond is
 
   ai-engine:
     build:
@@ -51,21 +52,21 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - ./src:/ai-engine/src
+      - ./src:/ai-engine/src  # ✅ Mount src directory
       - ./data/uploads:/tmp/uploads
       - ./data/processed:/tmp/processed
       - ./data/cache:/tmp/cache
       - ./ai_logs:/app/logs
     healthcheck:
-      test: ["CMD", "python", "-c", "import requests; exit(0 if requests.get('http://localhost:8000/health').status_code == 200 else 1)"]
+      test: ["CMD", "python", "-c", "import sys; import os; sys.path.append('/ai-engine/src'); from main import app; import asyncio; import aiohttp; import json; async def check(): async with aiohttp.ClientSession() as session: async with session.get('http://localhost:8000/health') as resp: return resp.status == 200; exit(0 if asyncio.run(check()) else 1)"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 10s
+      start_period: 20s  # ✅ Meer tijd voor opstarten
     restart: always
     networks:
       - sterkbouw-network
-    command: ["python", "-m", "src.main"]
+    command: ["python", "/ai-engine/src/main.py"]  # ✅ Directe Python exec
 
   redis:
     image: redis:7-alpine
