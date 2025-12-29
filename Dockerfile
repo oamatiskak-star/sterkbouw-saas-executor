@@ -56,30 +56,51 @@ RUN apt-get update && apt-get install -y \
     libxrender-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Create the aiengine user
-RUN useradd -m -u 1001 aiengine
-
 WORKDIR /app
 
-# Copy Node.js AO Executor from stage 1 (INCLUDING node_modules)
+# Copy Node.js AO Executor from stage 1
 COPY --from=node-builder /app /app
 
 # Copy Python AI Engine from stage 2
 COPY --from=python-builder /ai-engine /ai-engine
 
 # Create directories for AI Engine
-RUN mkdir -p /tmp/uploads /tmp/processed /tmp/cache /ai-logs \
-    && chown -R node:node /app /tmp/uploads /tmp/processed /tmp/cache /ai-logs \
-    && chown -R aiengine:aiengine /ai-engine
+RUN mkdir -p /tmp/uploads /tmp/processed /tmp/cache /ai-logs
 
 # Install Python dependencies in final image
 RUN pip3 install --break-system-packages --no-cache-dir -r /ai-engine/requirements.txt
 
-USER node
+# Create start script
+RUN echo '#!/bin/bash\n\
+set -e\n\
+echo "🚀 Starting SterkBouw Multi-Service Container"\n\
+\n\
+# Start AI Engine (Python) on port 8000\n\
+echo "Starting AI Engine on port 8000..."\n\
+cd /ai-engine\n\
+python -m src.main --host 0.0.0.0 --port 8000 &\n\
+AI_PID=\$!\n\
+\n\
+# Wait for AI Engine to start\n\
+sleep 5\n\
+\n\
+# Start AO Executor (Node) on port 3000\n\
+echo "Starting AO Executor on port 3000..."\n\
+cd /app\n\
+node ao.js &\n\
+NODE_PID=\$!\n\
+\n\
+# Wait for both processes\n\
+trap "kill \$AI_PID \$NODE_PID" EXIT\n\
+wait \$AI_PID \$NODE_PID\n\
+' > /start.sh && chmod +x /start.sh
 
-# Health checks
+# Expose both ports
+EXPOSE 3000 8000
+
+# Health check for AO Executor
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD node -e "require('http').get('http://localhost:3000/ping', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
 
-# Start both services using a process manager
-CMD ["sh", "-c", "node ao.js & cd /ai-engine && python3 -m src.main"]
+# Start both services
+CMD ["/start.sh"]
