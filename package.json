@@ -2,12 +2,13 @@
   "name": "sterkbouw-ao-executor",
   "version": "2.0.0",
   "description": "SterkBouw AO Executor met AI Engine integratie",
+  "type": "module",
   "main": "ao.js",
   "scripts": {
-    "start": "node ao.js",
-    "dev": "nodemon ao.js",
+    "start": "node --experimental-specifier-resolution=node ao.js",
+    "dev": "nodemon --experimental-specifier-resolution=node ao.js",
     "dev:ai": "concurrently \"npm run dev\" \"cd src && python -m main\"",
-    "test": "jest",
+    "test": "NODE_OPTIONS='--experimental-specifier-resolution=node' jest",
     "test:ai": "cd src && pytest",
     "docker:build": "docker build -t sterkbouw-ao-executor:latest .",
     "docker:ai-build": "docker build -f Dockerfile.ai -t sterkbouw-ai-engine:latest .",
@@ -28,7 +29,8 @@
     "winston": "^3.11.0",
     "helmet": "^7.1.0",
     "cors": "^2.8.5",
-    "redis": "^4.6.10"
+    "redis": "^4.6.10",
+    "module-alias": "^2.2.3"
   },
   "devDependencies": {
     "nodemon": "^3.0.1",
@@ -39,5 +41,9 @@
   },
   "engines": {
     "node": ">=18.0.0"
+  },
+  "_moduleAliases": {
+    "@": ".",
+    "@/lib": "./lib"
   }
 }
