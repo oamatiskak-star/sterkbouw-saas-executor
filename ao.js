@@ -9,7 +9,7 @@ import uploadTaskRouter from "./api/executor/upload-task.js";
 import aiDrawingRouter from "./api/ai/generate-drawing.js";
 import renderProcessRouter from "./api/executor/render-process.js";
 import aiProcessingRouter from "./api/executor/ai-processing.js";
-import aiEngineRouter from "./api/executor/ai-engine.js"; // NIEUW: AI Engine router
+import aiEngineRouter from "./api/executor/ai-engine.js";
 
 console.log("AO ENTRYPOINT ao.js LOADED");
 
@@ -20,7 +20,8 @@ CONFIG
 */
 const AO_ROLE = process.env.AO_ROLE;
 const PORT = process.env.PORT || 3000;
-const AI_ENGINE_URL = process.env.AI_ENGINE_URL || "http://localhost:8000"; // NIEUW
+// Gebruik localhost omdat AI Engine nu in dezelfde container draait
+const AI_ENGINE_URL = "http://localhost:8000";
 
 if (!AO_ROLE) throw new Error("env_missing_ao_role");
 if (!process.env.SUPABASE_URL) throw new Error("env_missing_supabase_url");
@@ -54,7 +55,7 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(express.json({ limit: "50mb" })); // Verhoog limiet voor AI Engine
+app.use(express.json({ limit: "50mb" }));
 
 app.use((req, _res, next) => {
   console.log("INCOMING_REQUEST", req.method, req.path);
@@ -81,7 +82,7 @@ console.log(
   "SERVICE_ROLE_KEY_PREFIX =",
   process.env.SUPABASE_SERVICE_ROLE_KEY.slice(0, 12)
 );
-console.log("AI_ENGINE_URL =", AI_ENGINE_URL); // NIEUW
+console.log("AI_ENGINE_URL =", AI_ENGINE_URL);
 
 /*
 ========================
@@ -91,7 +92,7 @@ BASIC ROUTES
 app.get("/", (_req, res) => res.json({ ok: true }));
 app.get("/ping", (_req, res) => res.json({ ok: true, role: AO_ROLE }));
 
-// NIEUW: AI Engine health check endpoint
+// AI Engine health check endpoint
 app.get("/ai-health", async (_req, res) => {
   try {
     const axios = (await import("axios")).default;
@@ -154,7 +155,7 @@ app.use("/api/executor/upload-task", uploadTaskRouter);
 app.use("/api/ai/generate-drawing", aiDrawingRouter);
 app.use("/api/executor/render-process", renderProcessRouter);
 app.use("/api/executor/ai-processing", aiProcessingRouter);
-app.use("/api/executor/ai-engine", aiEngineRouter); // NIEUW: AI Engine routes
+app.use("/api/executor/ai-engine", aiEngineRouter);
 
 /*
 ========================
@@ -212,7 +213,7 @@ async function pollExecutorTasks() {
   }
 }
 
-// NIEUW: AI Engine health monitoring
+// AI Engine health monitoring
 async function checkAIEngineHealth() {
   try {
     const axios = (await import("axios")).default;
@@ -259,7 +260,6 @@ async function checkAIEngineHealth() {
       const minutesDown = (now - lastOnline) / (1000 * 60);
 
       if (minutesDown > 5) {
-        // Only notify after 5 minutes of downtime
         await sendTelegram(
           process.env.TELEGRAM_CHAT_ID,
           `⚠️ AI Engine Offline\n` +
@@ -277,7 +277,7 @@ if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
   console.log("Nieuwe functionaliteiten geladen:");
   console.log("  - /api/executor/render-process");
   console.log("  - /api/executor/ai-processing");
-  console.log("  - /api/executor/ai-engine"); // NIEUW
+  console.log("  - /api/executor/ai-engine");
 
   // Start executor task polling
   setInterval(pollExecutorTasks, 3000);
@@ -302,50 +302,37 @@ app.listen(PORT, "0.0.0.0", async () => {
   console.log("  - Document analyse & STABU calculaties");
 
   // Test AI Engine connection on startup
-  if (AI_ENGINE_URL && AI_ENGINE_URL !== "http://localhost:8000") {
-    setTimeout(async () => {
-      try {
-        const axios = (await import("axios")).default;
-        const response = await axios.get(`${AI_ENGINE_URL}/health`, {
-          timeout: 10000,
-        });
+  setTimeout(async () => {
+    try {
+      const axios = (await import("axios")).default;
+      const response = await axios.get(`${AI_ENGINE_URL}/health`, {
+        timeout: 10000,
+      });
 
-        console.log("✅ AI Engine verbonden:", response.data.version);
+      console.log("✅ AI Engine verbonden:", response.data.version);
 
+      if (process.env.TELEGRAM_CHAT_ID) {
         await sendTelegram(
           process.env.TELEGRAM_CHAT_ID,
           `🚀 AO Executor Live\n` +
             `Role: ${AO_ROLE}\n` +
             `Port: ${PORT}\n` +
-            `AI Engine: ✅ Online (v${response.data.version})\n` +
-            `URL: ${AI_ENGINE_URL}`
+            `AI Engine: ✅ Online (v${response.data.version})`
         );
-      } catch (error) {
-        console.warn("⚠️ AI Engine niet bereikbaar bij opstart:", error.message);
+      }
+    } catch (error) {
+      console.warn("⚠️ AI Engine niet bereikbaar bij opstart:", error.message);
 
+      if (process.env.TELEGRAM_CHAT_ID) {
         await sendTelegram(
           process.env.TELEGRAM_CHAT_ID,
           `🚀 AO Executor Live\n` +
             `Role: ${AO_ROLE}\n` +
             `Port: ${PORT}\n` +
             `AI Engine: ⚠️ Offline\n` +
-            `Fout: ${error.message}\n` +
-            `URL: ${AI_ENGINE_URL}`
+            `Fout: ${error.message}`
         );
       }
-    }, 2000);
-  } else {
-    console.log("⚠️ AI Engine URL not configured");
-
-    if (process.env.TELEGRAM_CHAT_ID) {
-      try {
-        await sendTelegram(
-          process.env.TELEGRAM_CHAT_ID,
-          `ao executor live\nrole: ${AO_ROLE}\nport: ${PORT}\n` +
-            `ai engine: niet geconfigureerd\n` +
-            `stuur .env AI_ENGINE_URL`
-        );
-      } catch (_) {}
     }
-  }
+  }, 5000);
 });
