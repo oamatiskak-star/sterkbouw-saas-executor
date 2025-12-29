@@ -12,7 +12,8 @@ const __dirname = path.dirname(__filename);
 
 // Config
 const AI_ENGINE_URL = process.env.AI_ENGINE_URL || "http://localhost:8000";
-const UPLOAD_DIR = path.join(__dirname, "../../../uploads");
+// Gebruik /tmp/uploads in plaats van /uploads voor betere permissies
+const UPLOAD_DIR = "/tmp/uploads";
 
 // Ensure upload directory exists
 if (!fs.existsSync(UPLOAD_DIR)) {
@@ -226,7 +227,11 @@ router.post("/upload", async (req, res) => {
     );
 
     // Cleanup temp file
-    fs.unlinkSync(filePath);
+    try {
+      fs.unlinkSync(filePath);
+    } catch (unlinkError) {
+      console.warn("Could not delete temp file:", unlinkError.message);
+    }
 
     // Store file metadata in database
     await supabase.from("project_files").insert({
@@ -247,6 +252,16 @@ router.post("/upload", async (req, res) => {
     });
   } catch (error) {
     console.error("File upload error:", error.message);
+    
+    // Cleanup on error
+    if (filePath && fs.existsSync(filePath)) {
+      try {
+        fs.unlinkSync(filePath);
+      } catch (unlinkError) {
+        // ignore
+      }
+    }
+    
     res.status(500).json({
       success: false,
       error: error.message,
