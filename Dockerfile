@@ -37,6 +37,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY src/ ./src/
 
+# FIX: Maak __init__.py bestanden voor alle directories
+RUN find /ai-engine/src -type d -exec touch {}/__init__.py \;
+
 # Stage 3: Final image with both services
 FROM node:22-slim
 
