@@ -19,12 +19,12 @@ FROM python:3.11-slim AS python-builder
 
 WORKDIR /ai-engine
 
-# Install system dependencies for AI engine
+# Install system dependencies for AI engine 
 RUN apt-get update && apt-get install -y \
     poppler-utils \
     tesseract-ocr \
     tesseract-ocr-nld \
-    libgl1-mesa-glx \
+    libgl1 \                   
     libglib2.0-0 \
     libsm6 \
     libxext6 \
@@ -50,7 +50,7 @@ RUN apt-get update && apt-get install -y \
     poppler-utils \
     tesseract-ocr \
     tesseract-ocr-nld \
-    libgl1-mesa-glx \
+    libgl1 \                    
     libglib2.0-0 \
     libsm6 \
     libxext6 \
