@@ -4,6 +4,8 @@ print("🚀 Python AI Engine starting...", file=sys.stderr)
 print(f"Python version: {sys.version}", file=sys.stderr)
 print(f"Current directory: {os.getcwd()}", file=sys.stderr)
 print(f"AI Engine files: {os.listdir('.')}", file=sys.stderr)
+print("✅ All imports completed", file=sys.stderr)
+print(f"✅ FastAPI version: {__import__('fastapi').__version__}", file=sys.stderr)
 
 import logging
 from datetime import datetime
