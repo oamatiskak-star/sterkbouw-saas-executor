@@ -1,4 +1,10 @@
+import sys
 import os
+print("🚀 Python AI Engine starting...", file=sys.stderr)
+print(f"Python version: {sys.version}", file=sys.stderr)
+print(f"Current directory: {os.getcwd()}", file=sys.stderr)
+print(f"AI Engine files: {os.listdir('.')}", file=sys.stderr)
+
 import logging
 from datetime import datetime
 from contextlib import asynccontextmanager
