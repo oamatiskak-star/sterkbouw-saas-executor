@@ -1,11 +1,10 @@
 version: '3.8'
 
 services:
-  # Node.js AO Executor (bestaande + uitgebreid)
   ao-executor:
     build:
       context: .
-      dockerfile: Dockerfile.single  # Gebruik single-stage voor dev
+      dockerfile: Dockerfile.single
     container_name: sterkbouw-ao-executor
     environment:
       - PORT=3000
@@ -31,8 +30,9 @@ services:
     networks:
       - sterkbouw-network
     command: ["node", "ao.js"]
+    depends_on:
+      - ai-engine
 
-  # Python AI Engine (nieuwe service)
   ai-engine:
     build:
       context: .
@@ -56,20 +56,17 @@ services:
       - ./data/processed:/tmp/processed
       - ./data/cache:/tmp/cache
       - ./ai_logs:/app/logs
-    depends_on:
-      - redis
     healthcheck:
       test: ["CMD", "python", "-c", "import requests; exit(0 if requests.get('http://localhost:8000/health').status_code == 200 else 1)"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 10s
-    restart: unless-stopped
+    restart: always
     networks:
       - sterkbouw-network
     command: ["python", "-m", "src.main"]
 
-  # Redis voor caching en queue
   redis:
     image: redis:7-alpine
     container_name: sterkbouw-redis
@@ -81,7 +78,6 @@ services:
     networks:
       - sterkbouw-network
 
-  # PostgreSQL voor AI Engine data (optioneel)
   postgres:
     image: postgres:15-alpine
     container_name: sterkbouw-ai-db
