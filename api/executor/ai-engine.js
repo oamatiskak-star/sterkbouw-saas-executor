@@ -496,14 +496,15 @@ router.get("/test", async (req, res) => {
  * Helper function to send Telegram notifications
  */
 async function sendTelegramNotification(message) {
-  if (!process.env.TELEGRAM_CHAT_ID) {
+  if (!process.env.TELEGRAM_CHAT_ID || !process.env.TELEGRAM_BOT_TOKEN) {
     console.log("Telegram notification (simulated):", message);
     return;
   }
 
   try {
     // Use existing sendTelegram function from your imports
-    const { sendTelegram } = await import("../integrations/telegramSender.js");
+    // Vanaf /app/api/executor/ai-engine.js naar /app/integrations/telegramSender.js
+    const { sendTelegram } = await import("../../integrations/telegramSender.js");
     await sendTelegram(process.env.TELEGRAM_CHAT_ID, message);
   } catch (error) {
     console.error("Telegram notification error:", error.message);
