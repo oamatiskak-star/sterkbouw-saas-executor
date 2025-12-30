@@ -1,6 +1,7 @@
 import "./monteur/scan.js";
 import express from "express";
 import { createClient } from "@supabase/supabase-js";
+import dotenv from "dotenv";
 
 import { runAction } from "./executor/actionRouter.js";
 import { handleTelegramWebhook } from "./integrations/telegramWebhook.js";
@@ -11,7 +12,24 @@ import renderProcessRouter from "./api/executor/render-process.js";
 import aiProcessingRouter from "./api/executor/ai-processing.js";
 import aiEngineRouter from "./api/executor/ai-engine.js";
 
+/*
+========================
+PORTAAL SERVICES
+========================
+*/
+import { PortalSyncTask } from "./tasks/portalSync.js";
+import { QuoteProcessor } from "./tasks/quoteProcessor.js";
+import { RealtimeSyncService } from "./services/realtimeSync.js";
+import { portalConfig, validateConfig } from "./config/portalConfig.js";
+
 console.log("AO ENTRYPOINT ao.js LOADED");
+
+/*
+========================
+ENV
+========================
+*/
+dotenv.config();
 
 /*
 ========================
@@ -20,7 +38,6 @@ CONFIG
 */
 const AO_ROLE = process.env.AO_ROLE;
 const PORT = process.env.PORT || 3000;
-// Gebruik localhost omdat AI Engine nu in dezelfde container draait
 const AI_ENGINE_URL = "http://localhost:8000";
 
 if (!AO_ROLE) throw new Error("env_missing_ao_role");
@@ -86,13 +103,38 @@ console.log("AI_ENGINE_URL =", AI_ENGINE_URL);
 
 /*
 ========================
+PORTAAL SERVICES INIT
+========================
+*/
+let portalSync;
+let quoteProcessor;
+let realtimeSync;
+
+async function initializePortalServices() {
+  validateConfig();
+
+  portalSync = new PortalSyncTask(portalConfig);
+  await portalSync.start();
+
+  quoteProcessor = new QuoteProcessor(supabase);
+  realtimeSync = new RealtimeSyncService(portalConfig);
+
+  console.log("✅ Portaal services initialized");
+}
+
+/*
+========================
 BASIC ROUTES
 ========================
 */
 app.get("/", (_req, res) => res.json({ ok: true }));
 app.get("/ping", (_req, res) => res.json({ ok: true, role: AO_ROLE }));
 
-// AI Engine health check endpoint
+/*
+========================
+AI ENGINE HEALTH
+========================
+*/
 app.get("/ai-health", async (_req, res) => {
   try {
     const axios = (await import("axios")).default;
@@ -148,7 +190,7 @@ app.post("/telegram/webhook", async (req, res) => {
 
 /*
 ========================
-API ROUTES - EXECUTOR FUNCTIONALITEIT
+API ROUTES – EXECUTOR
 ========================
 */
 app.use("/api/executor/upload-task", uploadTaskRouter);
@@ -156,6 +198,35 @@ app.use("/api/ai/generate-drawing", aiDrawingRouter);
 app.use("/api/executor/render-process", renderProcessRouter);
 app.use("/api/executor/ai-processing", aiProcessingRouter);
 app.use("/api/executor/ai-engine", aiEngineRouter);
+
+/*
+========================
+API ROUTES – PORTAAL
+========================
+*/
+app.post("/api/portal/sync/:projectId", async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    const result = await portalSync.syncProjectToPortal(projectId);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post("/api/portal/process-quote/:requestId", async (req, res) => {
+  try {
+    const { requestId } = req.params;
+    const result = await quoteProcessor.processExtraWorkRequest(requestId);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get("/api/portal/stats", (_req, res) => {
+  res.json(realtimeSync.getStats());
+});
 
 /*
 ========================
@@ -213,7 +284,11 @@ async function pollExecutorTasks() {
   }
 }
 
-// AI Engine health monitoring
+/*
+========================
+AI ENGINE MONITORING
+========================
+*/
 async function checkAIEngineHealth() {
   try {
     const axios = (await import("axios")).default;
@@ -221,71 +296,27 @@ async function checkAIEngineHealth() {
       timeout: 5000,
     });
 
-    console.log("✅ AI Engine status:", response.data.status);
-
-    // Update database with health status
     await supabase.from("system_health").upsert({
       service: "ai_engine",
       status: "online",
       last_check: new Date().toISOString(),
-      details: {
-        version: response.data.version,
-        uptime: response.data.uptime,
-      },
+      details: response.data,
     });
   } catch (error) {
-    console.warn("⚠️ AI Engine unavailable:", error.message);
-
     await supabase.from("system_health").upsert({
       service: "ai_engine",
       status: "offline",
       last_check: new Date().toISOString(),
-      details: {
-        error: error.message,
-      },
+      details: { error: error.message },
     });
-
-    // Send Telegram notification only if it's been down for a while
-    const { data: lastStatus } = await supabase
-      .from("system_health")
-      .select("last_check")
-      .eq("service", "ai_engine")
-      .eq("status", "online")
-      .order("last_check", { ascending: false })
-      .limit(1);
-
-    if (lastStatus && lastStatus.length > 0) {
-      const lastOnline = new Date(lastStatus[0].last_check);
-      const now = new Date();
-      const minutesDown = (now - lastOnline) / (1000 * 60);
-
-      if (minutesDown > 5) {
-        await sendTelegram(
-          process.env.TELEGRAM_CHAT_ID,
-          `⚠️ AI Engine Offline\n` +
-            `Sinds: ${lastOnline.toLocaleString("nl-NL")}\n` +
-            `Duur: ${Math.round(minutesDown)} minuten\n` +
-            `Fout: ${error.message}`
-        );
-      }
-    }
   }
 }
 
 if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
   console.log("AO EXECUTOR STARTED");
-  console.log("Nieuwe functionaliteiten geladen:");
-  console.log("  - /api/executor/render-process");
-  console.log("  - /api/executor/ai-processing");
-  console.log("  - /api/executor/ai-engine");
 
-  // Start executor task polling
   setInterval(pollExecutorTasks, 3000);
-
-  // Start AI Engine health monitoring (every minute)
   setInterval(checkAIEngineHealth, 60000);
-
-  // Initial health check
   setTimeout(checkAIEngineHealth, 5000);
 }
 
@@ -296,43 +327,5 @@ SERVER
 */
 app.listen(PORT, "0.0.0.0", async () => {
   console.log("AO EXECUTOR SERVICE LIVE", AO_ROLE, PORT);
-  console.log("Beschikbare functionaliteiten:");
-  console.log("  - BIM Render & AI processing");
-  console.log("  - Python AI Engine integratie");
-  console.log("  - Document analyse & STABU calculaties");
-
-  // Test AI Engine connection on startup
-  setTimeout(async () => {
-    try {
-      const axios = (await import("axios")).default;
-      const response = await axios.get(`${AI_ENGINE_URL}/health`, {
-        timeout: 10000,
-      });
-
-      console.log("✅ AI Engine verbonden:", response.data.version);
-
-      if (process.env.TELEGRAM_CHAT_ID) {
-        await sendTelegram(
-          process.env.TELEGRAM_CHAT_ID,
-          `🚀 AO Executor Live\n` +
-            `Role: ${AO_ROLE}\n` +
-            `Port: ${PORT}\n` +
-            `AI Engine: ✅ Online (v${response.data.version})`
-        );
-      }
-    } catch (error) {
-      console.warn("⚠️ AI Engine niet bereikbaar bij opstart:", error.message);
-
-      if (process.env.TELEGRAM_CHAT_ID) {
-        await sendTelegram(
-          process.env.TELEGRAM_CHAT_ID,
-          `🚀 AO Executor Live\n` +
-            `Role: ${AO_ROLE}\n` +
-            `Port: ${PORT}\n` +
-            `AI Engine: ⚠️ Offline\n` +
-            `Fout: ${error.message}`
-        );
-      }
-    }
-  }, 5000);
+  await initializePortalServices();
 });
