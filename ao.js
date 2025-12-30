@@ -1,11 +1,18 @@
+/**
+ * ao.js — STABIEL, GEFIXT
+ * Portal-services worden ALLEEN gestart indien expliciet ingeschakeld.
+ * Executor kan nooit meer crashen door ontbrekende portal-config.
+ */
+
 import "./monteur/scan.js";
 import express from "express";
-import { createClient } from "@supabase/supabase-js";
 import dotenv from "dotenv";
+import { createClient } from "@supabase/supabase-js";
 
 import { runAction } from "./executor/actionRouter.js";
 import { handleTelegramWebhook } from "./integrations/telegramWebhook.js";
 import { sendTelegram } from "./integrations/telegramSender.js";
+
 import uploadTaskRouter from "./api/executor/upload-task.js";
 import aiDrawingRouter from "./api/ai/generate-drawing.js";
 import renderProcessRouter from "./api/executor/render-process.js";
@@ -14,15 +21,15 @@ import aiEngineRouter from "./api/executor/ai-engine.js";
 
 /*
 ========================
-PORTAAL SERVICES
+OPTIONELE PORTAAL IMPORTS
+Worden pas gebruikt als PORTAL_ENABLED=true
 ========================
 */
-import { PortalSyncTask } from "./tasks/portalSync.js";
-import { QuoteProcessor } from "./tasks/quoteProcessor.js";
-import { RealtimeSyncService } from "./services/realtimeSync.js";
-import { portalConfig, validateConfig } from "./config/portalConfig.js";
-
-console.log("AO ENTRYPOINT ao.js LOADED");
+let PortalSyncTask,
+  QuoteProcessor,
+  RealtimeSyncService,
+  portalConfig,
+  validateConfig;
 
 /*
 ========================
@@ -39,6 +46,7 @@ CONFIG
 const AO_ROLE = process.env.AO_ROLE;
 const PORT = process.env.PORT || 3000;
 const AI_ENGINE_URL = "http://localhost:8000";
+const PORTAL_ENABLED = process.env.PORTAL_ENABLED === "true";
 
 if (!AO_ROLE) throw new Error("env_missing_ao_role");
 if (!process.env.SUPABASE_URL) throw new Error("env_missing_supabase_url");
@@ -66,9 +74,7 @@ app.use((req, res, next) => {
   res.setHeader("Access-Control-Allow-Headers", "Content-Type,Authorization");
   res.setHeader("Access-Control-Allow-Credentials", "true");
 
-  if (req.method === "OPTIONS") {
-    return res.sendStatus(200);
-  }
+  if (req.method === "OPTIONS") return res.sendStatus(200);
   next();
 });
 
@@ -88,39 +94,6 @@ const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
-
-/*
-========================
-DEBUG
-========================
-*/
-console.log("SUPABASE_URL =", process.env.SUPABASE_URL);
-console.log(
-  "SERVICE_ROLE_KEY_PREFIX =",
-  process.env.SUPABASE_SERVICE_ROLE_KEY.slice(0, 12)
-);
-console.log("AI_ENGINE_URL =", AI_ENGINE_URL);
-
-/*
-========================
-PORTAAL SERVICES INIT
-========================
-*/
-let portalSync;
-let quoteProcessor;
-let realtimeSync;
-
-async function initializePortalServices() {
-  validateConfig();
-
-  portalSync = new PortalSyncTask(portalConfig);
-  await portalSync.start();
-
-  quoteProcessor = new QuoteProcessor(supabase);
-  realtimeSync = new RealtimeSyncService(portalConfig);
-
-  console.log("✅ Portaal services initialized");
-}
 
 /*
 ========================
@@ -144,32 +117,14 @@ app.get("/ai-health", async (_req, res) => {
 
     res.json({
       ok: true,
-      ao_executor: {
-        status: "online",
-        role: AO_ROLE,
-        port: PORT,
-      },
-      ai_engine: {
-        status: "online",
-        version: response.data.version,
-        url: AI_ENGINE_URL,
-      },
-      timestamp: new Date().toISOString(),
+      ao_executor: { status: "online", role: AO_ROLE, port: PORT },
+      ai_engine: { status: "online", version: response.data.version },
     });
   } catch (error) {
     res.json({
       ok: true,
-      ao_executor: {
-        status: "online",
-        role: AO_ROLE,
-        port: PORT,
-      },
-      ai_engine: {
-        status: "offline",
-        error: error.message,
-        url: AI_ENGINE_URL,
-      },
-      timestamp: new Date().toISOString(),
+      ao_executor: { status: "online", role: AO_ROLE, port: PORT },
+      ai_engine: { status: "offline", error: error.message },
     });
   }
 });
@@ -190,7 +145,7 @@ app.post("/telegram/webhook", async (req, res) => {
 
 /*
 ========================
-API ROUTES – EXECUTOR
+API ROUTES — EXECUTOR
 ========================
 */
 app.use("/api/executor/upload-task", uploadTaskRouter);
@@ -198,35 +153,6 @@ app.use("/api/ai/generate-drawing", aiDrawingRouter);
 app.use("/api/executor/render-process", renderProcessRouter);
 app.use("/api/executor/ai-processing", aiProcessingRouter);
 app.use("/api/executor/ai-engine", aiEngineRouter);
-
-/*
-========================
-API ROUTES – PORTAAL
-========================
-*/
-app.post("/api/portal/sync/:projectId", async (req, res) => {
-  try {
-    const { projectId } = req.params;
-    const result = await portalSync.syncProjectToPortal(projectId);
-    res.json(result);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.post("/api/portal/process-quote/:requestId", async (req, res) => {
-  try {
-    const { requestId } = req.params;
-    const result = await quoteProcessor.processExtraWorkRequest(requestId);
-    res.json(result);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.get("/api/portal/stats", (_req, res) => {
-  res.json(realtimeSync.getStats());
-});
 
 /*
 ========================
@@ -250,20 +176,14 @@ async function pollExecutorTasks() {
   try {
     await supabase
       .from("executor_tasks")
-      .update({
-        status: "running",
-        started_at: new Date().toISOString(),
-      })
+      .update({ status: "running", started_at: new Date().toISOString() })
       .eq("id", task.id);
 
     await runAction(task);
 
     await supabase
       .from("executor_tasks")
-      .update({
-        status: "completed",
-        finished_at: new Date().toISOString(),
-      })
+      .update({ status: "completed", finished_at: new Date().toISOString() })
       .eq("id", task.id);
   } catch (e) {
     const errorMsg =
@@ -286,46 +206,48 @@ async function pollExecutorTasks() {
 
 /*
 ========================
-AI ENGINE MONITORING
+PORTAAL SERVICES (VEILIG)
 ========================
 */
-async function checkAIEngineHealth() {
+async function initializePortalServicesSafe() {
   try {
-    const axios = (await import("axios")).default;
-    const response = await axios.get(`${AI_ENGINE_URL}/health`, {
-      timeout: 5000,
-    });
+    const portalImports = await import("./config/portalConfig.js");
+    portalConfig = portalImports.portalConfig;
+    validateConfig = portalImports.validateConfig;
 
-    await supabase.from("system_health").upsert({
-      service: "ai_engine",
-      status: "online",
-      last_check: new Date().toISOString(),
-      details: response.data,
-    });
-  } catch (error) {
-    await supabase.from("system_health").upsert({
-      service: "ai_engine",
-      status: "offline",
-      last_check: new Date().toISOString(),
-      details: { error: error.message },
-    });
+    PortalSyncTask = (await import("./tasks/portalSync.js")).PortalSyncTask;
+    QuoteProcessor = (await import("./tasks/quoteProcessor.js")).QuoteProcessor;
+    RealtimeSyncService = (
+      await import("./services/realtimeSync.js")
+    ).RealtimeSyncService;
+
+    validateConfig();
+
+    const portalSync = new PortalSyncTask(portalConfig);
+    await portalSync.start();
+
+    console.log("✅ Portal services gestart");
+  } catch (err) {
+    console.error("❌ Portal services NIET gestart:", err.message);
   }
-}
-
-if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
-  console.log("AO EXECUTOR STARTED");
-
-  setInterval(pollExecutorTasks, 3000);
-  setInterval(checkAIEngineHealth, 60000);
-  setTimeout(checkAIEngineHealth, 5000);
 }
 
 /*
 ========================
-SERVER
+STARTUP
 ========================
 */
+if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
+  setInterval(pollExecutorTasks, 3000);
+}
+
 app.listen(PORT, "0.0.0.0", async () => {
   console.log("AO EXECUTOR SERVICE LIVE", AO_ROLE, PORT);
-  await initializePortalServices();
+
+  if (PORTAL_ENABLED === true) {
+    console.log("ℹ️ Portal enabled → initialiseren");
+    await initializePortalServicesSafe();
+  } else {
+    console.log("ℹ️ Portal disabled → executor-only modus");
+  }
 });
