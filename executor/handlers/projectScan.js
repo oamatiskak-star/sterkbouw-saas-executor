@@ -15,14 +15,9 @@ const supabase = createClient(
 
 console.log("[PROJECT_SCAN] Module loaded")
 
-async function ensureCalculatie(project_id) {
-  // bestaand gedrag behouden (stub of bestaand)
-  return
-}
-
 export async function handleProjectScan(task) {
   if (!task?.id || !task.project_id) {
-    console.error("[PROJECT_SCAN] Invalid task payload")
+    console.error("[PROJECT_SCAN] Invalid task payload", task)
     return
   }
 
@@ -33,58 +28,63 @@ export async function handleProjectScan(task) {
   console.log("[PROJECT_SCAN] START", { taskId, project_id })
 
   try {
-    /* TASK → RUNNING */
+    /* ============================
+       TASK → RUNNING
+    ============================ */
     await supabase
       .from("executor_tasks")
       .update({ status: "running", started_at: now })
       .eq("id", taskId)
 
-    await ensureCalculatie(project_id)
+    /* ============================
+       STORAGE: BESTANDEN OPHALEN
+       (bucket: sterkcalc)
+    ============================ */
+    console.log("[PROJECT_SCAN] Listing storage objects")
 
-    /*
-    =================================================
-    STRUCTURELE FIX:
-    SCHRIJF ALTIJD SCAN-OUTPUT
-    =================================================
-    */
+    const { data: objects, error: storageError } = await supabase
+      .from("storage.objects")
+      .select("name")
+      .eq("bucket_id", "sterkcalc")
+      .ilike("name", `%${project_id}%`)
 
-    console.log("[PROJECT_SCAN] Writing scan output to project_scan_results")
-
-    // check of er al scan-resultaten zijn
-    const { data: existingScan } = await supabase
-      .from("project_scan_results")
-      .select("id")
-      .eq("project_id", project_id)
-      .limit(1)
-
-    if (!existingScan || existingScan.length === 0) {
-      const scanRecord = {
-        project_id,
-        stabu_code: "UNMAPPED",
-        bron: "project_scan_fallback",
-        created_at: now
-      }
-
-      const { error: insertError } = await supabase
-        .from("project_scan_results")
-        .insert(scanRecord)
-
-      if (insertError) {
-        console.error("[PROJECT_SCAN] Failed to insert scan result", insertError)
-        throw new Error(`SCAN_INSERT_FAILED: ${insertError.message}`)
-      }
-
-      console.log("[PROJECT_SCAN] Scan fallback record inserted")
-    } else {
-      console.log("[PROJECT_SCAN] Existing scan result found, skipping insert")
+    if (storageError) {
+      throw new Error(`STORAGE_LIST_FAILED: ${storageError.message}`)
     }
 
-    /*
-    =================================================
-    ENQUEUE generate_stabu
-    =================================================
-    */
+    if (!objects || objects.length === 0) {
+      throw new Error("NO_PROJECT_FILES_FOUND")
+    }
 
+    console.log("[PROJECT_SCAN] Files found:", objects.length)
+
+    /* ============================
+       SCAN RESULTEN SCHRIJVEN
+       (exact volgens tabel)
+    ============================ */
+    const scanRows = objects.map(obj => ({
+      project_id,
+      file_name: obj.name.split("/").pop(),
+      storage_path: obj.name,
+      detected_type: "file",
+      discipline: "general",
+      confidence: 1.0,
+      created_at: now
+    }))
+
+    const { error: insertError } = await supabase
+      .from("project_scan_results")
+      .insert(scanRows)
+
+    if (insertError) {
+      throw new Error(`SCAN_INSERT_FAILED: ${insertError.message}`)
+    }
+
+    console.log("[PROJECT_SCAN] Scan results inserted:", scanRows.length)
+
+    /* ============================
+       generate_stabu ENQUEUE
+    ============================ */
     const { data: existingTask } = await supabase
       .from("executor_tasks")
       .select("id")
@@ -110,9 +110,13 @@ export async function handleProjectScan(task) {
       }
 
       console.log("[PROJECT_SCAN] generate_stabu task created")
+    } else {
+      console.log("[PROJECT_SCAN] generate_stabu already exists")
     }
 
-    /* TASK → COMPLETED */
+    /* ============================
+       TASK → COMPLETED
+    ============================ */
     await supabase
       .from("executor_tasks")
       .update({
@@ -121,10 +125,10 @@ export async function handleProjectScan(task) {
       })
       .eq("id", taskId)
 
-    console.log("[PROJECT_SCAN] COMPLETED")
+    console.log("[PROJECT_SCAN] COMPLETED SUCCESSFULLY")
 
   } catch (err) {
-    console.error("[PROJECT_SCAN] ERROR", err)
+    console.error("[PROJECT_SCAN] FAILED", err)
 
     await supabase
       .from("executor_tasks")
