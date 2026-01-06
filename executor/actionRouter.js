@@ -13,6 +13,8 @@ import { handleStartRekenwolk } from "./handlers/startRekenwolk.js"
 // MONTEUR / BUILDER
 import { runBuilder } from "../builder/index.js"
 
+import { startCalculationFromRun } from "./actions/startCalculationFromRun.js"
+
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
@@ -174,6 +176,27 @@ export async function runAction(task) {
 
     log("REKENWOLK_DONE + FINAL_PDF")
     return { state: "DONE", action }
+  }
+
+  /*
+  ==================================================
+  5. START CALCULATION (CALCULATION_RUNS)
+  ==================================================
+  */
+  if (action === "start_calculation") {
+
+    await startCalculationFromRun({
+      task_id: task.id,
+      project_id,
+      payload
+    });
+
+    log("START_CALCULATION_DONE", {
+      task_id: task.id,
+      project_id
+    });
+
+    return { state: "DONE", action };
   }
 
   /*
