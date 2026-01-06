@@ -191,7 +191,7 @@ export async function runAction(task) {
       payload
     });
 
-    log("START_CALCULATION_DONE", {
+    log("START_CALCULATION_STUB_DONE", {
       task_id: task.id,
       project_id
     });
