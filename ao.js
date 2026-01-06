@@ -14,6 +14,7 @@ import { handleTelegramWebhook } from "./integrations/telegramWebhook.js";
 import { sendTelegram } from "./integrations/telegramSender.js";
 
 import uploadTaskRouter from "./api/executor/upload-task.js";
+import startCalculationRouter from "./api/executor/start-calculation.js";
 import aiDrawingRouter from "./api/ai/generate-drawing.js";
 import renderProcessRouter from "./api/executor/render-process.js";
 import aiProcessingRouter from "./api/executor/ai-processing.js";
@@ -153,6 +154,7 @@ app.use("/api/ai/generate-drawing", aiDrawingRouter);
 app.use("/api/executor/render-process", renderProcessRouter);
 app.use("/api/executor/ai-processing", aiProcessingRouter);
 app.use("/api/executor/ai-engine", aiEngineRouter);
+app.use("/api/executor/start-calculation", startCalculationRouter);
 
 /*
 ========================
