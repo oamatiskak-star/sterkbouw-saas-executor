@@ -61,9 +61,9 @@ export async function handleProjectScan(task) {
        (exact volgens tabel)
     ============================ */
     const scanRows = objects
-  .filter(obj => obj.name && !obj.name.endsWith("/")) // geen folders
+  .filter(obj => obj.name && !obj.name.endsWith("/")) 
   .map(obj => ({
-    project_id: task.project_id, // 🔒 expliciet
+    project_id: task.project_id, 
     file_name: obj.name.split("/").pop(),
     storage_path: `${task.project_id}/${obj.name}`,
     detected_type: "file",
