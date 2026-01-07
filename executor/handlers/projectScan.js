@@ -60,6 +60,10 @@ export async function handleProjectScan(task) {
        SCAN RESULTEN SCHRIJVEN
        (exact volgens tabel)
     ============================ */
+    if (!scanRows.length) {
+  throw new Error("NO_SCANNABLE_FILES_AFTER_FILTER")
+}
+
     const scanRows = objects
   .filter(obj => obj.name && !obj.name.endsWith("/")) 
   .map(obj => ({
