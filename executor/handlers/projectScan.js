@@ -42,11 +42,9 @@ export async function handleProjectScan(task) {
     ============================ */
     console.log("[PROJECT_SCAN] Listing storage objects")
 
-    const { data: objects, error: storageError } = await supabase
-      .from("storage.objects")
-      .select("name")
-      .eq("bucket_id", "sterkcalc")
-      .ilike("name", `%${project_id}%`)
+    const { data: objects, error: storageError } = await supabase.storage
+  .from("sterkcalc")
+  .list(project_id, { recursive: true })
 
     if (storageError) {
       throw new Error(`STORAGE_LIST_FAILED: ${storageError.message}`)
