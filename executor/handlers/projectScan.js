@@ -60,15 +60,17 @@ export async function handleProjectScan(task) {
        SCAN RESULTEN SCHRIJVEN
        (exact volgens tabel)
     ============================ */
-    const scanRows = objects.map(obj => ({
-      project_id,
-      file_name: obj.name.split("/").pop(),
-      storage_path: obj.name,
-      detected_type: "file",
-      discipline: "general",
-      confidence: 1.0,
-      created_at: now
-    }))
+    const scanRows = objects
+  .filter(obj => obj.name && !obj.name.endsWith("/")) // geen folders
+  .map(obj => ({
+    project_id: task.project_id, // 🔒 expliciet
+    file_name: obj.name.split("/").pop(),
+    storage_path: `${task.project_id}/${obj.name}`,
+    detected_type: "file",
+    discipline: "general",
+    confidence: 1.0,
+    created_at: now
+  }))
 
     const { error: insertError } = await supabase
       .from("project_scan_results")
