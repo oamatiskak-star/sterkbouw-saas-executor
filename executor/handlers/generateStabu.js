@@ -1,3 +1,4 @@
+// executor/handlers/generateStabu.js
 import { createClient } from "@supabase/supabase-js"
 
 const supabase = createClient(
@@ -9,7 +10,7 @@ console.log("[GENERATE_STABU] Module loaded")
 
 async function fail(taskId, msg) {
   console.error("[GENERATE_STABU] Task failed:", taskId, msg)
-  
+
   if (!taskId) return
   await supabase
     .from("executor_tasks")
@@ -22,8 +23,6 @@ async function fail(taskId, msg) {
 }
 
 async function ensureCalculatie(project_id) {
-  console.log("[GENERATE_STABU] Ensuring calculatie for:", project_id)
-  
   const { data: existing, error } = await supabase
     .from("calculaties")
     .select("id")
@@ -32,17 +31,10 @@ async function ensureCalculatie(project_id) {
     .limit(1)
     .maybeSingle()
 
-  if (error) {
-    console.warn("[GENERATE_STABU] Calculatie lookup warning:", error.message)
-    return null
-  }
+  if (error) return null
+  if (existing) return existing.id
 
-  if (existing) {
-    console.log("[GENERATE_STABU] Existing calculatie:", existing.id)
-    return existing.id
-  }
-
-  const { data: created, error: insertErr } = await supabase
+  const { data, error: insertErr } = await supabase
     .from("calculaties")
     .insert({
       project_id,
@@ -52,69 +44,22 @@ async function ensureCalculatie(project_id) {
     .select("id")
     .single()
 
-  if (insertErr) {
-    console.warn("[GENERATE_STABU] Calculatie create warning:", insertErr.message)
-    return null
-  }
-
-  console.log("[GENERATE_STABU] Created new calculatie:", created.id)
-  return created.id
+  if (insertErr) return null
+  return data.id
 }
 
 export async function handleGenerateStabu(task) {
-  console.log("[GENERATE_STABU] Starting with task:", task?.id, "project:", task?.project_id)
-  
-  if (!task?.id || !task.project_id) {
-    console.error("[GENERATE_STABU] Invalid task:", task)
-    return
-  }
+  if (!task?.id || !task.project_id) return
 
   const taskId = task.id
   const project_id = task.project_id
   const now = new Date().toISOString()
 
   try {
-    console.log("[GENERATE_STABU] Setting task to running")
     await supabase
       .from("executor_tasks")
-      .update({
-        status: "running",
-        started_at: now
-      })
+      .update({ status: "running", started_at: now })
       .eq("id", taskId)
-
-    console.log("[GENERATE_STABU] Waiting for project_scan to complete...")
-    let scanCompleted = false
-    let retryCount = 0
-    const maxRetries = 10
-
-    while (!scanCompleted && retryCount < maxRetries) {
-      const { data: scan } = await supabase
-        .from("executor_tasks")
-        .select("status, finished_at")
-        .eq("project_id", project_id)
-        .eq("action", "project_scan")
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle()
-
-      if (scan && scan.status === "completed") {
-        scanCompleted = true
-        console.log("[GENERATE_STABU] Project scan verified (completed at:", scan.finished_at, ")")
-        break
-      }
-      
-      retryCount++
-      console.log(`[GENERATE_STABU] Project scan not completed yet (attempt ${retryCount}/${maxRetries}), waiting...`)
-      
-      if (retryCount < maxRetries) {
-        await new Promise(resolve => setTimeout(resolve, 1000))
-      }
-    }
-
-    if (!scanCompleted) {
-      console.warn("[GENERATE_STABU] Project scan not marked as completed after retries, proceeding anyway...")
-    }
 
     const calculatieId = await ensureCalculatie(project_id)
 
@@ -125,11 +70,9 @@ export async function handleGenerateStabu(task) {
       .single()
 
     const type = project?.project_type || "nieuwbouw"
-    const projectText = `${project?.projectnaam || ''} ${project?.adres || ''} ${project?.plaatsnaam || ''}`
-    const wordCount = projectText.split(/\s+/).filter(word => word.length > 0).length
-    const oppervlakte = wordCount > 2 ? wordCount * 20 : 120
-    
-    console.log(`[GENERATE_STABU] Project type: ${type}, estimated oppervlakte: ${oppervlakte}m²`)
+    const text = `${project?.projectnaam || ""} ${project?.adres || ""} ${project?.plaatsnaam || ""}`
+    const words = text.split(/\s+/).filter(Boolean).length
+    const oppervlakte = words > 2 ? words * 20 : 120
 
     const basisPosten = type === "nieuwbouw"
       ? [
@@ -148,21 +91,49 @@ export async function handleGenerateStabu(task) {
           { code: "51.90", omschrijving: "Afbouw en herindeling", eenheid: "stuk", hoeveelheid: 1, prijs_eenh: 28000, normuren: 70 }
         ]
 
-    console.log(`[GENERATE_STABU] Generated ${basisPosten.length} basis posten`)
+    // ============================
+    // NIEUW: STABU PROJECT POSTEN
+    // ============================
+    const stabuPosten = basisPosten.map(post => ({
+      project_id,
+      stabu_post_id: null,
+      stabu_code: post.code,
+      omschrijving: post.omschrijving,
+      eenheid: post.eenheid,
+      normuren: post.normuren,
+      arbeidsprijs: 55,
+      materiaalprijs: post.prijs_eenh,
+      hoeveelheid: post.hoeveelheid,
+      geselecteerd: true,
+      oa_perc: 0.08,
+      oa_bedrag: 0,
+      stelp_eenh: 0,
+      stelp_tot: 0,
+      created_at: now,
+      updated_at: now
+    }))
 
-    console.log("[GENERATE_STABU] Cleaning old calculatie_regels")
+    const { error: stabuErr } = await supabase
+      .from("stabu_project_posten")
+      .insert(stabuPosten)
+
+    if (stabuErr) {
+      throw new Error("STABU_POSTEN_INSERT_FAILED: " + stabuErr.message)
+    }
+
+    // ============================
+    // BESTAANDE CALCULATIE_REGELS
+    // ============================
     await supabase
       .from("calculatie_regels")
       .delete()
       .eq("project_id", project_id)
 
-    const calculatieRegels = basisPosten.map((post, index) => {
+    const calculatieRegels = basisPosten.map(post => {
       const loonkostenPerEenheid = (post.normuren || 0) * 55
       const materiaalprijsPerEenheid = (post.prijs_eenh || 0) * 0.6
       const totaal = (post.prijs_eenh || 0) * (post.hoeveelheid || 1)
-      const loonkostenTotaal = loonkostenPerEenheid * (post.hoeveelheid || 1)
-      const materiaalkostenTotaal = materiaalprijsPerEenheid * (post.hoeveelheid || 1)
-      
+
       return {
         project_id,
         calculatie_id: calculatieId,
@@ -178,108 +149,26 @@ export async function handleGenerateStabu(task) {
         uren: (post.normuren || 0) * (post.hoeveelheid || 1),
         prijs_eenh: post.prijs_eenh,
         arbeidsprijs: loonkostenPerEenheid,
-        loonkosten: loonkostenTotaal,
+        loonkosten: loonkostenPerEenheid * post.hoeveelheid,
         materiaalprijs: materiaalprijsPerEenheid,
-        materiaalkosten: materiaalkostenTotaal,
+        materiaalkosten: materiaalprijsPerEenheid * post.hoeveelheid,
         oa_eenh: 8,
         oa: totaal * 0.08,
         stelp_eenh: 0,
-        stelposten: 0,
+        stelposten: 0
       }
     })
 
-    console.log("[GENERATE_STABU] Inserting calculatie regels")
-    const { data: insertedRegels, error: insertError } = await supabase
+    await supabase
       .from("calculatie_regels")
       .insert(calculatieRegels)
-      .select("id, code, totaal")
-
-    if (insertError) {
-      console.error("[GENERATE_STABU] Insert error:", insertError)
-      throw new Error("CALCULATIE_REGELS_INSERT_FAILED: " + insertError.message)
-    }
-
-    console.log(`[GENERATE_STABU] Inserted ${insertedRegels?.length || 0} calculatie regels`)
-
-    const totalen = calculatieRegels.reduce((acc, regel) => ({
-      kostprijs: (acc.kostprijs || 0) + (regel.totaal || 0),
-      loonkosten: (acc.loonkosten || 0) + (regel.loonkosten || 0),
-      materiaal: (acc.materiaal || 0) + (regel.materiaalkosten || 0),
-      overhead: (acc.overhead || 0) + (regel.oa || 0)
-    }), {})
-
-    console.log("[GENERATE_STABU] Calculated totalen:", totalen)
 
     await supabase
-      .from("projects")
-      .update({
-        calculatie_status: true,
-        calculatie_generated_at: now
-      })
-      .eq("id", project_id)
-
-    const { data: existingNext } = await supabase
       .from("executor_tasks")
-      .select("id")
-      .eq("project_id", project_id)
-      .eq("action", "start_rekenwolk")
-      .in("status", ["open", "running", "completed"])
-      .limit(1)
-      .maybeSingle()
-
-    if (!existingNext) {
-      console.log("[GENERATE_STABU] Creating start_rekenwolk task")
-      await supabase
-        .from("executor_tasks")
-        .insert({
-          project_id,
-          action: "start_rekenwolk",
-          status: "open",
-          assigned_to: "executor",
-          payload: { project_id }
-        })
-    }
-
-    console.log("[GENERATE_STABU] Marking task as completed")
-    await supabase
-      .from("executor_tasks")
-      .update({
-        status: "completed",
-        finished_at: now
-      })
+      .update({ status: "completed", finished_at: now })
       .eq("id", taskId)
 
-    console.log("[GENERATE_STABU] Successfully completed")
-
   } catch (err) {
-    console.error("[GENERATE_STABU] Error:", err.message)
-    
-    const nonCriticalErrors = [
-      "PROJECT_SCAN_NOT_COMPLETED",
-      "CALCULATIE_LOOKUP_FAILED",
-      "PROJECT_NOT_FOUND",
-      "calculatie_totalen"
-    ]
-    
-    const isNonCritical = nonCriticalErrors.some(errorMsg => 
-      err.message.includes(errorMsg)
-    )
-    
-    if (isNonCritical) {
-      console.warn("[GENERATE_STABU] Non-critical error, marking task as completed anyway")
-      
-      await supabase
-        .from("executor_tasks")
-        .update({
-          status: "completed",
-          finished_at: new Date().toISOString(),
-          notes: `Completed: ${err.message}`
-        })
-        .eq("id", taskId)
-        
-    } else {
-      console.error("[GENERATE_STABU] Critical error, failing task:", err.message)
-      await fail(taskId, err.message || "GENERATE_STABU_ERROR")
-    }
+    await fail(taskId, err.message)
   }
 }
