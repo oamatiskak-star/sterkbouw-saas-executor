@@ -60,14 +60,10 @@ export async function handleProjectScan(task) {
        SCAN RESULTEN SCHRIJVEN
        (exact volgens tabel)
     ============================ */
-    if (!scanRows.length) {
-  throw new Error("NO_SCANNABLE_FILES_AFTER_FILTER")
-}
-
-    const scanRows = objects
-  .filter(obj => obj.name && !obj.name.endsWith("/")) 
+   const scanRows = objects
+  .filter(obj => obj.name && !obj.name.endsWith("/"))
   .map(obj => ({
-    project_id: task.project_id, 
+    project_id: task.project_id,
     file_name: obj.name.split("/").pop(),
     storage_path: `${task.project_id}/${obj.name}`,
     detected_type: "file",
@@ -75,6 +71,10 @@ export async function handleProjectScan(task) {
     confidence: 1.0,
     created_at: now
   }))
+
+if (scanRows.length === 0) {
+  throw new Error("NO_SCANNABLE_FILES_AFTER_FILTER")
+}
 
     const { error: insertError } = await supabase
       .from("project_scan_results")
