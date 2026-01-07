@@ -8,12 +8,7 @@ const supabase = createClient(
 
 /*
 ===========================================================
-2JOURS PDF WRITER – EINDPRODUCT
-- PNG = vaste achtergrond (NOOIT schalen)
-- Alle kolommen gemapt conform PNG
-- Afkappen binnen kolombreedte (geen wrapping)
-- Automatische paginering (10 → 10.000+ regels)
-- Eén keer renderen → opslaan → klaar
+2JOURS PDF WRITER – EINDPRODUCT (SAFE)
 ===========================================================
 */
 
@@ -24,7 +19,7 @@ const TEMPLATE = {
   staartblad: "templates/2jours_staartblad.png"
 }
 
-// A4 landscape (moet matchen met PNG’s)
+// A4 landscape
 const A4_L = [842, 595]
 
 // Paginering
@@ -34,7 +29,7 @@ const PAGE = {
   rowHeight: 12
 }
 
-// KOLOMMEN (X + breedte) — afgestemd op PNG
+// Kolommen
 const COL = {
   code:        { x: 35,  w: 40 },
   omschrijving:{ x: 85,  w: 230 },
@@ -56,7 +51,6 @@ function euro(n) {
   return `€ ${Number(n || 0).toFixed(2)}`
 }
 
-// Tekst AFKAPPEN binnen kolombreedte
 function drawClampedText(page, font, text, x, y, maxWidth, size = 8) {
   if (text === null || text === undefined) return
   let s = String(text)
@@ -76,7 +70,7 @@ export class TwoJoursWriter {
 
   /*
   ============================
-  OPEN (laadt PNG’s 1×)
+  OPEN (SAFE)
   ============================
   */
   static async open(project_id) {
@@ -84,12 +78,24 @@ export class TwoJoursWriter {
     const font = await pdf.embedFont(StandardFonts.Helvetica)
 
     const images = {}
+
     for (const key of Object.keys(TEMPLATE)) {
-      const { data } = await supabase.storage
-        .from(BUCKET)
-        .download(TEMPLATE[key])
-      const bytes = await data.arrayBuffer()
-      images[key] = await pdf.embedPng(bytes)
+      try {
+        const { data, error } = await supabase.storage
+          .from(BUCKET)
+          .download(TEMPLATE[key])
+
+        if (error || !data) {
+          images[key] = null
+          continue
+        }
+
+        const bytes = await data.arrayBuffer()
+        images[key] = await pdf.embedPng(bytes)
+
+      } catch {
+        images[key] = null
+      }
     }
 
     return new TwoJoursWriter(project_id, pdf, font, images)
@@ -102,26 +108,29 @@ export class TwoJoursWriter {
   */
   drawVoorblad(project) {
     const page = this.pdf.addPage(A4_L)
-    page.drawImage(this.images.voorblad, {
-      x: 0, y: 0, width: A4_L[0], height: A4_L[1]
-    })
+
+    if (this.images.voorblad) {
+      page.drawImage(this.images.voorblad, {
+        x: 0, y: 0, width: A4_L[0], height: A4_L[1]
+      })
+    }
 
     const t = (v) => String(v || "")
 
-    page.drawText(t(project.naam_opdrachtgever || project.opdrachtgever), {
+    page.drawText(t(project?.naam_opdrachtgever || project?.opdrachtgever || ""), {
       x: 85, y: 445, size: 9, font: this.font
     })
-    page.drawText(t(project.naam || project.projectnaam), {
+    page.drawText(t(project?.naam || project?.projectnaam || ""), {
       x: 85, y: 415, size: 9, font: this.font
     })
-    page.drawText(t(project.plaatsnaam || project.plaats), {
+    page.drawText(t(project?.plaatsnaam || project?.plaats || ""), {
       x: 85, y: 385, size: 9, font: this.font
     })
   }
 
   /*
   ============================
-  CALCULATIE (MULTIPAGE)
+  CALCULATIE
   ============================
   */
   drawCalculatieRegels(regels, totalen) {
@@ -137,9 +146,11 @@ export class TwoJoursWriter {
 
     const newPage = () => {
       page = this.pdf.addPage(A4_L)
-      page.drawImage(this.images.calculatie, {
-        x: 0, y: 0, width: A4_L[0], height: A4_L[1]
-      })
+      if (this.images.calculatie) {
+        page.drawImage(this.images.calculatie, {
+          x: 0, y: 0, width: A4_L[0], height: A4_L[1]
+        })
+      }
       y = PAGE.startY
       row = 0
     }
@@ -188,14 +199,17 @@ export class TwoJoursWriter {
   */
   drawStaartblad() {
     const page = this.pdf.addPage(A4_L)
-    page.drawImage(this.images.staartblad, {
-      x: 0, y: 0, width: A4_L[0], height: A4_L[1]
-    })
+
+    if (this.images.staartblad) {
+      page.drawImage(this.images.staartblad, {
+        x: 0, y: 0, width: A4_L[0], height: A4_L[1]
+      })
+    }
   }
 
   /*
   ============================
-  SAVE  (FIX: correcte upload-volgorde)
+  SAVE
   ============================
   */
   async save() {
