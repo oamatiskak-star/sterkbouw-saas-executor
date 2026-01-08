@@ -270,13 +270,26 @@ export async function handleStartRekenwolk(task) {
       .eq("id", taskId)
 
   } catch (err) {
+    const error_timestamp = new Date().toISOString();
     await supabase
       .from("executor_tasks")
       .update({
         status: "failed",
         error: err.message,
-        finished_at: new Date().toISOString()
+        finished_at: error_timestamp
       })
       .eq("id", taskId)
+
+    if (calculation_run_id) {
+      await supabase
+        .from('calculation_runs')
+        .update({
+          status: 'failed',
+          current_step: 'error',
+          error: err.message,
+          updated_at: error_timestamp
+        })
+        .eq('id', calculation_run_id);
+    }
   }
 }
