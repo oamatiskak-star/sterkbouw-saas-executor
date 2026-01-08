@@ -52,23 +52,31 @@ export async function handleProjectScan(task) {
 
     console.log(`[handleProjectScan] Scan start for project ${project_id}`);
 
-    // 2. List documenten in Supabase Storage (sterkcalc)
-    const { data: objects, error: listError } = await supabase.storage
-      .from('sterkcalc')
-      .list(project_id, { limit: 1000, offset: 0, sortBy: { column: 'name', order: 'asc' }, recursive: true });
+    // 2. Fetch document sources for the project
+    const { data: documents, error: docError } = await supabase
+      .from('document_sources')
+      .select('storage_path, document_type')
+      .eq('project_id', project_id)
+      .order('created_at', { ascending: false });
 
-    if (listError || !objects || objects.length === 0) {
-      throw new Error(listError?.message || 'No documents found in storage.');
+    if (docError || !documents || documents.length === 0) {
+      throw new Error(docError?.message || 'No document source found for project.');
     }
 
-    const documentTypes = objects
-      .map((obj) => String(obj.name || '').split('.').pop())
+    for (const doc of documents) {
+      if (!doc?.storage_path) {
+        throw new Error('DOCUMENT_STORAGE_PATH_MISSING');
+      }
+    }
+
+    const documentTypes = documents
+      .map((doc) => doc?.document_type)
       .filter(Boolean);
-    console.log(`[handleProjectScan] Document count: ${objects.length}`);
+    console.log(`[handleProjectScan] Document count: ${documents.length}`);
     console.log(`[handleProjectScan] Document types: ${documentTypes.join(', ') || 'unknown'}`);
 
-    const document = objects[0];
-    const storagePath = `${project_id}/${document.name}`;
+    const document = documents[0];
+    const storagePath = document.storage_path;
 
     // 3. Download the document from Supabase Storage
     const { data: fileBlob, error: downloadError } = await supabase.storage
