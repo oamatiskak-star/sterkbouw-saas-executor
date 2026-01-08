@@ -7,7 +7,7 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 )
 
-const DEFAULT_BUCKET = "project_input_files"
+const DEFAULT_BUCKET = "sterkcalc"
 const LABOR_RATE = Number.isFinite(Number(process.env.STABU_LABOR_RATE))
   ? Number(process.env.STABU_LABOR_RATE)
   : null
@@ -393,7 +393,7 @@ function pickBestByContext(candidates, contextType) {
 function normalizeStoragePath(bucket, path) {
   if (!path) return null
   let normalizedPath = String(path)
-  let normalizedBucket = bucket
+  let normalizedBucket = DEFAULT_BUCKET
 
   if (!normalizedBucket && normalizedPath.startsWith(`${DEFAULT_BUCKET}/`)) {
     normalizedBucket = DEFAULT_BUCKET
@@ -405,7 +405,7 @@ function normalizeStoragePath(bucket, path) {
   }
 
   return {
-    bucket: normalizedBucket || DEFAULT_BUCKET,
+    bucket: DEFAULT_BUCKET,
     path: normalizedPath
   }
 }
@@ -451,12 +451,16 @@ async function getDocumentSources(project_id) {
 
   if (!docError && Array.isArray(documentSources)) {
     for (const doc of documentSources) {
-      if (doc?.storage_path) {
-        sources.push({
-          path: doc.storage_path,
-          bucket: doc.bucket || doc.storage_bucket || doc.bucket_name
-        })
+      if (doc?.bucket && doc.bucket !== DEFAULT_BUCKET) {
+        throw new Error("DOCUMENT_BUCKET_INVALID")
       }
+      if (!doc?.storage_path) {
+        throw new Error("DOCUMENT_STORAGE_PATH_MISSING")
+      }
+      sources.push({
+        path: doc.storage_path,
+        bucket: DEFAULT_BUCKET
+      })
     }
   }
 
@@ -483,11 +487,11 @@ async function getDocumentSources(project_id) {
 }
 
 async function downloadPdfData(source, pdfParser) {
-  const { bucket, path } = source
-  if (!path || !bucket) return null
+  const { path } = source
+  if (!path) return null
   if (!String(path).toLowerCase().endsWith(".pdf")) return null
 
-  const { data: fileBlob, error } = await supabase.storage.from(bucket).download(path)
+  const { data: fileBlob, error } = await supabase.storage.from(DEFAULT_BUCKET).download(path)
   if (error || !fileBlob) return null
 
   const buffer = Buffer.from(await fileBlob.arrayBuffer())
@@ -499,10 +503,10 @@ async function downloadPdfData(source, pdfParser) {
 }
 
 async function downloadFileBuffer(source) {
-  const { bucket, path } = source
-  if (!path || !bucket) return null
+  const { path } = source
+  if (!path) return null
 
-  const { data: fileBlob, error } = await supabase.storage.from(bucket).download(path)
+  const { data: fileBlob, error } = await supabase.storage.from(DEFAULT_BUCKET).download(path)
   if (error || !fileBlob) return null
 
   return Buffer.from(await fileBlob.arrayBuffer())
