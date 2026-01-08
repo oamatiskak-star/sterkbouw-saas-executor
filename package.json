@@ -32,7 +32,8 @@
     "redis": "^4.6.10",
     "module-alias": "^2.2.3",
     "pdf-lib": "^1.17.1",
-    "openai": "^4.20.1"
+    "openai": "^4.20.1",
+    "pdfjs-dist": "^4.10.38"
   },
   "devDependencies": {
     "nodemon": "^3.0.1",
