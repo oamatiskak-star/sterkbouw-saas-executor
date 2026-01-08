@@ -52,30 +52,28 @@ export async function handleProjectScan(task) {
 
     console.log(`[handleProjectScan] Scan start for project ${project_id}`);
 
-    // 2. Fetch document sources for the project
-    const { data: documents, error: docError } = await supabase
-      .from('document_sources')
-      .select('storage_path, document_type, bucket, storage_bucket')
-      .eq('project_id', project_id)
-      .order('created_at', { ascending: false });
+    // 2. List documenten in Supabase Storage (sterkcalc)
+    const { data: objects, error: listError } = await supabase.storage
+      .from('sterkcalc')
+      .list(project_id, { limit: 1000, offset: 0, sortBy: { column: 'name', order: 'asc' }, recursive: true });
 
-    if (docError || !documents || documents.length === 0) {
-      throw new Error(docError?.message || 'No document source found for project.');
+    if (listError || !objects || objects.length === 0) {
+      throw new Error(listError?.message || 'No documents found in storage.');
     }
 
-    const documentTypes = documents
-      .map((doc) => doc?.document_type)
+    const documentTypes = objects
+      .map((obj) => String(obj.name || '').split('.').pop())
       .filter(Boolean);
-    console.log(`[handleProjectScan] Document count: ${documents.length}`);
+    console.log(`[handleProjectScan] Document count: ${objects.length}`);
     console.log(`[handleProjectScan] Document types: ${documentTypes.join(', ') || 'unknown'}`);
 
-    const document = documents[0];
-    const bucket = document?.bucket || document?.storage_bucket || 'project_input_files';
+    const document = objects[0];
+    const storagePath = `${project_id}/${document.name}`;
 
     // 3. Download the document from Supabase Storage
     const { data: fileBlob, error: downloadError } = await supabase.storage
-      .from(bucket)
-      .download(document.storage_path);
+      .from('sterkcalc')
+      .download(storagePath);
 
     if (downloadError) {
       throw new Error(`Failed to download document: ${downloadError.message}`);
