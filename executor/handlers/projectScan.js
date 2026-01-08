@@ -105,19 +105,18 @@ if (scanRows.length === 0) {
           action: "generate_stabu",
           status: "open",
           assigned_to: "executor",
-          payload: { project_id },
+          calculation_run_id,
+          payload: {
+            project_id,
+            calculation_run_id
+          },
           created_at: now
         })
 
       if (taskError) {
         throw new Error(`GENERATE_STABU_TASK_FAILED: ${taskError.message}`)
       }
-
-      console.log("[PROJECT_SCAN] generate_stabu task created")
-    } else {
-      console.log("[PROJECT_SCAN] generate_stabu already exists")
     }
-
     /* ============================
        TASK → COMPLETED
     ============================ */
