@@ -187,6 +187,7 @@ async function pollExecutorTasks() {
       .from("executor_tasks")
       .update({ status: "completed", finished_at: new Date().toISOString() })
       .eq("id", task.id);
+    console.log("EXECUTOR_TASK_COMPLETED", task.action, task.id);
   } catch (e) {
     const errorMsg =
       e?.message ||
@@ -240,7 +241,13 @@ STARTUP
 ========================
 */
 if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
-  setInterval(pollExecutorTasks, 3000);
+  setInterval(async () => {
+    try {
+      await pollExecutorTasks();
+    } catch (err) {
+      console.error("[EXECUTOR LOOP ERROR]", err);
+    }
+  }, 3000);
 }
 
 app.listen(PORT, "0.0.0.0", async () => {
