@@ -8,58 +8,201 @@ const supabase = createClient(
 
 const CALCULATION_MODELS = {
   nieuwbouw: {
-    AK_PCT: 0.07,
-    ABK_PCT: 0.06,
-    WINST_PCT: 0.05,
-    RISICO_PCT: 0.02,
-    NORM_FACTOR: 1.0,
     label: 'Nieuwbouw',
-    assumptions: ['Volledige realisatie vanaf casco.', 'Gebruik van nieuwbouw-kengetallen.', 'Volledige E/W-installaties.'],
+    description: 'Calculatie voor volledig nieuwe bouwprojecten, startend vanaf de fundering.',
+    calculation_flow: [
+      'fundering',
+      'casco',
+      'schil',
+      'installaties',
+      'afbouw'
+    ],
+    forced_rules: {
+      must_include: ['fundering', 'casco', 'schil', 'installaties', 'afbouw'],
+      may_include: [],
+      must_exclude: ['bestaande_constructie_analyse', 'gedeeltelijke_sloop']
+    },
+    logic_constraints: {
+      allow_overlap_existing_new: false,
+      allow_partial_demolition: false,
+      require_existing_structure_analysis: false
+    },
+    default_assumptions: {
+      reuse_percentage: 0,
+      demolition_separate: true,
+      installaties_volledig_vervangen: true
+    },
+    percentages: {
+      ak: 7,
+      abk: 6,
+      winst: 5,
+      risico: 2
+    },
+    norm_factor: 1
   },
   transformatie: {
-    AK_PCT: 0.08,
-    ABK_PCT: 0.07,
-    WINST_PCT: 0.06,
-    RISICO_PCT: 0.08,
-    NORM_FACTOR: 0.9,
     label: 'Transformatie',
-    assumptions: ['Uitgangspunt is een bestaand casco.', 'Hogere onzekerheidsmarge door bestaande staat.', 'Kosten gesplitst in behoud, aanpassing, toevoeging.'],
+    description: 'Herbestemming of ingrijpende wijziging van een bestaand gebouw, inclusief aanpassing en nieuwe toevoegingen.',
+    calculation_flow: [
+      'bestaande_constructie_analyse',
+      'fundering',
+      'casco',
+      'schil',
+      'installaties',
+      'afbouw'
+    ],
+    forced_rules: {
+      must_include: ['bestaande_constructie_analyse'],
+      may_include: ['gedeeltelijke_sloop'],
+      must_exclude: []
+    },
+    logic_constraints: {
+      allow_overlap_existing_new: true,
+      allow_partial_demolition: true,
+      require_existing_structure_analysis: true
+    },
+    default_assumptions: {
+      reuse_percentage: null,
+      demolition_separate: false,
+      installaties_volledig_vervangen: false
+    },
+    percentages: {
+      ak: 8,
+      abk: 7,
+      winst: 6,
+      risico: 8
+    },
+    norm_factor: 1
   },
   renovatie: {
-    AK_PCT: 0.09,
-    ABK_PCT: 0.07,
-    WINST_PCT: 0.06,
-    RISICO_PCT: 0.10,
-    NORM_FACTOR: 0.85,
     label: 'Renovatie',
-    assumptions: ['Geen nieuw casco.', 'Focus op vervanging, herstel en modernisering.', 'Normuren lager dan nieuwbouw.'],
+    description: 'Vernieuwing of verbetering van een bestaand gebouw met maximaal behoud van de bestaande structuur.',
+    calculation_flow: [
+      'bestaande_constructie_analyse',
+      'schil',
+      'installaties',
+      'afbouw'
+    ],
+    forced_rules: {
+      must_include: [],
+      may_include: ['maximaal_hergebruik'],
+      must_exclude: ['nieuwe_fundering_totaal']
+    },
+    logic_constraints: {
+      allow_overlap_existing_new: true,
+      allow_partial_demolition: true,
+      require_existing_structure_analysis: true
+    },
+    default_assumptions: {
+      reuse_percentage: null,
+      demolition_separate: false,
+      installaties_volledig_vervangen: false
+    },
+    percentages: {
+      ak: 9,
+      abk: 7,
+      winst: 6,
+      risico: 10
+    },
+    norm_factor: 1
   },
   uitbreiding: {
-    AK_PCT: 0.08,
-    ABK_PCT: 0.06,
-    WINST_PCT: 0.05,
-    RISICO_PCT: 0.06,
-    NORM_FACTOR: 1.0,
     label: 'Uitbreiding',
-    assumptions: ['Strikte scheiding tussen nieuw deel en aansluiting op bestaand.', 'Extra risico op constructie en installaties.'],
+    description: 'Toevoeging van nieuwe bouwdelen aan een bestaand gebouw, met focus op koppeling.',
+    calculation_flow: [
+      'bestaand_nieuw_koppeling',
+      'fundering',
+      'casco',
+      'schil',
+      'installaties',
+      'afbouw'
+    ],
+    forced_rules: {
+      must_include: ['bestaand_nieuw_koppeling'],
+      may_include: [],
+      must_exclude: ['sloop_bestaand_gebouw_totaal']
+    },
+    logic_constraints: {
+      allow_overlap_existing_new: true,
+      allow_partial_demolition: false,
+      require_existing_structure_analysis: true
+    },
+    default_assumptions: {
+      reuse_percentage: 0,
+      demolition_separate: false,
+      installaties_volledig_vervangen: false
+    },
+    percentages: {
+      ak: 8,
+      abk: 6,
+      winst: 5,
+      risico: 6
+    },
+    norm_factor: 1
   },
   verduurzaming: {
-    AK_PCT: 0.06,
-    ABK_PCT: 0.05,
-    WINST_PCT: 0.05,
-    RISICO_PCT: 0.04,
-    NORM_FACTOR: 0.9,
     label: 'Verduurzaming',
-    assumptions: ['Focus op isolatie, installaties en energieprestatie.', 'Beperkte casco- en afbouwkosten.'],
+    description: 'Maatregelen gericht op energiebesparing en duurzaamheid van een bestaand gebouw.',
+    calculation_flow: [
+      'schil',
+      'installaties',
+      'energie_maatregelen'
+    ],
+    forced_rules: {
+      must_include: ['schil', 'installaties', 'energie_maatregelen'],
+      may_include: [],
+      must_exclude: ['fundering', 'casco']
+    },
+    logic_constraints: {
+      allow_overlap_existing_new: false,
+      allow_partial_demolition: false,
+      require_existing_structure_analysis: true
+    },
+    default_assumptions: {
+      reuse_percentage: null,
+      demolition_separate: false,
+      installaties_volledig_vervangen: false
+    },
+    percentages: {
+      ak: 6,
+      abk: 5,
+      winst: 5,
+      risico: 4
+    },
+    norm_factor: 1
   },
   default: {
-    AK_PCT: 0.08,
-    ABK_PCT: 0.06,
-    WINST_PCT: 0.05,
-    RISICO_PCT: 0.03,
-    NORM_FACTOR: 1.0,
     label: 'Standaard (Generiek)',
-    assumptions: ['Generieke rekenmethode toegepast bij gebrek aan specifiek type.'],
+    description: 'Generieke rekenmethode toegepast bij gebrek aan specifiek type.',
+    calculation_flow: [
+      'fundering',
+      'casco',
+      'schil',
+      'installaties',
+      'afbouw'
+    ],
+    forced_rules: {
+      must_include: [],
+      may_include: [],
+      must_exclude: []
+    },
+    logic_constraints: {
+      allow_overlap_existing_new: true,
+      allow_partial_demolition: true,
+      require_existing_structure_analysis: true
+    },
+    default_assumptions: {
+      reuse_percentage: null,
+      demolition_separate: false,
+      installaties_volledig_vervangen: false
+    },
+    percentages: {
+      ak: 8,
+      abk: 6,
+      winst: 5,
+      risico: 3
+    },
+    norm_factor: 1
   }
 };
 
@@ -167,7 +310,7 @@ export async function handleStartRekenwolk(task) {
       const hoeveelheid = p.hoeveelheid ?? 1;
 
       // LAAG 4: VAKINHOUDELIJKE PLAUSIBILITEIT
-      const normuren = (p.normuren ?? 0) * model.NORM_FACTOR; // Correctie op normuren
+      const normuren = (p.normuren ?? 0) * model.norm_factor; // Correctie op normuren
       const uren = normuren
 
       const loonkosten = uren * (p.arbeidsprijs ?? 0)
@@ -213,10 +356,10 @@ export async function handleStartRekenwolk(task) {
     =================================================
     */
     // LAAG 5: ONZEKERHEIDSLOGICA
-    const ak = kostprijs * model.AK_PCT
-    const abk = kostprijs * model.ABK_PCT
-    const winst = kostprijs * model.WINST_PCT
-    const risico = kostprijs * model.RISICO_PCT // Type-specifieke risico-opslag
+    const ak = kostprijs * (model.percentages.ak / 100)
+    const abk = kostprijs * (model.percentages.abk / 100)
+    const winst = kostprijs * (model.percentages.winst / 100)
+    const risico = kostprijs * (model.percentages.risico / 100) // Type-specifieke risico-opslag
 
     const verkoopprijs =
       kostprijs + ak + abk + winst + risico
