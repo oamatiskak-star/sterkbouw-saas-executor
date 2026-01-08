@@ -6,11 +6,63 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 )
 
-// OPSLAGEN – STRICT GESCHEIDEN (PROJECTNIVEAU)
-const AK_PCT = 0.08        // Algemene kosten
-const ABK_PCT = 0.06       // Algemene bedrijfskosten
-const WINST_PCT = 0.05     // Winst
-const RISICO_PCT = 0.03    // Risico
+const CALCULATION_MODELS = {
+  nieuwbouw: {
+    AK_PCT: 0.07,
+    ABK_PCT: 0.06,
+    WINST_PCT: 0.05,
+    RISICO_PCT: 0.02,
+    NORM_FACTOR: 1.0,
+    label: 'Nieuwbouw',
+    assumptions: ['Volledige realisatie vanaf casco.', 'Gebruik van nieuwbouw-kengetallen.', 'Volledige E/W-installaties.'],
+  },
+  transformatie: {
+    AK_PCT: 0.08,
+    ABK_PCT: 0.07,
+    WINST_PCT: 0.06,
+    RISICO_PCT: 0.08,
+    NORM_FACTOR: 0.9,
+    label: 'Transformatie',
+    assumptions: ['Uitgangspunt is een bestaand casco.', 'Hogere onzekerheidsmarge door bestaande staat.', 'Kosten gesplitst in behoud, aanpassing, toevoeging.'],
+  },
+  renovatie: {
+    AK_PCT: 0.09,
+    ABK_PCT: 0.07,
+    WINST_PCT: 0.06,
+    RISICO_PCT: 0.10,
+    NORM_FACTOR: 0.85,
+    label: 'Renovatie',
+    assumptions: ['Geen nieuw casco.', 'Focus op vervanging, herstel en modernisering.', 'Normuren lager dan nieuwbouw.'],
+  },
+  uitbreiding: {
+    AK_PCT: 0.08,
+    ABK_PCT: 0.06,
+    WINST_PCT: 0.05,
+    RISICO_PCT: 0.06,
+    NORM_FACTOR: 1.0,
+    label: 'Uitbreiding',
+    assumptions: ['Strikte scheiding tussen nieuw deel en aansluiting op bestaand.', 'Extra risico op constructie en installaties.'],
+  },
+  verduurzaming: {
+    AK_PCT: 0.06,
+    ABK_PCT: 0.05,
+    WINST_PCT: 0.05,
+    RISICO_PCT: 0.04,
+    NORM_FACTOR: 0.9,
+    label: 'Verduurzaming',
+    assumptions: ['Focus op isolatie, installaties en energieprestatie.', 'Beperkte casco- en afbouwkosten.'],
+  },
+  default: {
+    AK_PCT: 0.08,
+    ABK_PCT: 0.06,
+    WINST_PCT: 0.05,
+    RISICO_PCT: 0.03,
+    NORM_FACTOR: 1.0,
+    label: 'Standaard (Generiek)',
+    assumptions: ['Generieke rekenmethode toegepast bij gebrek aan specifiek type.'],
+  }
+};
+
 
 /*
 =====================================
@@ -48,6 +100,7 @@ export async function handleStartRekenwolk(task) {
 
   const taskId = task.id
   const project_id = task.project_id
+  const calculation_run_id = task.calculation_run_id || task.payload?.calculation_run_id;
   const now = new Date().toISOString()
 
   try {
@@ -57,14 +110,22 @@ export async function handleStartRekenwolk(task) {
       .update({ status: "running", started_at: now })
       .eq("id", taskId)
 
-    await ensureCalculatie(project_id)
+    const calcId = await ensureCalculatie(project_id);
 
-    /*
-    =================================================
-    1. PROJECT-STABU POSTEN (UIT SCAN)
-    =================================================
-    */
-    const { data: posten, error } = await supabase
+    // LAAG 1: TYPE-CONSISTENTIE & REKENNIVEAU-DISCIPLINE
+    const { data: runData, error: runError } = await supabase
+      .from('calculation_runs')
+      .select('calculation_type, reken_niveau')
+      .eq('id', calculation_run_id)
+      .single();
+
+    if (runError) throw new Error(`Failed to fetch calculation run data: ${runError.message}`);
+
+    const calculationType = runData?.calculation_type || 'default';
+    const model = CALCULATION_MODELS[calculationType] || CALCULATION_MODELS.default;
+
+    // LAAG 2: CONTEXT-VOLDOENDEHEID
+    const { data: posten, error: postenError } = await supabase
       .from("stabu_project_posten")
       .select(`
         stabu_code,
@@ -80,22 +141,33 @@ export async function handleStartRekenwolk(task) {
       .eq("project_id", project_id)
       .eq("geselecteerd", true)
 
-    if (error) throw error
+    if (postenError) throw postenError;
     if (!Array.isArray(posten) || posten.length === 0) {
-      throw new Error("NO_PROJECT_STABU_POSTEN")
+       // Onvoldoende input → markeer als indicatief en faal niet, maar stop de calculatie.
+       if (calculation_run_id) {
+         await supabase.from('calculation_runs').update({
+           status: 'completed_indicative',
+           current_step: 'Onvoldoende input',
+           error: 'Geen STABU-posten gevonden om te calculeren. Uitkomst is indicatief.',
+           updated_at: now,
+         }).eq('id', calculation_run_id);
+       }
+       throw new Error("NO_PROJECT_STABU_POSTEN: Input onvoldoende voor betrouwbare calculatie.");
     }
 
     /*
     =================================================
-    2. REKENWOLK – PER REGEL (VOLLEDIGE PNG-MAPPING)
+    2. REKENWOLK – TYPE-AFHANKELIJKE LOGICA
     =================================================
     */
     const regels = []
     let kostprijs = 0
 
     for (const p of posten) {
-      const hoeveelheid = p.hoeveelheid ?? 1
-      const normuren = p.normuren ?? 0
+      const hoeveelheid = p.hoeveelheid ?? 1;
+
+      // LAAG 4: VAKINHOUDELIJKE PLAUSIBILITEIT
+      const normuren = (p.normuren ?? 0) * model.NORM_FACTOR; // Correctie op normuren
       const uren = normuren
 
       const loonkosten = uren * (p.arbeidsprijs ?? 0)
@@ -121,35 +193,30 @@ export async function handleStartRekenwolk(task) {
         omschrijving: p.omschrijving,
         hoeveelheid,
         eenheid: p.eenheid,
-
-        normuren,
-        uren,
-
+        normuren: p.normuren, // Originele normuren voor weergave
+        uren, // Gecorrigeerde uren
         loonkosten,
         prijs_eenh: hoeveelheid ? subtotaal / hoeveelheid : 0,
-
         materiaalprijs: p.materiaalprijs,
         materiaal,
-
         oa_perc,
         oa,
-
         stelp_eenh,
         stelposten,
-
         totaal
       })
     }
 
     /*
     =================================================
-    3. PROJECTTOTALEN (NIET PER REGEL)
+    3. PROJECTTOTALEN (TYPE-AFHANKELIJK)
     =================================================
     */
-    const ak = kostprijs * AK_PCT
-    const abk = kostprijs * ABK_PCT
-    const winst = kostprijs * WINST_PCT
-    const risico = kostprijs * RISICO_PCT
+    // LAAG 5: ONZEKERHEIDSLOGICA
+    const ak = kostprijs * model.AK_PCT
+    const abk = kostprijs * model.ABK_PCT
+    const winst = kostprijs * model.WINST_PCT
+    const risico = kostprijs * model.RISICO_PCT // Type-specifieke risico-opslag
 
     const verkoopprijs =
       kostprijs + ak + abk + winst + risico
@@ -167,7 +234,8 @@ export async function handleStartRekenwolk(task) {
       abk,
       winst,
       risico,
-      verkoopprijs
+      verkoopprijs,
+      model: model, // Geef model door voor weergave van aannames
     })
 
     pdf.drawStaartblad()
@@ -178,8 +246,6 @@ export async function handleStartRekenwolk(task) {
       .from("projects")
       .update({ pdf_url: pdfUrl })
       .eq("id", project_id)
-
-    const calculation_run_id = task.calculation_run_id || task.payload?.calculation_run_id;
 
     if (calculation_run_id) {
       const { error: runUpdateError } = await supabase
