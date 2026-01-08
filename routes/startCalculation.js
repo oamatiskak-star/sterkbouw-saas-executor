@@ -24,7 +24,7 @@ router.post("/start-calculation", async (req, res) => {
   try {
     /*
     =====================================
-    1. CREATE CALCULATION RUN  (LEIDEND)
+    1. CREATE CALCULATION RUN (LEIDEND)
     =====================================
     */
     const { data: run, error: runErr } = await supabase
@@ -57,28 +57,40 @@ router.post("/start-calculation", async (req, res) => {
         project_id,
         calculation_run_id,
         status: "open",
-        payload: { project_id }
+        payload: {
+          project_id,
+          calculation_run_id
+        }
       },
       {
         action: "project_scan",
         project_id,
         calculation_run_id,
         status: "open",
-        payload: { project_id }
+        payload: {
+          project_id,
+          calculation_run_id
+        }
       },
       {
         action: "generate_stabu",
         project_id,
         calculation_run_id,
         status: "open",
-        payload: { project_id }
+        payload: {
+          project_id,
+          calculation_run_id
+        }
       },
       {
         action: "start_rekenwolk",
         project_id,
         calculation_run_id,
         status: "open",
-        payload: { project_id }
+        payload: {
+          project_id,
+          calculation_run_id
+        }
       }
     ]
 
