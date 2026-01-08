@@ -413,29 +413,8 @@ function normalizeStoragePath(bucket, path) {
 function extractPathsFromScanRow(scanRow) {
   if (!scanRow) return []
   const paths = []
-  const maybeStringFields = ["storage_path", "document_path", "file_path", "path"]
-  for (const field of maybeStringFields) {
-    if (typeof scanRow[field] === "string") {
-      paths.push({ path: scanRow[field], bucket: scanRow.bucket || scanRow.storage_bucket })
-    }
-  }
-
-  const maybeArrayFields = ["storage_paths", "document_paths", "file_paths", "files", "documents"]
-  for (const field of maybeArrayFields) {
-    const value = scanRow[field]
-    if (!value) continue
-    if (Array.isArray(value)) {
-      for (const item of value) {
-        if (typeof item === "string") {
-          paths.push({ path: item, bucket: scanRow.bucket || scanRow.storage_bucket })
-        } else if (item && typeof item === "object") {
-          const objPath = item.storage_path || item.document_path || item.file_path || item.path
-          if (objPath) {
-            paths.push({ path: objPath, bucket: item.bucket || item.storage_bucket || scanRow.bucket || scanRow.storage_bucket })
-          }
-        }
-      }
-    }
+  if (typeof scanRow.storage_path === "string") {
+    paths.push({ path: scanRow.storage_path })
   }
 
   return paths
