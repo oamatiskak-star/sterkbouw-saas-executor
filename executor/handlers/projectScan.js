@@ -1,5 +1,5 @@
+
 import { createClient } from '@supabase/supabase-js';
-import pdf from 'pdf-parse';
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -19,6 +19,18 @@ async function updateTaskStatus(taskId, status, error = null) {
 
 export async function handleProjectScan(task) {
   const { id: taskId, project_id, calculation_run_id } = task;
+
+  // Dynamically import pdf-parse
+  let pdf;
+  try {
+    const pdfModule = await import('pdf-parse');
+    pdf = pdfModule.default;
+  } catch (err) {
+    console.error('[Critical] Failed to load pdf-parse module.', err);
+    await updateTaskStatus(taskId, 'failed', "CRITICAL_DEPENDENCY_MISSING: The 'pdf-parse' package is not installed. Please run 'npm install pdf-parse'.");
+    return;
+  }
+
   if (!project_id) {
     await updateTaskStatus(taskId, 'failed', 'Project ID is missing');
     return;
