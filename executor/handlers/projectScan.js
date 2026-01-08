@@ -50,22 +50,31 @@ export async function handleProjectScan(task) {
           .eq('id', calculation_run_id);
     }
 
-    // 2. Fetch the primary document source for the project
-    const { data: document, error: docError } = await supabase
-      .from('document_sources')
-      .select('storage_path')
-      .eq('project_id', project_id)
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .single();
+    console.log(`[handleProjectScan] Scan start for project ${project_id}`);
 
-    if (docError || !document) {
+    // 2. Fetch document sources for the project
+    const { data: documents, error: docError } = await supabase
+      .from('document_sources')
+      .select('storage_path, document_type, bucket, storage_bucket')
+      .eq('project_id', project_id)
+      .order('created_at', { ascending: false });
+
+    if (docError || !documents || documents.length === 0) {
       throw new Error(docError?.message || 'No document source found for project.');
     }
 
+    const documentTypes = documents
+      .map((doc) => doc?.document_type)
+      .filter(Boolean);
+    console.log(`[handleProjectScan] Document count: ${documents.length}`);
+    console.log(`[handleProjectScan] Document types: ${documentTypes.join(', ') || 'unknown'}`);
+
+    const document = documents[0];
+    const bucket = document?.bucket || document?.storage_bucket || 'project_input_files';
+
     // 3. Download the document from Supabase Storage
     const { data: fileBlob, error: downloadError } = await supabase.storage
-      .from('project_input_files')
+      .from(bucket)
       .download(document.storage_path);
 
     if (downloadError) {
