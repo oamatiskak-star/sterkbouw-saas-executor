@@ -395,6 +395,7 @@ export async function handleStartRekenwolk(task) {
         .from("calculation_runs")
         .update({
           status: 'completed',
+          pdf_url: pdfUrl,
           current_step: 'completed',
           updated_at: now
         })
