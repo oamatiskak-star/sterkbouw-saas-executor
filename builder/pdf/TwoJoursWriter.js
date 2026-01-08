@@ -214,7 +214,7 @@ export class TwoJoursWriter {
   */
   async save() {
     const bytes = await this.pdf.save()
-    const path = `${this.project_id}/offerte_2jours.pdf`
+    const path = `${this.project_id}/2jours_${Date.now()}.pdf`
 
     await supabase.storage
       .from(BUCKET)
