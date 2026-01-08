@@ -1,160 +1,98 @@
-// executor/handlers/projectScan.js
-import { createClient } from "@supabase/supabase-js"
-import { sendTelegram } from "../../integrations/telegramSender.js"
+import { createClient } from '@supabase/supabase-js';
+import pdf from 'pdf-parse';
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY,
-  {
-    auth: {
-      persistSession: false,
-      autoRefreshToken: false
-    }
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+);
+
+async function updateTaskStatus(taskId, status, error = null) {
+  const update = {
+    status,
+    finished_at: new Date().toISOString(),
+  };
+  if (error) {
+    update.error = typeof error === 'string' ? error : error.message;
   }
-)
-
-console.log("[PROJECT_SCAN] Module loaded")
-
-export async function handleProjectScan(task) {
-  if (!task?.id || !task.project_id) {
-    console.error("[PROJECT_SCAN] Invalid task payload", task)
-    return
-  }
-
-  const taskId = task.id
-  const project_id = task.project_id
-  const now = new Date().toISOString()
-
-  console.log("[PROJECT_SCAN] START", { taskId, project_id })
-
-  try {
-    /* ============================
-       TASK → RUNNING
-    ============================ */
-    await supabase
-      .from("executor_tasks")
-      .update({ status: "running", started_at: now })
-      .eq("id", taskId)
-
-    /* ============================
-       STORAGE: BESTANDEN OPHALEN
-       (bucket: sterkcalc)
-    ============================ */
-    console.log("[PROJECT_SCAN] Listing storage objects")
-
-    const { data: objects, error: storageError } = await supabase.storage
-  .from("sterkcalc")
-  .list(project_id, { recursive: true })
-
-    if (storageError) {
-      throw new Error(`STORAGE_LIST_FAILED: ${storageError.message}`)
-    }
-
-    if (!objects || objects.length === 0) {
-      throw new Error("NO_PROJECT_FILES_FOUND")
-    }
-
-    console.log("[PROJECT_SCAN] Files found:", objects.length)
-
-    /* ============================
-       SCAN RESULTEN SCHRIJVEN
-       (exact volgens tabel)
-    ============================ */
-   const scanRows = objects
-  .filter(obj => obj.name && !obj.name.endsWith("/"))
-  .map(obj => ({
-    project_id: task.project_id,
-    file_name: obj.name.split("/").pop(),
-    storage_path: `${task.project_id}/${obj.name}`,
-    detected_type: "file",
-    discipline: "general",
-    confidence: 1.0,
-    created_at: now
-  }))
-
-if (scanRows.length === 0) {
-  throw new Error("NO_SCANNABLE_FILES_AFTER_FILTER")
+  await supabase.from('executor_tasks').update(update).eq('id', taskId);
 }
 
-    const { error: insertError } = await supabase
-      .from("project_scan_results")
-      .insert(scanRows)
+export async function handleProjectScan(task) {
+  const { id: taskId, project_id, calculation_run_id } = task;
+  if (!project_id) {
+    await updateTaskStatus(taskId, 'failed', 'Project ID is missing');
+    return;
+  }
 
-    if (insertError) {
-      throw new Error(`SCAN_INSERT_FAILED: ${insertError.message}`)
-    }
-
-    console.log("[PROJECT_SCAN] Scan results inserted:", scanRows.length)
-
-    /* ============================
-       generate_stabu ENQUEUE
-    ============================ */
-    const { data: existingTask } = await supabase
-      .from("executor_tasks")
-      .select("id")
-      .eq("project_id", project_id)
-      .eq("action", "generate_stabu")
-      .in("status", ["open", "running", "completed"])
-      .maybeSingle()
-
-    if (!existingTask) {
-      const { error: taskError } = await supabase
-        .from("executor_tasks")
-        .insert({
-          project_id,
-          action: "generate_stabu",
-          status: "open",
-          assigned_to: "executor",
-          calculation_run_id,
-          payload: {
-            project_id,
-            calculation_run_id
-          },
-          created_at: now
-        })
-
-      if (taskError) {
-        throw new Error(`GENERATE_STABU_TASK_FAILED: ${taskError.message}`)
-      }
-    }
-    /* ============================
-       TASK → COMPLETED
-    ============================ */
+  try {
+    // 1. Update status to indicate scanning is in progress
     await supabase
-      .from("executor_tasks")
-      .update({
-        status: "completed",
-        finished_at: now
-      })
-      .eq("id", taskId)
+      .from('executor_tasks')
+      .update({ status: 'running', started_at: new Date().toISOString() })
+      .eq('id', taskId);
+    
+    if (calculation_run_id) {
+        await supabase
+          .from('calculation_runs')
+          .update({ status: 'scanning', current_step: 'Documentenscan', updated_at: new Date().toISOString() })
+          .eq('id', calculation_run_id);
+    }
 
-    console.log("[PROJECT_SCAN] COMPLETED SUCCESSFULLY")
+    // 2. Fetch the primary document source for the project
+    const { data: document, error: docError } = await supabase
+      .from('document_sources')
+      .select('storage_path')
+      .eq('project_id', project_id)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single();
+
+    if (docError || !document) {
+      throw new Error(docError?.message || 'No document source found for project.');
+    }
+
+    // 3. Download the document from Supabase Storage
+    const { data: fileBlob, error: downloadError } = await supabase.storage
+      .from('project_input_files')
+      .download(document.storage_path);
+
+    if (downloadError) {
+      throw new Error(`Failed to download document: ${downloadError.message}`);
+    }
+
+    // 4. Parse the document (assuming PDF for now)
+    const fileBuffer = await fileBlob.arrayBuffer();
+    const pdfData = await pdf(Buffer.from(fileBuffer));
+
+    // 5. Placeholder for STABU mapping logic
+    // In the future, this text will be analyzed to find construction elements.
+    console.log(`--- Extracted Text for Project ${project_id} ---`);
+    console.log(pdfData.text.substring(0, 2000) + '...'); // Log first 2000 chars
+    console.log(`------------------------------------------------`);
+    
+    // Here you would insert the logic to map text to stabu_project_posten
+    // For example:
+    // const elements = await mapTextToStabu(pdfData.text);
+    // await supabase.from('stabu_project_posten').insert(elements);
+
+    // 6. Mark task as completed
+    await updateTaskStatus(taskId, 'completed');
+    
+    if (calculation_run_id) {
+        await supabase
+          .from('calculation_runs')
+          .update({ status: 'scan_completed', current_step: 'Wachten op calculatie', updated_at: new Date().toISOString() })
+          .eq('id', calculation_run_id);
+    }
 
   } catch (err) {
-    console.error("[PROJECT_SCAN] FAILED", err)
-
-    await supabase
-      .from("executor_tasks")
-      .update({
-        status: "failed",
-        error: err.message,
-        finished_at: new Date().toISOString()
-      })
-      .eq("id", taskId)
-
-    await supabase
-      .from("executor_errors")
-      .insert({
-        task_id: taskId,
-        project_id,
-        action: "project_scan",
-        error: err.message,
-        stack: err.stack,
-        created_at: new Date().toISOString()
-      })
-
-    await sendTelegram(
-      `[PROJECT_SCAN FAILED]\nProject: ${project_id}\nError: ${err.message}`
-    )
+    console.error(`[handleProjectScan] Error processing task ${taskId}:`, err);
+    await updateTaskStatus(taskId, 'failed', err);
+    if (calculation_run_id) {
+      await supabase
+        .from('calculation_runs')
+        .update({ status: 'failed', error: err.message, updated_at: new Date().toISOString() })
+        .eq('id', calculation_run_id);
+    }
   }
 }
