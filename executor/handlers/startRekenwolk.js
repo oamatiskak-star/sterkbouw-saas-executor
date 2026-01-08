@@ -384,6 +384,9 @@ export async function handleStartRekenwolk(task) {
     pdf.drawStaartblad()
 
     const pdfUrl = await pdf.save()
+    if (!pdfUrl) {
+      throw new Error("PDF_URL_MISSING")
+    }
 
     await supabase
       .from("projects")
