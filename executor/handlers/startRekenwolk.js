@@ -81,7 +81,7 @@ async function ensureCalculatie(project_id) {
   if (error) throw error
   if (existing) return existing.id
 
-  const { data, error: insertErr } = await supabase
+  const { data: insertErr } = await supabase
     .from("calculaties")
     .insert({
       project_id,
@@ -119,7 +119,7 @@ export async function handleStartRekenwolk(task) {
       .eq('id', calculation_run_id)
       .single();
 
-    if (runError) throw new Error(`Failed to fetch calculation run data: ${runError.message}`);
+    if (runError && runError.code !== 'PGRST116') throw new Error(`Failed to fetch calculation run data: ${runError.message}`);
 
     const calculationType = runData?.calculation_type || 'default';
     const model = CALCULATION_MODELS[calculationType] || CALCULATION_MODELS.default;
