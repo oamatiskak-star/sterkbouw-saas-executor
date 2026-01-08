@@ -179,7 +179,9 @@ export async function handleStartRekenwolk(task) {
       .update({ pdf_url: pdfUrl })
       .eq("id", project_id)
 
-    if (task.calculation_run_id) {
+    const calculation_run_id = task.calculation_run_id || task.payload?.calculation_run_id;
+
+    if (calculation_run_id) {
       const { error: runUpdateError } = await supabase
         .from("calculation_runs")
         .update({
@@ -187,10 +189,11 @@ export async function handleStartRekenwolk(task) {
           current_step: 'completed',
           updated_at: now
         })
-        .eq('id', task.calculation_run_id)
+        .eq('id', calculation_run_id)
 
       if (runUpdateError) throw runUpdateError
     }
+
     /* TASK → COMPLETED */
     await supabase
       .from("executor_tasks")
