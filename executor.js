@@ -248,8 +248,10 @@ function main() {
     log(LOG_PREFIXES.startup, 'Starting executor...');
 
     if (!config.isExecutorEnabled) {
-        log(LOG_PREFIXES.startup, 'Executor is disabled by configuration (EXECUTOR_ENABLED=false). Exiting.');
-        process.exit(0);
+        log(LOG_PREFIXES.startup, 'Executor is disabled by configuration (EXECUTOR_ENABLED=false). Process will idle and not poll for tasks.');
+        // By not starting the poller, the process will remain alive due to the Supabase client's
+        // connection pool, but it will not perform any work. This prevents a container crash loop.
+        return;
     }
 
     if (!config.isConfigurationValid) {
