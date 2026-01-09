@@ -27,10 +27,43 @@ const LOG_PREFIXES = {
     task: '[TASK]',
 };
 
+const EXECUTOR_STATE_ID = "00000000-0000-0000-0000-000000000001";
+
 let isShuttingDown = false;
 let poller; // To hold the setInterval ID
 let isPollingInFlight = false;
 let isPollingActive = false;
+
+async function getExecutorAllowed() {
+    try {
+        const { data, error } = await supabase
+            .from('executor_state')
+            .select('allowed')
+            .eq('id', EXECUTOR_STATE_ID)
+            .maybeSingle();
+
+        if (error || !data) {
+            log(LOG_PREFIXES.guard, "[POLLING_BLOCKED_GUARD]");
+            return false;
+        }
+
+        return data.allowed === true;
+    } catch {
+        log(LOG_PREFIXES.guard, "[POLLING_BLOCKED_GUARD]");
+        return false;
+    }
+}
+
+async function setExecutorAllowedFalse() {
+    try {
+        await supabase
+            .from('executor_state')
+            .update({ allowed: false, updated_at: new Date().toISOString() })
+            .eq('id', EXECUTOR_STATE_ID);
+    } catch {
+        log(LOG_PREFIXES.guard, "[POLLING_BLOCKED_GUARD]");
+    }
+}
 
 async function hasActiveTasks() {
     try {
@@ -43,15 +76,15 @@ async function hasActiveTasks() {
             .maybeSingle();
 
         if (error) {
-            log(LOG_PREFIXES.guard, `[POLL_GUARD_BLOCKED] Failed to check active tasks: ${error.message}`);
             stopPolling();
+            log(LOG_PREFIXES.guard, "[POLLING_BLOCKED_GUARD]");
             return null;
         }
 
         return Boolean(data);
-    } catch (err) {
-        log(LOG_PREFIXES.guard, `[POLL_GUARD_BLOCKED] Failed to check active tasks: ${err.message}`);
+    } catch {
         stopPolling();
+        log(LOG_PREFIXES.guard, "[POLLING_BLOCKED_GUARD]");
         return null;
     }
 }
@@ -69,16 +102,22 @@ async function startPollingIfNeeded() {
         return;
     }
     if (!config.isExecutorEnabled) {
-        log(LOG_PREFIXES.startup, "[EXECUTOR_IDLE]");
+        log(LOG_PREFIXES.startup, "[EXECUTOR_IDLE_GUARD]");
+        return;
+    }
+    const isAllowed = await getExecutorAllowed();
+    if (!isAllowed) {
+        log(LOG_PREFIXES.startup, "[EXECUTOR_IDLE_GUARD]");
         return;
     }
     const hasTasks = await hasActiveTasks();
     if (!hasTasks) {
-        log(LOG_PREFIXES.startup, "[EXECUTOR_IDLE]");
+        log(LOG_PREFIXES.startup, "[EXECUTOR_IDLE_GUARD]");
         return;
     }
     isPollingActive = true;
-    log(LOG_PREFIXES.startup, "[POLLING_STARTED_ACTIVE_TASKS]");
+    log(LOG_PREFIXES.startup, "[EXECUTOR_TRIGGERED_BY_TASK]");
+    log(LOG_PREFIXES.startup, "[POLLING_STARTED]");
     poller = setInterval(pollAndProcess, config.pollInterval);
     pollAndProcess();
 }
@@ -234,11 +273,17 @@ async function processRunWithGuards(run) {
 
 async function pollAndProcess() {
     if (isPollingInFlight) {
-        log(LOG_PREFIXES.guard, "[POLL_GUARD_BLOCKED]");
+        log(LOG_PREFIXES.guard, "[POLLING_BLOCKED_GUARD]");
         return;
     }
     if (!config.isExecutorEnabled || !isPollingActive) {
-        log(LOG_PREFIXES.startup, "[EXECUTOR_IDLE]");
+        log(LOG_PREFIXES.startup, "[EXECUTOR_IDLE_GUARD]");
+        stopPolling();
+        return;
+    }
+    const isAllowed = await getExecutorAllowed();
+    if (!isAllowed) {
+        log(LOG_PREFIXES.guard, "[POLLING_BLOCKED_GUARD]");
         stopPolling();
         return;
     }
@@ -263,7 +308,7 @@ async function pollAndProcess() {
             .maybeSingle();
 
         if (queryError) {
-            log(LOG_PREFIXES.guard, `[POLL_GUARD_BLOCKED] DB query failed: ${queryError.message}. Polling will stop until restart.`);
+            log(LOG_PREFIXES.guard, "[POLLING_BLOCKED_GUARD]");
             stopPolling();
             return;
         }
@@ -297,8 +342,8 @@ async function pollAndProcess() {
 
         // 3. Process the locked task (don't await, let it run in the background)
         processRunWithGuards(lockedRun);
-        } catch (err) {
-            log(LOG_PREFIXES.guard, `[POLL_GUARD_BLOCKED] A fatal error occurred during the poll cycle: ${err.message}. Polling will stop until restart.`);
+        } catch {
+            log(LOG_PREFIXES.guard, "[POLLING_BLOCKED_GUARD]");
             stopPolling();
         }
     } finally {
@@ -308,6 +353,8 @@ async function pollAndProcess() {
             return;
         }
         if (!hasTasks) {
+            await setExecutorAllowedFalse();
+            log(LOG_PREFIXES.poll, "[EXECUTOR_CHAIN_COMPLETE]");
             log(LOG_PREFIXES.poll, "[POLLING_STOPPED_IDLE]");
             stopPolling();
             return;
@@ -346,7 +393,7 @@ function main() {
     process.on('SIGINT', () => shutdown());
 
     if (!config.isExecutorEnabled) {
-        log(LOG_PREFIXES.startup, "[EXECUTOR_IDLE]");
+        log(LOG_PREFIXES.startup, "[EXECUTOR_IDLE_GUARD]");
         return;
     }
 
