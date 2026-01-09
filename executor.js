@@ -20,7 +20,7 @@ const supabase = createClient(
 // =====================================================
 // POLLING CONFIG
 // =====================================================
-const POLL_INTERVAL = 5000; // 5 seconden
+
 let isProcessing = false;   // 🔒 HARD GUARD TEGEN DUBBELE POLLING
 
 // =====================================================
