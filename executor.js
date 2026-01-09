@@ -24,10 +24,8 @@ const log = (prefix, message) => console.log(`${prefix} ${message}`);
 // SUPABASE CLIENT & HELPERS
 // =================================================================
 
-// The client is initialized only if the configuration is valid.
-const supabase = config.isConfigurationValid ?
-    createClient(config.supabaseUrl, config.supabaseServiceRoleKey) :
-    null;
+// The client is initialized within main() after config validation.
+let supabase = null;
 
 /**
  * Centralized function to update the status of a run.
@@ -255,6 +253,9 @@ function shutdown(immediate = false) {
 function main() {
     log(LOG_PREFIXES.startup, 'Starting executor...');
 
+    process.on('SIGTERM', () => shutdown());
+    process.on('SIGINT', () => shutdown());
+
     if (!config.isExecutorEnabled) {
         log(LOG_PREFIXES.startup, 'Executor is disabled by configuration (EXECUTOR_ENABLED=false). Process will idle and not poll for tasks.');
         // Keep the process alive indefinitely without consuming resources. This is necessary
@@ -263,8 +264,16 @@ function main() {
         return;
     }
 
-    if (!config.isConfigurationValid) {
-        log(LOG_PREFIXES.guard, 'Invalid configuration. Check logs above. Exiting.');
+    if (!config.hasSupabaseEnv) {
+        log(LOG_PREFIXES.guard, 'FATAL: Missing Supabase environment variables. Exiting.');
+        process.exit(1);
+    }
+
+    try {
+        supabase = createClient(config.supabaseUrl, config.supabaseServiceRoleKey);
+        log(LOG_PREFIXES.startup, 'Supabase client initialized successfully.');
+    } catch (error) {
+        log(LOG_PREFIXES.guard, `FATAL: Could not initialize Supabase client: ${error.message}. Check SUPABASE_URL.`);
         process.exit(1);
     }
 
@@ -272,10 +281,6 @@ function main() {
     log(LOG_PREFIXES.startup, `Allowed actions: [${config.allowedActions.join(', ')}]`);
     log(LOG_PREFIXES.startup, `Task timeout set to ${config.taskTimeout}ms.`);
     log(LOG_PREFIXES.startup, `Assigning tasks to: ${config.executorId}`);
-
-
-    process.on('SIGTERM', () => shutdown());
-    process.on('SIGINT', () => shutdown());
 
     poller = setInterval(pollAndProcess, config.pollInterval);
     pollAndProcess(); // Poll immediately on start
