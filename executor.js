@@ -1,23 +1,44 @@
 const { createClient } = require('@supabase/supabase-js');
 const PDFDocument = require('pdfkit');
 
-// Check environment variables
+// =====================================================
+// ENV CHECK
+// =====================================================
 if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
   console.error('Missing environment variables: SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY');
   process.exit(1);
 }
 
+// =====================================================
+// SUPABASE CLIENT
+// =====================================================
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-const POLL_INTERVAL = 5000; // 5 seconds
+// =====================================================
+// POLLING CONFIG
+// =====================================================
+const POLL_INTERVAL = 5000; // 5 seconden
+let isProcessing = false;   // 🔒 HARD GUARD TEGEN DUBBELE POLLING
 
+// =====================================================
+// MAIN POLLER
+// =====================================================
 async function pollAndProcess() {
-  console.log('Polling for queued runs...');
+  if (isProcessing) {
+    console.log('[EXECUTOR] ⏳ Poll skipped: executor busy');
+    return;
+  }
+
+  isProcessing = true;
+  console.log('[EXECUTOR] 🔍 Polling for queued calculation_runs...');
+
   try {
-    // Query for the oldest queued run
+    // -------------------------------------------------
+    // 1. HAAL OUDEST QUEUED RUN OP
+    // -------------------------------------------------
     const { data: run, error: queryError } = await supabase
       .from('calculation_runs')
       .select('*')
@@ -27,288 +48,225 @@ async function pollAndProcess() {
       .maybeSingle();
 
     if (queryError) {
-      console.error('Query error:', queryError);
+      console.error('[EXECUTOR] Query error:', queryError);
       return;
     }
 
     if (!run) {
-      console.log('No queued runs found');
+      console.log('[EXECUTOR] No queued runs found');
       return;
     }
 
-    console.log(`Found queued run: ${run.id}, project: ${run.project_id}, type: ${run.calculation_type}`);
-    console.log(`PICKED RUN ${run.id}`);
+    console.log(`[EXECUTOR] ▶ Picked run ${run.id} (project ${run.project_id})`);
 
-    // Lock: update to running and set initial step
-    const { data: updated, error: updateError } = await supabase
+    // -------------------------------------------------
+    // 2. LOCK RUN (QUEUED → RUNNING)
+    // -------------------------------------------------
+    const { data: locked, error: lockError } = await supabase
       .from('calculation_runs')
-      .update({ status: 'running' })
+      .update({
+        status: 'running',
+        current_step: 'project_scan'
+      })
       .eq('id', run.id)
       .eq('status', 'queued')
-      .select();
+      .select()
+      .maybeSingle();
 
-    if (updateError) {
-      console.error('Update to running error:', updateError);
+    if (lockError) {
+      console.error('[EXECUTOR] Lock error:', lockError);
       return;
     }
 
-    if (!updated || updated.length === 0) {
-      console.log(`Run ${run.id} already picked up by another executor`);
+    if (!locked) {
+      console.log('[EXECUTOR] Run already picked by another executor');
       return;
     }
 
-    console.log(`Locked run ${run.id} for processing`);
-    console.log(`STARTED PROCESSING RUN ${run.id}`);
+    console.log(`[EXECUTOR] 🔒 Locked run ${run.id}`);
 
-    try {
-      // STAP 1 — DOCUMENTEN ANALYSEREN
-      console.log('DOCUMENT ANALYSIS START');
-      const { data: documents, error: docsError } = await supabase
-        .from('document_sources')
-        .select('*')
-        .eq('project_id', run.project_id);
+    // =================================================
+    // 3. DOCUMENT ANALYSE
+    // =================================================
+    console.log('[EXECUTOR] 📄 Document analysis start');
 
-      if (docsError) throw docsError;
+    const { data: documents, error: docsError } = await supabase
+      .from('document_sources')
+      .select('*')
+      .eq('project_id', run.project_id);
 
-      // Simulate analysis: log documents
-      console.log(`Analyzed ${documents.length} documents for project ${run.project_id}`);
+    if (docsError) throw docsError;
 
-      // Update step if column exists
-      try {
-        await supabase.from('calculation_runs').update({ current_step: 'stabu_mapping' }).eq('id', run.id);
-      } catch (stepError) {
-        console.warn('Could not update current_step (column may not exist):', stepError.message);
-      }
+    console.log(`[EXECUTOR] 📄 Found ${documents.length} documents`);
 
-      // STAP 2 — STABU MAPPING
-      console.log('STABU MAPPING START');
-      // Simulate mapping: create dummy rows based on projectType
-      let dummyRows = generateDummyRows(run.calculation_type);
+    await supabase
+      .from('calculation_runs')
+      .update({ current_step: 'generate_stabu' })
+      .eq('id', run.id);
 
-      // Update step
-      try {
-        await supabase.from('calculation_runs').update({ current_step: 'calculating' }).eq('id', run.id);
-      } catch (stepError) {
-        console.warn('Could not update current_step:', stepError.message);
-      }
+    // =================================================
+    // 4. STABU + CALCULATIE (DUMMY)
+    // =================================================
+    console.log('[EXECUTOR] 🧮 STABU mapping');
 
-      // STAP 3 — BEREKENEN
-      console.log('CALCULATION START');
-      // Rows are already calculated in dummy
+    let rows = generateDummyRows(run.calculation_type);
+    rows = applyOverheads(rows, run.calculation_type);
 
-      // FIXED-PRICE HERREKENING
-      if (run.fixed_price) {
-        const calculatedTotal = dummyRows.reduce((sum, row) => sum + parseFloat(row.inkoop), 0);
-        const factor = run.fixed_price / calculatedTotal;
-        dummyRows = dummyRows.map(row => ({
-          ...row,
-          inkoop: row.inkoop * factor
-        }));
-        console.log(`Applied fixed-price scaling: factor ${factor.toFixed(4)}`);
-      }
+    const totalAmount = rows.reduce(
+      (sum, r) => sum + Number(r.regel_totaal || 0),
+      0
+    );
 
-      // Update step
-      try {
-        await supabase.from('calculation_runs').update({ current_step: 'applying_overheads' }).eq('id', run.id);
-      } catch (stepError) {
-        console.warn('Could not update current_step:', stepError.message);
-      }
+    // =================================================
+    // 5. OPSLAAN RESULTATEN
+    // =================================================
+    const { data: version, error: versionError } = await supabase
+      .from('calculation_versions')
+      .insert({
+        calculation_id: run.id,
+        total_amount: totalAmount
+      })
+      .select()
+      .single();
 
-      // STAP 4 — OPSLAGEN TOEPASSEN
-      console.log('OVERHEADS APPLIED');
-      // Overheads are applied in generateDummyRows, but recalculate after fixed-price
-      dummyRows = applyOverheads(dummyRows, run.calculation_type);
+    if (versionError) throw versionError;
 
-      // Update step to generating_pdf
-      try {
-        await supabase.from('calculation_runs').update({ current_step: 'generating_pdf' }).eq('id', run.id);
-      } catch (stepError) {
-        console.warn('Could not update current_step:', stepError.message);
-      }
+    const rowsPayload = rows.map(r => ({
+      calculation_version_id: version.id,
+      fase: r.fase,
+      stabu_code: r.stabu_code,
+      omschrijving: r.omschrijving,
+      hoeveelheid: r.hoeveelheid,
+      inkoop: r.inkoop,
+      ak: r.ak,
+      abk: r.abk,
+      risk: r.risk,
+      profit: r.profit,
+      regel_totaal: r.regel_totaal
+    }));
 
-      // RESULTAAT OPSLAAN
-      console.log('SAVING RESULTS');
-      // Insert calculation_rows
-      const { error: rowsError } = await supabase
-        .from('calculation_rows')
-        .insert(dummyRows.map(row => ({
-          calculation_version_id: null, // will set after version
-          fase: row.fase,
-          stabu_code: row.stabu_code,
-          omschrijving: row.omschrijving,
-          hoeveelheid: row.hoeveelheid,
-          inkoop: row.inkoop,
-          ak: row.ak,
-          abk: row.abk,
-          risk: row.risk,
-          profit: row.profit,
-          regel_totaal: row.regel_totaal
-        })));
+    const { error: rowsError } = await supabase
+      .from('calculation_rows')
+      .insert(rowsPayload);
 
-      if (rowsError) throw rowsError;
+    if (rowsError) throw rowsError;
 
-      // Get the inserted rows to calculate total
-      const totalAmount = dummyRows.reduce((sum, row) => sum + parseFloat(row.regel_totaal), 0);
+    // =================================================
+    // 6. PDF GENEREREN
+    // =================================================
+    console.log('[EXECUTOR] 📄 Generating 2jours PDF');
 
-      // Create calculation_version
-      const { data: version, error: versionError } = await supabase
-        .from('calculation_versions')
-        .insert({
-          calculation_id: run.id,
-          total_amount: totalAmount,
-          created_at: new Date()
-        })
-        .select()
-        .single();
+    const pdfBuffer = await generate2JoursPDF(rows, run, totalAmount);
+    const pdfPath = `pdf/${run.id}.pdf`;
 
-      if (versionError) throw versionError;
+    const { error: uploadError } = await supabase.storage
+      .from('sterkcalc')
+      .upload(pdfPath, pdfBuffer, {
+        contentType: 'application/pdf',
+        upsert: true
+      });
 
-      // Update rows with version_id
-      await supabase
-        .from('calculation_rows')
-        .update({ calculation_version_id: version.id })
-        .eq('calculation_version_id', null); // assuming no others
+    if (uploadError) throw uploadError;
 
-      // GENERATE PDF
-      console.log('GENERATING PDF');
-      const pdfBuffer = await generate2JoursPDF(dummyRows, run, totalAmount);
+    // =================================================
+    // 7. FINALIZE
+    // =================================================
+    await supabase
+      .from('calculation_runs')
+      .update({
+        status: 'completed',
+        current_step: 'completed',
+        pdf_url: pdfPath
+      })
+      .eq('id', run.id);
 
-      // Upload to Supabase Storage
-      const filePath = `pdf/${run.id}.pdf`;
-      const { error: uploadError } = await supabase.storage
-        .from('sterkcalc')
-        .upload(filePath, pdfBuffer, {
-          contentType: 'application/pdf',
-          upsert: true
-        });
-
-      if (uploadError) throw uploadError;
-
-      // Update calculation_runs with pdf_url
-      await supabase
-        .from('calculation_runs')
-        .update({ pdf_url: filePath })
-        .eq('id', run.id);
-
-      // STATUS AFHANDELING
-      try {
-        await supabase
-          .from('calculation_runs')
-          .update({ status: 'completed', current_step: 'completed' })
-          .eq('id', run.id);
-      } catch (stepError) {
-        await supabase
-          .from('calculation_runs')
-          .update({ status: 'completed' })
-          .eq('id', run.id);
-      }
-
-      console.log('CALCULATION COMPLETED');
-
-    } catch (processError) {
-      console.error(`Error processing run ${run.id}:`, processError);
-      try {
-        await supabase
-          .from('calculation_runs')
-          .update({ status: 'error', current_step: 'error' })
-          .eq('id', run.id);
-      } catch (stepError) {
-        await supabase
-          .from('calculation_runs')
-          .update({ status: 'error' })
-          .eq('id', run.id);
-      }
-    }
+    console.log(`[EXECUTOR] ✅ Calculation ${run.id} completed`);
 
   } catch (err) {
-    console.error('Polling error:', err);
+    console.error('[EXECUTOR] ❌ Fatal error:', err.message);
+
+    if (err?.id) {
+      await supabase
+        .from('calculation_runs')
+        .update({
+          status: 'error',
+          current_step: 'error'
+        })
+        .eq('id', err.id);
+    }
+  } finally {
+    isProcessing = false;
   }
 }
 
+// =====================================================
+// HELPERS
+// =====================================================
 function generateDummyRows(projectType) {
-  // Dummy rows based on projectType
-  const baseRows = [
-    { fase: 'voorbereiding', stabu_code: '1001', omschrijving: 'Voorbereiding werk', hoeveelheid: 1, inkoop: 1000 },
-    { fase: 'ruwbouw', stabu_code: '2001', omschrijving: 'Fundering', hoeveelheid: 10, inkoop: 5000 },
-    { fase: 'afbouw', stabu_code: '3001', omschrijving: 'Vloeren', hoeveelheid: 50, inkoop: 2000 },
+  return [
+    {
+      fase: 'ruwbouw',
+      stabu_code: '2001',
+      omschrijving: 'Fundering',
+      hoeveelheid: 10,
+      inkoop: 5000
+    },
+    {
+      fase: 'afbouw',
+      stabu_code: '3001',
+      omschrijving: 'Vloeren',
+      hoeveelheid: 50,
+      inkoop: 2000
+    }
   ];
-
-  return baseRows; // Return without overheads initially
 }
 
 function applyOverheads(rows, projectType) {
-  const models = {
-    nieuwbouw: { ak: 6, abk: 5, risk: 4, profit: 6 },
-    transformatie: { ak: 7, abk: 6, risk: 6, profit: 6 },
-    renovatie: { ak: 8, abk: 6, risk: 7, profit: 5 },
-    uitbreiding: { ak: 7, abk: 5, risk: 6, profit: 6 },
-    verduurzaming: { ak: 6, abk: 4, risk: 3, profit: 5 },
-  };
+  const model = {
+    nieuwbouw: { ak: 6, abk: 5, risk: 4, profit: 6 }
+  }[projectType] || { ak: 6, abk: 5, risk: 4, profit: 6 };
 
-  const overheads = models[projectType] || models.nieuwbouw;
-
-  return rows.map(row => {
-    const ak = (row.inkoop * overheads.ak) / 100;
-    const abk = (row.inkoop * overheads.abk) / 100;
-    const risk = (row.inkoop * overheads.risk) / 100;
-    const profit = (row.inkoop * overheads.profit) / 100;
-    const regel_totaal = row.inkoop + ak + abk + risk + profit;
-    return { ...row, ak, abk, risk, profit, regel_totaal };
+  return rows.map(r => {
+    const ak = r.inkoop * model.ak / 100;
+    const abk = r.inkoop * model.abk / 100;
+    const risk = r.inkoop * model.risk / 100;
+    const profit = r.inkoop * model.profit / 100;
+    return {
+      ...r,
+      ak,
+      abk,
+      risk,
+      profit,
+      regel_totaal: r.inkoop + ak + abk + risk + profit
+    };
   });
 }
 
 async function generate2JoursPDF(rows, run, totalAmount) {
-  return new Promise((resolve, reject) => {
+  return new Promise(resolve => {
     const doc = new PDFDocument();
     const buffers = [];
-
     doc.on('data', buffers.push.bind(buffers));
-    doc.on('end', () => {
-      const pdfBuffer = Buffer.concat(buffers);
-      resolve(pdfBuffer);
-    });
+    doc.on('end', () => resolve(Buffer.concat(buffers)));
 
-    // Title page
-    doc.fontSize(20).text('2JOURS Calculatie Rapport', { align: 'center' });
+    doc.fontSize(18).text('2JOURS Calculatie', { align: 'center' });
     doc.moveDown();
-    doc.fontSize(14).text(`Project: ${run.scenario_name}`);
-    doc.text(`Calculation Type: ${run.calculation_type}`);
-    doc.text(`Date: ${new Date().toLocaleDateString()}`);
-    doc.addPage();
+    doc.text(`Project: ${run.scenario_name || run.project_id}`);
+    doc.text(`Type: ${run.calculation_type}`);
+    doc.moveDown();
 
-    // Group rows by fase
-    const grouped = {};
-    rows.forEach(row => {
-      if (!grouped[row.fase]) grouped[row.fase] = [];
-      grouped[row.fase].push(row);
+    rows.forEach(r => {
+      doc.text(`${r.omschrijving} – € ${r.regel_totaal.toFixed(2)}`);
     });
 
-    Object.keys(grouped).forEach(fase => {
-      doc.fontSize(16).text(fase.toUpperCase());
-      doc.moveDown();
-
-      // Table header
-      doc.fontSize(10).text('Omschrijving | Hoeveelheid | Inkoop | AK | ABK | Risico | Winst | Totaal', { underline: true });
-      doc.moveDown();
-
-      let subtotal = 0;
-      grouped[fase].forEach(row => {
-        doc.text(`${row.omschrijving} | ${row.hoeveelheid} | €${row.inkoop.toFixed(2)} | €${row.ak.toFixed(2)} | €${row.abk.toFixed(2)} | €${row.risk.toFixed(2)} | €${row.profit.toFixed(2)} | €${row.regel_totaal.toFixed(2)}`);
-        subtotal += row.regel_totaal;
-      });
-
-      doc.moveDown();
-      doc.fontSize(12).text(`Subtotaal ${fase}: €${subtotal.toFixed(2)}`, { bold: true });
-      doc.moveDown();
-    });
-
-    doc.fontSize(14).text(`Eindtotaal: €${totalAmount.toFixed(2)}`, { bold: true });
-
+    doc.moveDown();
+    doc.fontSize(14).text(`Totaal: € ${totalAmount.toFixed(2)}`);
     doc.end();
   });
 }
 
-// Start polling
-console.log('Executor started, polling every 5 seconds...');
-pollAndProcess(); // Poll immediately
+// =====================================================
+// START EXECUTOR
+// =====================================================
+console.log('[EXECUTOR] 🚀 Executor started');
 setInterval(pollAndProcess, POLL_INTERVAL);
