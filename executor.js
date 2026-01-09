@@ -29,6 +29,8 @@ const LOG_PREFIXES = {
 
 let isShuttingDown = false;
 let poller; // To hold the setInterval ID
+let isPollingInFlight = false;
+let isPollingEnabled = true;
 
 const log = (prefix, message) => console.log(`${prefix} ${message}`);
 
@@ -180,7 +182,18 @@ async function processRunWithGuards(run) {
 // =================================================================
 
 async function pollAndProcess() {
+    if (isPollingInFlight) {
+        return;
+    }
+    if (!config.isExecutorEnabled || !isPollingEnabled) {
+        log(LOG_PREFIXES.startup, '[EXECUTOR_DISABLED] Polling disabled. No further cycles will run.');
+        isPollingEnabled = false;
+        clearInterval(poller);
+        return;
+    }
+    isPollingInFlight = true;
     try {
+        try {
         if (isShuttingDown) {
             log(LOG_PREFIXES.poll, 'Polling stopped due to shutdown signal.');
             return;
@@ -199,8 +212,9 @@ async function pollAndProcess() {
             .maybeSingle();
 
         if (queryError) {
-            log(LOG_PREFIXES.guard, `DB query failed: ${queryError.message}. Halting executor.`);
-            shutdown(true); // Hard shutdown on DB error
+            log(LOG_PREFIXES.guard, `[POLL_DB_ERROR] DB query failed: ${queryError.message}. Polling will stop until restart.`);
+            isPollingEnabled = false;
+            clearInterval(poller);
             return;
         }
 
@@ -233,8 +247,11 @@ async function pollAndProcess() {
 
         // 3. Process the locked task (don't await, let it run in the background)
         processRunWithGuards(lockedRun);
-    } catch (err) {
-        log(LOG_PREFIXES.guard, `A fatal error occurred during the poll cycle: ${err.message}. The executor will attempt to recover on the next cycle.`);
+        } catch (err) {
+            log(LOG_PREFIXES.guard, `A fatal error occurred during the poll cycle: ${err.message}. The executor will attempt to recover on the next cycle.`);
+        }
+    } finally {
+        isPollingInFlight = false;
     }
 }
 
@@ -269,10 +286,7 @@ function main() {
     process.on('SIGINT', () => shutdown());
 
     if (!config.isExecutorEnabled) {
-        log(LOG_PREFIXES.startup, 'Executor is disabled by configuration (EXECUTOR_ENABLED=false). Process will idle and not poll for tasks.');
-        // Keep the process alive indefinitely without consuming resources. This is necessary
-        // to prevent the container from entering a restart loop when the service is disabled.
-        setInterval(() => {}, 2147483647); // Use max 32-bit signed integer for a long interval.
+        log(LOG_PREFIXES.startup, '[EXECUTOR_DISABLED] Executor is disabled by configuration (EXECUTOR_ENABLED=false).');
         return;
     }
 
