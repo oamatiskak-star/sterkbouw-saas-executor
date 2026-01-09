@@ -37,19 +37,23 @@ const supabase = config.isConfigurationValid ?
  * @param {string | null} errorMessage - An error message to store, if any.
  */
 async function updateRunStatus(runId, status, finalStep = null, errorMessage = null) {
-    const updatePayload = {
-        status,
-        ...(finalStep && { current_step: finalStep }),
-        ...(errorMessage && { error_details: errorMessage }),
-    };
+    try {
+        const updatePayload = {
+            status,
+            ...(finalStep && { current_step: finalStep }),
+            ...(errorMessage && { error_details: errorMessage }),
+        };
 
-    const { error } = await supabase
-        .from('calculation_runs')
-        .update(updatePayload)
-        .eq('id', runId);
+        const { error } = await supabase
+            .from('calculation_runs')
+            .update(updatePayload)
+            .eq('id', runId);
 
-    if (error) {
-        log(LOG_PREFIXES.task, `Failed to update run ${runId} to status ${status}: ${error.message}`);
+        if (error) {
+            log(LOG_PREFIXES.task, `Failed to update run ${runId} to status ${status}: ${error.message}`);
+        }
+    } catch (err) {
+        log(LOG_PREFIXES.task, `CRITICAL: An unexpected error occurred while updating status for run ${runId} to ${status}: ${err.message}`);
     }
 }
 
@@ -166,58 +170,62 @@ async function processRunWithGuards(run) {
 // =================================================================
 
 async function pollAndProcess() {
-    if (isShuttingDown) {
-        log(LOG_PREFIXES.poll, 'Polling stopped due to shutdown signal.');
-        return;
+    try {
+        if (isShuttingDown) {
+            log(LOG_PREFIXES.poll, 'Polling stopped due to shutdown signal.');
+            return;
+        }
+
+        log(LOG_PREFIXES.poll, 'Polling for a queued run...');
+
+        // 1. Find a potential task
+        const { data: potentialRun, error: queryError } = await supabase
+            .from('calculation_runs')
+            .select('*')
+            .eq('status', 'queued')
+            .in('calculation_type', config.allowedActions)
+            .order('created_at', { ascending: true })
+            .limit(1)
+            .maybeSingle();
+
+        if (queryError) {
+            log(LOG_PREFIXES.guard, `DB query failed: ${queryError.message}. Halting executor.`);
+            shutdown(true); // Hard shutdown on DB error
+            return;
+        }
+
+        if (!potentialRun) {
+            log(LOG_PREFIXES.poll, 'No actionable runs found.');
+            return;
+        }
+
+        log(LOG_PREFIXES.poll, `Found potential run: ${potentialRun.id}. Attempting to lock...`);
+
+        // 2. Attempt to lock the task atomically
+        const { data: lockedRun, error: lockError } = await supabase
+            .from('calculation_runs')
+            .update({ status: 'running', current_step: 'initializing' })
+            .eq('id', potentialRun.id)
+            .eq('status', 'queued') // Ensure it's still queued
+            .select()
+            .single();
+
+        if (lockError) {
+            // This could happen if another executor grabs the task between our select and update.
+            log(LOG_PREFIXES.poll, `Failed to lock run ${potentialRun.id}. It might have been taken. Error: ${lockError.message}`);
+            return;
+        }
+
+        if (!lockedRun) {
+            log(LOG_PREFIXES.poll, `Run ${potentialRun.id} was not locked. It was likely processed by another instance.`);
+            return;
+        }
+
+        // 3. Process the locked task (don't await, let it run in the background)
+        processRunWithGuards(lockedRun);
+    } catch (err) {
+        log(LOG_PREFIXES.guard, `A fatal error occurred during the poll cycle: ${err.message}. The executor will attempt to recover on the next cycle.`);
     }
-
-    log(LOG_PREFIXES.poll, 'Polling for a queued run...');
-
-    // 1. Find a potential task
-    const { data: potentialRun, error: queryError } = await supabase
-        .from('calculation_runs')
-        .select('*')
-        .eq('status', 'queued')
-        .in('calculation_type', config.allowedActions)
-        .order('created_at', { ascending: true })
-        .limit(1)
-        .maybeSingle();
-
-    if (queryError) {
-        log(LOG_PREFIXES.guard, `DB query failed: ${queryError.message}. Halting executor.`);
-        shutdown(true); // Hard shutdown on DB error
-        return;
-    }
-
-    if (!potentialRun) {
-        log(LOG_PREFIXES.poll, 'No actionable runs found.');
-        return;
-    }
-
-    log(LOG_PREFIXES.poll, `Found potential run: ${potentialRun.id}. Attempting to lock...`);
-
-    // 2. Attempt to lock the task atomically
-    const { data: lockedRun, error: lockError } = await supabase
-        .from('calculation_runs')
-        .update({ status: 'running', current_step: 'initializing' })
-        .eq('id', potentialRun.id)
-        .eq('status', 'queued') // Ensure it's still queued
-        .select()
-        .single();
-
-    if (lockError) {
-        // This could happen if another executor grabs the task between our select and update.
-        log(LOG_PREFIXES.poll, `Failed to lock run ${potentialRun.id}. It might have been taken. Error: ${lockError.message}`);
-        return;
-    }
-
-    if (!lockedRun) {
-        log(LOG_PREFIXES.poll, `Run ${potentialRun.id} was not locked. It was likely processed by another instance.`);
-        return;
-    }
-
-    // 3. Process the locked task (don't await, let it run in the background)
-    processRunWithGuards(lockedRun);
 }
 
 
