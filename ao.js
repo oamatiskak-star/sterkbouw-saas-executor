@@ -165,8 +165,8 @@ async function pollExecutorTasks() {
         .maybeSingle();
 
     if (queryError) {
-        console.error(`[POLL_GUARD_BLOCK] Database query failed: ${queryError.message}.`);
-        // We do not exit, allowing the poller to try again.
+        console.error(`[POLL_DB_ERROR] Database query failed: ${queryError.message}. Polling will stop until restart.`);
+        isPollingEnabled = false;
         return;
     }
 
@@ -203,15 +203,53 @@ async function pollExecutorTasks() {
 // SERVER STARTUP
 // ========================================
 
+// ========================================
+// SERVER STARTUP & POLLING LOOP
+// ========================================
+
+let isShuttingDown = false;
+let isPollingInFlight = false;
+let isPollingEnabled = true;
+
+// A recursive setTimeout loop is more robust than setInterval for async operations,
+// as it guarantees that one poll finishes before the next one is scheduled, preventing overlap.
+const pollingLoop = async () => {
+    if (isShuttingDown) {
+        console.log("[POLLER] Loop stopping due to shutdown signal.");
+        return;
+    }
+    if (!executorConfig.isExecutorEnabled || !isPollingEnabled) {
+        console.log("[EXECUTOR_DISABLED] Polling loop disabled. No further cycles will run.");
+        isPollingEnabled = false;
+        return;
+    }
+    if (isPollingInFlight) {
+        return;
+    }
+    isPollingInFlight = true;
+    try {
+        await pollExecutorTasks();
+    } catch (err) {
+        console.error(`[POLLER] An unexpected error escaped pollExecutorTasks: ${err.message}`);
+    } finally {
+        isPollingInFlight = false;
+        // Schedule the next poll only after the current one has fully completed.
+        if (!isShuttingDown && executorConfig.isExecutorEnabled && isPollingEnabled) {
+            setTimeout(pollingLoop, executorConfig.pollInterval);
+        }
+    }
+};
+
 app.listen(PORT, "0.0.0.0", () => {
     console.log(`✅ AO Service is live on port ${PORT} with role: ${AO_ROLE}`);
 
     const isExecutorRole = AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR";
 
     if (isExecutorRole && executorConfig.isExecutorEnabled) {
-        console.log(`[EXECUTOR_START] Executor enabled and starting. Polling every ${executorConfig.pollInterval}ms.`);
+        console.log(`[EXECUTOR_START] Executor enabled. Starting polling loop...`);
+        console.log(`[EXECUTOR_START] Poll interval: ${executorConfig.pollInterval}ms | Task timeout: ${executorConfig.taskTimeout}ms`);
         console.log(`[EXECUTOR_START] Allowed actions: ${executorConfig.allowedActions.join(', ')}`);
-        setInterval(pollExecutorTasks, executorConfig.pollInterval);
+        pollingLoop(); // Start the robust polling loop.
     } else if (isExecutorRole && !executorConfig.isExecutorEnabled) {
         console.log("[EXECUTOR_START] Executor role is active, but EXECUTOR_ENABLED is false. Polling will NOT start.");
     } else {
@@ -219,11 +257,17 @@ app.listen(PORT, "0.0.0.0", () => {
     }
 });
 
-// Handle graceful shutdown
+// Handle graceful shutdown by setting a flag that the polling loop checks.
 const shutdown = () => {
-    console.log("[SHUTDOWN] Signal received. Shutting down gracefully.");
-    // No need to clear interval, process will exit.
-    process.exit(0);
+    if (isShuttingDown) return;
+    console.log("[SHUTDOWN] Signal received. The polling loop will stop after the current cycle.");
+    isShuttingDown = true;
+
+    // Allow time for any in-flight request to complete before exiting.
+    setTimeout(() => {
+        console.log("[SHUTDOWN] Exiting process.");
+        process.exit(0);
+    }, executorConfig.pollInterval + 1000); // Wait for one poll interval + a buffer
 };
 
 process.on('SIGTERM', shutdown);
