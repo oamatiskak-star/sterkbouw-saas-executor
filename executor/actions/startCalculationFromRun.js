@@ -1,3 +1,4 @@
+// executor/actions/startCalculationFromRun.js
 import { createClient } from "@supabase/supabase-js";
 
 const supabase = createClient(
@@ -9,14 +10,14 @@ const supabase = createClient(
  * startCalculationFromRun
  *
  * Verantwoordelijkheid:
- * - startpunt vanuit UI
- * - zet de calculatie-workflow klaar
- * - maakt vervolg executor_tasks aan
+ * - ENIGE startpunt vanuit UI
+ * - maakt exact één calculation_run per project
+ * - zet exact één keten aan executor_tasks klaar
  *
- * Architectuur:
- * - deze functie rekent NIET
- * - deze functie maakt GEEN PDF
- * - deze functie start ALLEEN de keten
+ * BELANGRIJK:
+ * - idempotent
+ * - GEEN rekenwerk
+ * - GEEN PDF
  */
 export async function startCalculationFromRun({ task_id, project_id, payload }) {
   if (!task_id) {
@@ -27,7 +28,45 @@ export async function startCalculationFromRun({ task_id, project_id, payload }) 
     throw new Error("START_CALCULATION_MISSING_PROJECT_ID");
   }
 
-  // 1. Maak calculation_run aan (startpunt voor UI + realtime updates)
+  /**
+   * ====================================================
+   * 1. GUARD — bestaat er al een actieve calculation_run?
+   * ====================================================
+   */
+  const { data: existingRun, error: existingRunError } = await supabase
+    .from("calculation_runs")
+    .select("id, status")
+    .eq("project_id", project_id)
+    .in("status", ["queued", "running", "scanning", "calculating"])
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (existingRunError) {
+    throw new Error(`CALCULATION_RUN_CHECK_FAILED: ${existingRunError.message}`);
+  }
+
+  if (existingRun?.id) {
+    // Sluit de start_calculation taak netjes af
+    await supabase
+      .from("executor_tasks")
+      .update({
+        status: "completed",
+        finished_at: new Date().toISOString()
+      })
+      .eq("id", task_id);
+
+    return {
+      state: "ALREADY_RUNNING",
+      calculation_run_id: existingRun.id
+    };
+  }
+
+  /**
+   * =====================================
+   * 2. Maak NIEUWE calculation_run aan
+   * =====================================
+   */
   const { data: run, error: runError } = await supabase
     .from("calculation_runs")
     .insert({
@@ -47,34 +86,32 @@ export async function startCalculationFromRun({ task_id, project_id, payload }) 
     throw new Error(`CALCULATION_RUN_CREATE_FAILED: ${runError.message}`);
   }
 
-  // 2. Zet vervolg-tasks klaar in de juiste volgorde
+  /**
+   * ==================================================
+   * 3. Zet EXACT één set vervolg-tasks klaar
+   * ==================================================
+   */
   const followUpTasks = [
     {
       project_id,
       action: "project_scan",
       status: "open",
       assigned_to: "executor",
-      payload: {
-        calculation_run_id: run.id
-      }
+      payload: { calculation_run_id: run.id }
     },
     {
       project_id,
       action: "generate_stabu",
       status: "open",
       assigned_to: "executor",
-      payload: {
-        calculation_run_id: run.id
-      }
+      payload: { calculation_run_id: run.id }
     },
     {
       project_id,
       action: "start_rekenwolk",
       status: "open",
       assigned_to: "executor",
-      payload: {
-        calculation_run_id: run.id
-      }
+      payload: { calculation_run_id: run.id }
     }
   ];
 
@@ -86,7 +123,19 @@ export async function startCalculationFromRun({ task_id, project_id, payload }) 
     throw new Error(`FOLLOWUP_TASKS_CREATE_FAILED: ${taskError.message}`);
   }
 
-  // 3. Klaar – executor kan door met pollen
+  /**
+   * ==================================================
+   * 4. Sluit start_calculation-task af (CRUCIAAL)
+   * ==================================================
+   */
+  await supabase
+    .from("executor_tasks")
+    .update({
+      status: "completed",
+      finished_at: new Date().toISOString()
+    })
+    .eq("id", task_id);
+
   return {
     state: "STARTED",
     calculation_run_id: run.id
