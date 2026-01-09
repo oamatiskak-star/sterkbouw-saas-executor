@@ -162,32 +162,35 @@ EXECUTOR LOOP
 ========================
 */
 async function pollExecutorTasks() {
-  const { data: tasks } = await supabase
+  const { data: task } = await supabase
     .from("executor_tasks")
     .select("*")
     .eq("status", "open")
     .eq("assigned_to", "executor")
     .order("created_at", { ascending: true })
-    .limit(1);
+    .limit(1)
+    .maybeSingle();
 
-  if (!tasks || !tasks.length) return;
-
-  const task = tasks[0];
-  console.log("EXECUTOR_TASK_PICKED", task.action, task.id);
+  if (!task) return;
 
   try {
-    await supabase
+    const { data: claimed } = await supabase
       .from("executor_tasks")
       .update({ status: "running", started_at: new Date().toISOString() })
-      .eq("id", task.id);
+      .eq("id", task.id)
+      .eq("status", "open")
+      .select("*")
+      .maybeSingle();
 
-    await runAction(task);
+    if (!claimed) return;
+    console.log(`claimed task ${claimed.id}`);
+
+    await runAction(claimed);
 
     await supabase
       .from("executor_tasks")
       .update({ status: "completed", finished_at: new Date().toISOString() })
-      .eq("id", task.id);
-    console.log("EXECUTOR_TASK_COMPLETED", task.action, task.id);
+      .eq("id", claimed.id);
   } catch (e) {
     const errorMsg =
       e?.message ||
@@ -241,13 +244,14 @@ STARTUP
 ========================
 */
 if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
+  console.log("[EXECUTOR] main loop started");
   setInterval(async () => {
     try {
       await pollExecutorTasks();
     } catch (err) {
       console.error("[EXECUTOR LOOP ERROR]", err);
     }
-  }, 3000);
+  }, 2000);
 }
 
 app.listen(PORT, "0.0.0.0", async () => {
