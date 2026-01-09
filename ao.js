@@ -30,6 +30,7 @@ dotenv.config();
 const AO_ROLE = process.env.AO_ROLE;
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const EXECUTOR_STATE_ID = "00000000-0000-0000-0000-000000000001";
 
 // Startup validation
 if (!AO_ROLE) {
@@ -118,7 +119,7 @@ async function pollExecutorTasks() {
         .maybeSingle();
 
     if (queryError) {
-        console.error(`[POLL_GUARD_BLOCKED] Database query failed: ${queryError.message}. Polling will stop until restart.`);
+        console.log("[POLLING_BLOCKED_GUARD]");
         stopPolling();
         return;
     }
@@ -165,6 +166,37 @@ let isPollingInFlight = false;
 let isPollingActive = false;
 let pollingTimer = null;
 
+async function getExecutorAllowed() {
+    try {
+        const { data, error } = await supabase
+            .from("executor_state")
+            .select("allowed")
+            .eq("id", EXECUTOR_STATE_ID)
+            .maybeSingle();
+
+        if (error || !data) {
+            console.log("[POLLING_BLOCKED_GUARD]");
+            return false;
+        }
+
+        return data.allowed === true;
+    } catch {
+        console.log("[POLLING_BLOCKED_GUARD]");
+        return false;
+    }
+}
+
+async function setExecutorAllowedFalse() {
+    try {
+        await supabase
+            .from("executor_state")
+            .update({ allowed: false, updated_at: new Date().toISOString() })
+            .eq("id", EXECUTOR_STATE_ID);
+    } catch {
+        console.log("[POLLING_BLOCKED_GUARD]");
+    }
+}
+
 async function hasActiveTasks() {
     try {
         const { data, error } = await supabase
@@ -176,15 +208,15 @@ async function hasActiveTasks() {
             .maybeSingle();
 
         if (error) {
-            console.error(`[POLL_GUARD_BLOCKED] Failed to check active tasks: ${error.message}`);
             stopPolling();
+            console.log("[POLLING_BLOCKED_GUARD]");
             return null;
         }
 
         return Boolean(data);
-    } catch (err) {
-        console.error(`[POLL_GUARD_BLOCKED] Failed to check active tasks: ${err.message}`);
+    } catch {
         stopPolling();
+        console.log("[POLLING_BLOCKED_GUARD]");
         return null;
     }
 }
@@ -202,16 +234,22 @@ async function startPollingIfNeeded() {
         return;
     }
     if (!executorConfig.isExecutorEnabled) {
-        console.log("[EXECUTOR_IDLE]");
+        console.log("[EXECUTOR_IDLE_GUARD]");
+        return;
+    }
+    const isAllowed = await getExecutorAllowed();
+    if (!isAllowed) {
+        console.log("[EXECUTOR_IDLE_GUARD]");
         return;
     }
     const hasTasks = await hasActiveTasks();
     if (!hasTasks) {
-        console.log("[EXECUTOR_IDLE]");
+        console.log("[EXECUTOR_IDLE_GUARD]");
         return;
     }
     isPollingActive = true;
-    console.log("[POLLING_STARTED_ACTIVE_TASKS]");
+    console.log("[EXECUTOR_TRIGGERED_BY_TASK]");
+    console.log("[POLLING_STARTED]");
     pollingLoop();
 }
 
@@ -223,19 +261,25 @@ const pollingLoop = async () => {
         return;
     }
     if (!executorConfig.isExecutorEnabled || !isPollingActive) {
-        console.log("[EXECUTOR_IDLE]");
+        console.log("[EXECUTOR_IDLE_GUARD]");
+        stopPolling();
+        return;
+    }
+    const isAllowed = await getExecutorAllowed();
+    if (!isAllowed) {
+        console.log("[POLLING_BLOCKED_GUARD]");
         stopPolling();
         return;
     }
     if (isPollingInFlight) {
-        console.log("[POLL_GUARD_BLOCKED]");
+        console.log("[POLLING_BLOCKED_GUARD]");
         return;
     }
     isPollingInFlight = true;
     try {
         await pollExecutorTasks();
     } catch (err) {
-        console.error(`[POLL_GUARD_BLOCKED] An unexpected error escaped pollExecutorTasks: ${err.message}`);
+        console.log("[POLLING_BLOCKED_GUARD]");
         stopPolling();
     } finally {
         isPollingInFlight = false;
@@ -244,6 +288,8 @@ const pollingLoop = async () => {
             return;
         }
         if (!hasTasks) {
+            await setExecutorAllowedFalse();
+            console.log("[EXECUTOR_CHAIN_COMPLETE]");
             console.log("[POLLING_STOPPED_IDLE]");
             stopPolling();
             return;
@@ -264,9 +310,9 @@ if (isExecutorRole && executorConfig.isExecutorEnabled) {
     console.log(`[EXECUTOR_START] Allowed actions: ${executorConfig.allowedActions.join(', ')}`);
     startPollingIfNeeded();
 } else if (isExecutorRole && !executorConfig.isExecutorEnabled) {
-    console.log("[EXECUTOR_IDLE]");
+    console.log("[EXECUTOR_IDLE_GUARD]");
 } else {
-    console.log("[EXECUTOR_IDLE]");
+    console.log("[EXECUTOR_IDLE_GUARD]");
 }
 
 // Handle graceful shutdown by setting a flag that the polling loop checks.
