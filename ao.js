@@ -103,7 +103,7 @@ BASIC ROUTES
 */
 app.get("/", (_req, res) => res.json({ ok: true }));
 app.get("/ping", (_req, res) => res.json({ ok: true, role: AO_ROLE }));
-
+app.get("/health", (_req, res) => res.status(200).send("executor-ok"));
 /*
 ========================
 AI ENGINE HEALTH
