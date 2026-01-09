@@ -30,7 +30,58 @@ const LOG_PREFIXES = {
 let isShuttingDown = false;
 let poller; // To hold the setInterval ID
 let isPollingInFlight = false;
-let isPollingEnabled = true;
+let isPollingActive = false;
+
+async function hasActiveTasks() {
+    try {
+        const { data, error } = await supabase
+            .from('executor_tasks')
+            .select('id')
+            .eq('assigned_to', 'executor')
+            .in('status', ['open', 'running'])
+            .limit(1)
+            .maybeSingle();
+
+        if (error) {
+            log(LOG_PREFIXES.guard, `[POLL_GUARD_BLOCKED] Failed to check active tasks: ${error.message}`);
+            stopPolling();
+            return null;
+        }
+
+        return Boolean(data);
+    } catch (err) {
+        log(LOG_PREFIXES.guard, `[POLL_GUARD_BLOCKED] Failed to check active tasks: ${err.message}`);
+        stopPolling();
+        return null;
+    }
+}
+
+function stopPolling() {
+    if (poller) {
+        clearInterval(poller);
+        poller = undefined;
+    }
+    isPollingActive = false;
+}
+
+async function startPollingIfNeeded() {
+    if (isShuttingDown || isPollingActive) {
+        return;
+    }
+    if (!config.isExecutorEnabled) {
+        log(LOG_PREFIXES.startup, "[EXECUTOR_IDLE]");
+        return;
+    }
+    const hasTasks = await hasActiveTasks();
+    if (!hasTasks) {
+        log(LOG_PREFIXES.startup, "[EXECUTOR_IDLE]");
+        return;
+    }
+    isPollingActive = true;
+    log(LOG_PREFIXES.startup, "[POLLING_STARTED_ACTIVE_TASKS]");
+    poller = setInterval(pollAndProcess, config.pollInterval);
+    pollAndProcess();
+}
 
 const log = (prefix, message) => console.log(`${prefix} ${message}`);
 
@@ -183,12 +234,12 @@ async function processRunWithGuards(run) {
 
 async function pollAndProcess() {
     if (isPollingInFlight) {
+        log(LOG_PREFIXES.guard, "[POLL_GUARD_BLOCKED]");
         return;
     }
-    if (!config.isExecutorEnabled || !isPollingEnabled) {
-        log(LOG_PREFIXES.startup, '[EXECUTOR_DISABLED] Polling disabled. No further cycles will run.');
-        isPollingEnabled = false;
-        clearInterval(poller);
+    if (!config.isExecutorEnabled || !isPollingActive) {
+        log(LOG_PREFIXES.startup, "[EXECUTOR_IDLE]");
+        stopPolling();
         return;
     }
     isPollingInFlight = true;
@@ -212,9 +263,8 @@ async function pollAndProcess() {
             .maybeSingle();
 
         if (queryError) {
-            log(LOG_PREFIXES.guard, `[POLL_DB_ERROR] DB query failed: ${queryError.message}. Polling will stop until restart.`);
-            isPollingEnabled = false;
-            clearInterval(poller);
+            log(LOG_PREFIXES.guard, `[POLL_GUARD_BLOCKED] DB query failed: ${queryError.message}. Polling will stop until restart.`);
+            stopPolling();
             return;
         }
 
@@ -248,10 +298,20 @@ async function pollAndProcess() {
         // 3. Process the locked task (don't await, let it run in the background)
         processRunWithGuards(lockedRun);
         } catch (err) {
-            log(LOG_PREFIXES.guard, `A fatal error occurred during the poll cycle: ${err.message}. The executor will attempt to recover on the next cycle.`);
+            log(LOG_PREFIXES.guard, `[POLL_GUARD_BLOCKED] A fatal error occurred during the poll cycle: ${err.message}. Polling will stop until restart.`);
+            stopPolling();
         }
     } finally {
         isPollingInFlight = false;
+        const hasTasks = await hasActiveTasks();
+        if (hasTasks === null) {
+            return;
+        }
+        if (!hasTasks) {
+            log(LOG_PREFIXES.poll, "[POLLING_STOPPED_IDLE]");
+            stopPolling();
+            return;
+        }
     }
 }
 
@@ -264,7 +324,7 @@ function shutdown(immediate = false) {
     if (isShuttingDown) return;
     isShuttingDown = true;
     log(LOG_PREFIXES.shutdown, 'Shutdown sequence initiated...');
-    clearInterval(poller);
+    stopPolling();
     log(LOG_PREFIXES.shutdown, 'Polling stopped.');
 
     if (immediate) {
@@ -286,7 +346,7 @@ function main() {
     process.on('SIGINT', () => shutdown());
 
     if (!config.isExecutorEnabled) {
-        log(LOG_PREFIXES.startup, '[EXECUTOR_DISABLED] Executor is disabled by configuration (EXECUTOR_ENABLED=false).');
+        log(LOG_PREFIXES.startup, "[EXECUTOR_IDLE]");
         return;
     }
 
@@ -308,8 +368,7 @@ function main() {
     log(LOG_PREFIXES.startup, `Task timeout set to ${config.taskTimeout}ms.`);
     log(LOG_PREFIXES.startup, `Assigning tasks to: ${config.executorId}`);
 
-    poller = setInterval(pollAndProcess, config.pollInterval);
-    pollAndProcess(); // Poll immediately on start
+    startPollingIfNeeded();
 
     log(LOG_PREFIXES.startup, '[EXECUTOR_START] Executor running.');
 }
