@@ -240,6 +240,9 @@ async function ensureCalculatie(project_id) {
 
 export async function handleStartRekenwolk(task) {
   if (!task?.id || !task.project_id) return
+  if (task?.status && task.status !== "running") return
+  const action = task?.action || "start_rekenwolk"
+  console.log(`handler start ${action}`)
 
   const taskId = task.id
   const project_id = task.project_id
@@ -415,8 +418,10 @@ export async function handleStartRekenwolk(task) {
         finished_at: now
       })
       .eq("id", taskId)
+    console.log(`handler completed ${action}`)
 
   } catch (err) {
+    console.error(`handler failed ${action}`)
     const error_timestamp = new Date().toISOString();
     await supabase
       .from("executor_tasks")
