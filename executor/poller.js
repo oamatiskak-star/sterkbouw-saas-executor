@@ -1,28 +1,24 @@
 import { createClient } from "@supabase/supabase-js"
-import { runAction } from "./actionRouter.js"
+import { routeAction } from "./actionRouter.js"
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
 )
 
-const POLL_INTERVAL_MS = 4000
-let pollingActive = false
-
-function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms))
-}
+const POLL_INTERVAL = 4000
+let isRunning = false
+let pollerStarted = false
 
 export async function pollExecutorTasks() {
-  if (pollingActive) {
-    console.log("[AO] Poller already active — skipping start")
-    return
-  }
+  if (pollerStarted) return
+  pollerStarted = true
+  console.log("[AO] Executor poller gestart")
 
-  pollingActive = true
-  console.log("[AO] Executor poller gestart (safe mode)")
+  setInterval(async () => {
+    if (isRunning) return
+    isRunning = true
 
-  while (pollingActive) {
     try {
       const { data: tasks, error } = await supabase
         .from("executor_tasks")
@@ -30,36 +26,51 @@ export async function pollExecutorTasks() {
         .eq("status", "open")
         .eq("assigned_to", "executor")
         .order("created_at", { ascending: true })
-        .limit(1)
+        .limit(1) // Haal 1 taak op (of verhoog dit voor meerdere taken tegelijk)
 
-      if (error) {
-        console.error("[AO] Poll query failed:", error.message)
-        await sleep(POLL_INTERVAL_MS)
-        continue
+      if (error || !tasks || tasks.length === 0) {
+        isRunning = false
+        return
       }
 
-      if (!tasks || tasks.length === 0) {
-        await sleep(POLL_INTERVAL_MS)
-        continue
+      const task = tasks[0] // De eerste taak die we vinden
+      const projectId = task.project_id // Haal het project_id uit de taak
+
+      console.log(`[AO] Task found for project ${projectId}, starting execution`);
+
+      // Markeer taak als "running"
+      const { error: lockErr } = await supabase
+        .from("executor_tasks")
+        .update({
+          status: "running",
+          started_at: new Date().toISOString()
+        })
+        .eq("id", task.id)
+        .eq("status", "open")
+
+      if (lockErr) {
+        isRunning = false
+        return
       }
 
-      const task = tasks[0]
+      try {
+        // Actie uitvoeren
+        await routeAction(task) // Hier wordt de taak daadwerkelijk uitgevoerd
 
-      console.log("[AO] Executing task", {
-        id: task.id,
-        action: task.action,
-        project_id: task.project_id
-      })
-
-      // ⚠️ GEEN status update hier
-      // runAction is ENIGE plaats waar locking & status gebeurt
-      await runAction(task)
-
-    } catch (err) {
-      console.error("[AO] Executor loop error:", err.message)
-      // Geen crash → loop blijft gecontroleerd draaien
+        // ⚠️ GEEN status update hier, handlers zijn leidend
+      } catch (err) {
+        console.error(`[AO] Task ${task.id} failed:`, err.message)
+        await supabase
+          .from("executor_tasks")
+          .update({
+            status: "failed",
+            error: err.message,
+            finished_at: new Date().toISOString()
+          })
+          .eq("id", task.id)
+      }
+    } finally {
+      isRunning = false
     }
-
-    await sleep(POLL_INTERVAL_MS)
-  }
+  }, POLL_INTERVAL)
 }
