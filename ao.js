@@ -1,18 +1,28 @@
-/**
- * ao.js — STABIEL, GEFIXT
- * Portal-services worden ALLEEN gestart indien expliciet ingeschakeld.
- * Executor kan nooit meer crashen door ontbrekende portal-config.
+/*
+ * ao.js — AO/SterkCalc Executor
+ *
+ * This file contains the main application logic for the SterkCalc executor service.
+ * It combines an Express web server for API endpoints with a background polling
+ * mechanism to process asynchronous tasks from the `executor_tasks` table.
+ *
+ * Architecture:
+ * - Express Server: Handles HTTP requests for health checks, webhooks, and API calls.
+ * - Polling Loop: Periodically queries the database for new tasks if the executor role is enabled.
+ * - Task Processing: Each task is processed with guards for timeouts and errors.
+ * - Configuration-driven: Behavior is controlled by environment variables, loaded via config files.
+ * - Fail-safe: Multiple layers of try/catch and defensive checks are implemented to prevent crashes.
  */
 
-import "./monteur/scan.js";
 import express from "express";
 import dotenv from "dotenv";
 import { createClient } from "@supabase/supabase-js";
 
+// Executor-specific logic and configuration
+import { executorConfig } from "./executor/config.js";
 import { runAction } from "./executor/actionRouter.js";
-import { handleTelegramWebhook } from "./integrations/telegramWebhook.js";
-import { sendTelegram } from "./integrations/telegramSender.js";
 
+// API Routers and integration handlers
+import { handleTelegramWebhook } from "./integrations/telegramWebhook.js";
 import uploadTaskRouter from "./api/executor/upload-task.js";
 import startCalculationRouter from "./api/executor/start-calculation.js";
 import aiDrawingRouter from "./api/ai/generate-drawing.js";
@@ -20,135 +30,70 @@ import renderProcessRouter from "./api/executor/render-process.js";
 import aiProcessingRouter from "./api/executor/ai-processing.js";
 import aiEngineRouter from "./api/executor/ai-engine.js";
 
-/*
-========================
-OPTIONELE PORTAAL IMPORTS
-Worden pas gebruikt als PORTAL_ENABLED=true
-========================
-*/
-let PortalSyncTask,
-  QuoteProcessor,
-  RealtimeSyncService,
-  portalConfig,
-  validateConfig;
 
-/*
-========================
-ENV
-========================
-*/
+// ========================================
+// ENVIRONMENT & CONFIGURATION
+// ========================================
+
 dotenv.config();
 
-/*
-========================
-CONFIG
-========================
-*/
 const AO_ROLE = process.env.AO_ROLE;
 const PORT = process.env.PORT || 3000;
-const AI_ENGINE_URL = "http://localhost:8000";
-const PORTAL_ENABLED = process.env.PORTAL_ENABLED === "true";
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-if (!AO_ROLE) throw new Error("env_missing_ao_role");
-if (!process.env.SUPABASE_URL) throw new Error("env_missing_supabase_url");
-if (!process.env.SUPABASE_SERVICE_ROLE_KEY)
-  throw new Error("env_missing_supabase_service_role_key");
+// Startup validation
+if (!AO_ROLE) {
+    console.error("[FATAL] Missing required environment variable: AO_ROLE. Exiting.");
+    process.exit(1);
+}
+if (!SUPABASE_URL || !SUPABASE_KEY) {
+    console.error("[FATAL] Missing Supabase environment variables (SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY). Exiting.");
+    process.exit(1);
+}
 
-/*
-========================
-APP INIT
-========================
-*/
+
+// ========================================
+// INITIALIZATION
+// ========================================
+
 const app = express();
+let supabase;
+try {
+    supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+} catch (error) {
+    console.error(`[FATAL] Could not initialize Supabase client: ${error.message}. Check credentials. Exiting.`);
+    process.exit(1);
+}
 
-/*
-========================
-CORS
-========================
-*/
+// ========================================
+// MIDDLEWARE
+// ========================================
+
+// Looser CORS for development, should be tightened in production
 app.use((req, res, next) => {
-  res.setHeader(
-    "Access-Control-Allow-Origin",
-    "https://sterkbouw-saas-front-production.up.railway.app"
-  );
-  res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type,Authorization");
-  res.setHeader("Access-Control-Allow-Credentials", "true");
-
-  if (req.method === "OPTIONS") return res.sendStatus(200);
-  next();
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type,Authorization");
+    if (req.method === "OPTIONS") return res.sendStatus(200);
+    next();
 });
 
 app.use(express.json({ limit: "50mb" }));
-
 app.use((req, _res, next) => {
-  console.log("INCOMING_REQUEST", req.method, req.path);
-  next();
+    console.log(`[HTTP] ${req.method} ${req.path}`);
+    next();
 });
 
-/*
-========================
-SUPABASE
-========================
-*/
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY
-);
+// ========================================
+// CORE API ROUTES
+// ========================================
 
-/*
-========================
-BASIC ROUTES
-========================
-*/
-app.get("/", (_req, res) => res.json({ ok: true }));
-app.get("/ping", (_req, res) => res.json({ ok: true, role: AO_ROLE }));
-app.get("/health", (_req, res) => res.status(200).send("executor-ok"));
-/*
-========================
-AI ENGINE HEALTH
-========================
-*/
-app.get("/ai-health", async (_req, res) => {
-  try {
-    const axios = (await import("axios")).default;
-    const response = await axios.get(`${AI_ENGINE_URL}/health`, {
-      timeout: 5000,
-    });
+app.get("/", (_req, res) => res.json({ ok: true, message: "AO Executor is running." }));
+app.get("/health", (_req, res) => res.status(200).json({ status: "ok", role: AO_ROLE, timestamp: new Date().toISOString() }));
+app.post("/telegram/webhook", handleTelegramWebhook);
 
-    res.json({
-      ok: true,
-      ao_executor: { status: "online", role: AO_ROLE, port: PORT },
-      ai_engine: { status: "online", version: response.data.version },
-    });
-  } catch (error) {
-    res.json({
-      ok: true,
-      ao_executor: { status: "online", role: AO_ROLE, port: PORT },
-      ai_engine: { status: "offline", error: error.message },
-    });
-  }
-});
-
-/*
-========================
-TELEGRAM
-========================
-*/
-app.post("/telegram/webhook", async (req, res) => {
-  try {
-    await handleTelegramWebhook(req.body);
-  } catch (e) {
-    console.error("telegram_webhook_error", e?.message || e);
-  }
-  res.json({ ok: true });
-});
-
-/*
-========================
-API ROUTES — EXECUTOR
-========================
-*/
+// Executor-specific API routes
 app.use("/api/executor/upload-task", uploadTaskRouter);
 app.use("/api/ai/generate-drawing", aiDrawingRouter);
 app.use("/api/executor/render-process", renderProcessRouter);
@@ -156,90 +101,130 @@ app.use("/api/executor/ai-processing", aiProcessingRouter);
 app.use("/api/executor/ai-engine", aiEngineRouter);
 app.use("/api/executor/start-calculation", startCalculationRouter);
 
-/*
-========================
-EXECUTOR LOOP
-========================
-*/
 
-  try {
-    const { data: claimed } = await supabase
-      .from("executor_tasks")
-      .update({ status: "running", started_at: new Date().toISOString() })
-      .eq("id", task.id)
-      .eq("status", "open")
-      .select("*")
-      .maybeSingle();
+// ========================================
+// EXECUTOR TASK PROCESSING
+// ========================================
 
-    if (!claimed) return;
-    console.log(`claimed task ${claimed.id}`);
-
-    await runAction(claimed);
-
-    await supabase
-      .from("executor_tasks")
-      .update({ status: "completed", finished_at: new Date().toISOString() })
-      .eq("id", claimed.id);
-  } catch (e) {
-    const errorMsg =
-      e?.message ||
-      e?.error ||
-      (typeof e === "string" ? e : JSON.stringify(e));
-
-    console.error("executor_task_error", errorMsg);
-
-    await supabase
-      .from("executor_tasks")
-      .update({
-        status: "failed",
-        error: errorMsg,
-        finished_at: new Date().toISOString(),
-      })
-      .eq("id", task.id);
-  }
+/**
+ * Updates the status of a task in the database. Hardened to not throw exceptions.
+ */
+async function updateTaskStatus(taskId, status, errorMessage = null) {
+    try {
+        const updatePayload = {
+            status,
+            finished_at: new Date().toISOString(),
+            ...(errorMessage && { error: errorMessage }),
+        };
+        const { error } = await supabase.from("executor_tasks").update(updatePayload).eq("id", taskId);
+        if (error) {
+            console.error(`[EXECUTOR_DB] Failed to update task ${taskId} to status ${status}: ${error.message}`);
+        }
+    } catch (err) {
+        console.error(`[EXECUTOR_DB] CRITICAL: Network or unexpected error while updating status for task ${taskId}: ${err.message}`);
+    }
 }
 
-/*
-========================
-PORTAAL SERVICES (VEILIG)
-========================
-*/
-async function initializePortalServicesSafe() {
-  try {
-    const portalImports = await import("./config/portalConfig.js");
-    portalConfig = portalImports.portalConfig;
-    validateConfig = portalImports.validateConfig;
+/**
+ * Wraps the action execution with timeout and error handling guards.
+ * This function will not throw.
+ */
+async function runActionWithGuards(task) {
+    console.log(`[TASK_PICKED] Processing task ${task.id}, action: ${task.action}`);
 
-    PortalSyncTask = (await import("./tasks/portalSync.js")).PortalSyncTask;
-    QuoteProcessor = (await import("./tasks/quoteProcessor.js")).QuoteProcessor;
-    RealtimeSyncService = (
-      await import("./services/realtimeSync.js")
-    ).RealtimeSyncService;
+    const taskPromise = runAction(task);
+    const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error(`Task timed out after ${executorConfig.taskTimeout / 1000}s`)), executorConfig.taskTimeout)
+    );
 
-    validateConfig();
-
-    const portalSync = new PortalSyncTask(portalConfig);
-    await portalSync.start();
-
-    console.log("✅ Portal services gestart");
-  } catch (err) {
-    console.error("❌ Portal services NIET gestart:", err.message);
-  }
+    try {
+        await Promise.race([taskPromise, timeoutPromise]);
+        await updateTaskStatus(task.id, "completed");
+        console.log(`[TASK_COMPLETED] Task ${task.id} finished successfully.`);
+    } catch (error) {
+        console.error(`[TASK_ABORTED] Task ${task.id} failed: ${error.message}`);
+        await updateTaskStatus(task.id, "failed", error.message);
+    }
 }
 
-/*
-========================
-STARTUP
-========================
-*/
+/**
+ * Polls for new tasks and hands them off for processing.
+ */
+async function pollExecutorTasks() {
+    console.log("[POLL_CYCLE] Polling for an open task...");
 
-app.listen(PORT, "0.0.0.0", async () => {
-  console.log("AO EXECUTOR SERVICE LIVE", AO_ROLE, PORT);
+    // 1. Find a potential task matching the configured whitelist
+    const { data: task, error: queryError } = await supabase
+        .from("executor_tasks")
+        .select("*")
+        .eq("status", "open")
+        .eq("assigned_to", "executor")
+        .in("action", executorConfig.allowedActions)
+        .order("created_at", { ascending: true })
+        .limit(1)
+        .maybeSingle();
 
-  if (PORTAL_ENABLED === true) {
-    console.log("ℹ️ Portal enabled → initialiseren");
-    await initializePortalServicesSafe();
-  } else {
-    console.log("ℹ️ Portal disabled → executor-only modus");
-  }
+    if (queryError) {
+        console.error(`[POLL_GUARD_BLOCK] Database query failed: ${queryError.message}.`);
+        // We do not exit, allowing the poller to try again.
+        return;
+    }
+
+    if (!task) {
+        console.log("[POLL_CYCLE] No actionable tasks found.");
+        return;
+    }
+
+    console.log(`[POLL_CYCLE] Found potential task ${task.id}. Attempting to lock...`);
+
+    // 2. Atomically lock the task by updating its status.
+    const { data: lockedTask, error: lockError } = await supabase
+        .from("executor_tasks")
+        .update({ status: "running", started_at: new Date().toISOString() })
+        .eq("id", task.id)
+        .eq("status", "open") // Critial condition to prevent race
+        .select()
+        .single(); // Expect one row back
+
+    if (lockError || !lockedTask) {
+        console.log(`[POLL_CYCLE] Failed to lock task ${task.id}. It was likely taken by another instance.`);
+        return;
+    }
+
+    // 3. Process the task without blocking the polling loop.
+    // Attach a catch() to the promise to prevent any possibility of an unhandled rejection.
+    runActionWithGuards(lockedTask).catch(err => {
+        console.error(`[CRITICAL] Unhandled exception escaped from runActionWithGuards for task ${lockedTask.id}: ${err.message}`);
+    });
+}
+
+
+// ========================================
+// SERVER STARTUP
+// ========================================
+
+app.listen(PORT, "0.0.0.0", () => {
+    console.log(`✅ AO Service is live on port ${PORT} with role: ${AO_ROLE}`);
+
+    const isExecutorRole = AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR";
+
+    if (isExecutorRole && executorConfig.isExecutorEnabled) {
+        console.log(`[EXECUTOR_START] Executor enabled and starting. Polling every ${executorConfig.pollInterval}ms.`);
+        console.log(`[EXECUTOR_START] Allowed actions: ${executorConfig.allowedActions.join(', ')}`);
+        setInterval(pollExecutorTasks, executorConfig.pollInterval);
+    } else if (isExecutorRole && !executorConfig.isExecutorEnabled) {
+        console.log("[EXECUTOR_START] Executor role is active, but EXECUTOR_ENABLED is false. Polling will NOT start.");
+    } else {
+        console.log("[EXECUTOR_START] Role is not EXECUTOR. Polling loop will not start.");
+    }
 });
+
+// Handle graceful shutdown
+const shutdown = () => {
+    console.log("[SHUTDOWN] Signal received. Shutting down gracefully.");
+    // No need to clear interval, process will exit.
+    process.exit(0);
+};
+
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);
