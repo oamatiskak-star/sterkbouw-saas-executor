@@ -1,6 +1,18 @@
-const { createClient } = require('@supabase/supabase-js');
-const PDFDocument = require('pdfkit');
-const config = require('./config');
+// =================================================================
+// BOOTSTRAP & DEPENDENCY CHECK
+// =================================================================
+let createClient, PDFDocument, config;
+
+try {
+    const supabaseClient = require('@supabase/supabase-js');
+    createClient = supabaseClient.createClient;
+    PDFDocument = require('pdfkit');
+    config = require('./config');
+} catch (error) {
+    console.error(`[EXECUTOR_FATAL] A critical dependency failed to load: ${error.message}`);
+    console.error('[EXECUTOR_FATAL] This is likely because "npm install" has not been run or node_modules are missing.');
+    process.exit(1);
+}
 
 // =================================================================
 // LOGGING & GLOBAL STATE
