@@ -118,8 +118,8 @@ async function pollExecutorTasks() {
         .maybeSingle();
 
     if (queryError) {
-        console.error(`[POLL_DB_ERROR] Database query failed: ${queryError.message}. Polling will stop until restart.`);
-        isPollingEnabled = false;
+        console.error(`[POLL_GUARD_BLOCKED] Database query failed: ${queryError.message}. Polling will stop until restart.`);
+        stopPolling();
         return;
     }
 
@@ -162,7 +162,58 @@ async function pollExecutorTasks() {
 
 let isShuttingDown = false;
 let isPollingInFlight = false;
-let isPollingEnabled = true;
+let isPollingActive = false;
+let pollingTimer = null;
+
+async function hasActiveTasks() {
+    try {
+        const { data, error } = await supabase
+            .from("executor_tasks")
+            .select("id")
+            .eq("assigned_to", "executor")
+            .in("status", ["open", "running"])
+            .limit(1)
+            .maybeSingle();
+
+        if (error) {
+            console.error(`[POLL_GUARD_BLOCKED] Failed to check active tasks: ${error.message}`);
+            stopPolling();
+            return null;
+        }
+
+        return Boolean(data);
+    } catch (err) {
+        console.error(`[POLL_GUARD_BLOCKED] Failed to check active tasks: ${err.message}`);
+        stopPolling();
+        return null;
+    }
+}
+
+function stopPolling() {
+    if (pollingTimer) {
+        clearTimeout(pollingTimer);
+        pollingTimer = null;
+    }
+    isPollingActive = false;
+}
+
+async function startPollingIfNeeded() {
+    if (isShuttingDown || isPollingActive) {
+        return;
+    }
+    if (!executorConfig.isExecutorEnabled) {
+        console.log("[EXECUTOR_IDLE]");
+        return;
+    }
+    const hasTasks = await hasActiveTasks();
+    if (!hasTasks) {
+        console.log("[EXECUTOR_IDLE]");
+        return;
+    }
+    isPollingActive = true;
+    console.log("[POLLING_STARTED_ACTIVE_TASKS]");
+    pollingLoop();
+}
 
 // A recursive setTimeout loop is more robust than setInterval for async operations,
 // as it guarantees that one poll finishes before the next one is scheduled, preventing overlap.
@@ -171,24 +222,34 @@ const pollingLoop = async () => {
         console.log("[POLLER] Loop stopping due to shutdown signal.");
         return;
     }
-    if (!executorConfig.isExecutorEnabled || !isPollingEnabled) {
-        console.log("[EXECUTOR_DISABLED] Polling loop disabled. No further cycles will run.");
-        isPollingEnabled = false;
+    if (!executorConfig.isExecutorEnabled || !isPollingActive) {
+        console.log("[EXECUTOR_IDLE]");
+        stopPolling();
         return;
     }
     if (isPollingInFlight) {
+        console.log("[POLL_GUARD_BLOCKED]");
         return;
     }
     isPollingInFlight = true;
     try {
         await pollExecutorTasks();
     } catch (err) {
-        console.error(`[POLLER] An unexpected error escaped pollExecutorTasks: ${err.message}`);
+        console.error(`[POLL_GUARD_BLOCKED] An unexpected error escaped pollExecutorTasks: ${err.message}`);
+        stopPolling();
     } finally {
         isPollingInFlight = false;
-        // Schedule the next poll only after the current one has fully completed.
-        if (!isShuttingDown && executorConfig.isExecutorEnabled && isPollingEnabled) {
-            setTimeout(pollingLoop, executorConfig.pollInterval);
+        const hasTasks = await hasActiveTasks();
+        if (hasTasks === null) {
+            return;
+        }
+        if (!hasTasks) {
+            console.log("[POLLING_STOPPED_IDLE]");
+            stopPolling();
+            return;
+        }
+        if (!isShuttingDown && executorConfig.isExecutorEnabled && isPollingActive) {
+            pollingTimer = setTimeout(pollingLoop, executorConfig.pollInterval);
         }
     }
 };
@@ -198,14 +259,14 @@ console.log(`✅ AO Service is live with role: ${AO_ROLE}`);
 const isExecutorRole = AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR";
 
 if (isExecutorRole && executorConfig.isExecutorEnabled) {
-    console.log(`[EXECUTOR_START] Executor enabled. Starting polling loop...`);
+    console.log(`[EXECUTOR_START] Executor enabled. Checking for active tasks...`);
     console.log(`[EXECUTOR_START] Poll interval: ${executorConfig.pollInterval}ms | Task timeout: ${executorConfig.taskTimeout}ms`);
     console.log(`[EXECUTOR_START] Allowed actions: ${executorConfig.allowedActions.join(', ')}`);
-    pollingLoop(); // Start the robust polling loop.
+    startPollingIfNeeded();
 } else if (isExecutorRole && !executorConfig.isExecutorEnabled) {
-    console.log("[EXECUTOR_START] Executor role is active, but EXECUTOR_ENABLED is false. Polling will NOT start.");
+    console.log("[EXECUTOR_IDLE]");
 } else {
-    console.log("[EXECUTOR_START] Role is not EXECUTOR. Polling loop will not start.");
+    console.log("[EXECUTOR_IDLE]");
 }
 
 // Handle graceful shutdown by setting a flag that the polling loop checks.
@@ -213,6 +274,7 @@ const shutdown = () => {
     if (isShuttingDown) return;
     console.log("[SHUTDOWN] Signal received. The polling loop will stop after the current cycle.");
     isShuttingDown = true;
+    stopPolling();
 
     // Allow time for any in-flight request to complete before exiting.
     setTimeout(() => {
