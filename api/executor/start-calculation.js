@@ -3,6 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 
 const router = Router();
 
+// Initialize Supabase client with service role key
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
@@ -10,138 +11,61 @@ const supabase = createClient(
 
 router.post('/', async (req, res) => {
   try {
-    const {
-      project_id,
-      scenario_name,
-      calculation_type,
-      calculation_level,
-      fixed_price
-    } = req.body;
+    const { project_id, scenario_name, calculation_type, calculation_level, fixed_price } = req.body;
 
+    // Validate required fields
     if (!project_id) {
+      console.error('START_CALCULATION_API: Missing project_id');
       return res.status(400).json({ error: 'project_id is required' });
     }
 
-    /*
-    =====================================================
-    1. CREATE CALCULATION_RUN  (LEIDEND)
-    =====================================================
-    */
-    const { data: run, error: runError } = await supabase
-      .from('calculation_runs')
-      .insert({
-        project_id,
-        scenario_name,
-        calculation_type,
-        calculation_level,
-        fixed_price: fixed_price ?? null,
-        status: 'queued',
-        current_step: 'project_scan',
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      })
+    const { data: existingTask, error: existingError } = await supabase
+      .from('executor_tasks')
       .select('id')
-      .single();
+      .eq('project_id', project_id)
+      .eq('action', 'start_calculation')
+      .in('status', ['open', 'running'])
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
 
-    if (runError || !run) {
-      console.error('START_CALCULATION: failed to create calculation_run', runError);
-      return res.status(500).json({ error: 'Failed to create calculation_run' });
+    if (existingError) {
+      console.error('START_CALCULATION_API: Supabase select error', existingError);
+      return res.status(500).json({ error: existingError.message });
     }
 
-    const calculation_run_id = run.id;
+    if (existingTask?.id) {
+      return res.json({ ok: true, task_id: existingTask.id });
+    }
 
-    /*
-    =====================================================
-    2. CREATE EXECUTOR TASKS (ALLE MET RUN-ID)
-    =====================================================
-    */
-    const tasks = [
-      {
+    // Insert into executor_tasks
+    const { data, error } = await supabase
+      .from('executor_tasks')
+      .insert({
         project_id,
-        calculation_run_id,
         action: 'start_calculation',
         assigned_to: 'executor',
         status: 'open',
         payload: {
           project_id,
-          calculation_run_id,
           scenario_name,
           calculation_type,
           calculation_level,
-          fixed_price: fixed_price ?? null
+          fixed_price,
         },
-        created_at: new Date().toISOString()
-      },
-      {
-        project_id,
-        calculation_run_id,
-        action: 'project_scan',
-        assigned_to: 'executor',
-        status: 'open',
-        payload: {
-          project_id,
-          calculation_run_id
-        },
-        created_at: new Date().toISOString()
-      },
-      {
-        project_id,
-        calculation_run_id,
-        action: 'generate_stabu',
-        assigned_to: 'executor',
-        status: 'open',
-        payload: {
-          project_id,
-          calculation_run_id
-        },
-        created_at: new Date().toISOString()
-      },
-      {
-        project_id,
-        calculation_run_id,
-        action: 'start_rekenwolk',
-        assigned_to: 'executor',
-        status: 'open',
-        payload: {
-          project_id,
-          calculation_run_id
-        },
-        created_at: new Date().toISOString()
-      }
-    ];
+      })
+      .select('id')
+      .single();
 
-    const { error: taskError } = await supabase
-      .from('executor_tasks')
-      .insert(tasks);
-
-    if (taskError) {
-      console.error('START_CALCULATION: failed to create executor tasks', taskError);
-
-      // rollback calculation_run to failed
-      await supabase
-        .from('calculation_runs')
-        .update({
-          status: 'failed',
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', calculation_run_id);
-
-      return res.status(500).json({ error: 'Failed to enqueue executor tasks' });
+    if (error) {
+      console.error('START_CALCULATION_API: Supabase insert error', error);
+      return res.status(500).json({ error: error.message });
     }
 
-    /*
-    =====================================================
-    3. RESPONSE
-    =====================================================
-    */
-    return res.status(200).json({
-      ok: true,
-      calculation_run_id
-    });
-
+    res.json({ ok: true, task_id: data.id });
   } catch (err) {
-    console.error('START_CALCULATION: unexpected error', err);
-    return res.status(500).json({ error: 'Internal server error' });
+    console.error('START_CALCULATION_API: Unexpected error', err);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
