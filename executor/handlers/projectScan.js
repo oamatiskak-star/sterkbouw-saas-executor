@@ -19,6 +19,9 @@ async function updateTaskStatus(taskId, status, error = null) {
 
 export async function handleProjectScan(task) {
   const { id: taskId, project_id, calculation_run_id } = task;
+  if (task?.status && task.status !== 'running') return;
+  const action = task?.action || 'project_scan';
+  console.log(`handler start ${action}`);
 
   // Dynamically import pdf-parse
   let pdf;
@@ -111,8 +114,10 @@ export async function handleProjectScan(task) {
           .update({ status: 'scan_completed', current_step: 'Wachten op calculatie', updated_at: new Date().toISOString() })
           .eq('id', calculation_run_id);
     }
+    console.log(`handler completed ${action}`);
 
   } catch (err) {
+    console.error(`handler failed ${action}`);
     console.error(`[handleProjectScan] Error processing task ${taskId}:`, err);
     await updateTaskStatus(taskId, 'failed', err);
     if (calculation_run_id) {
