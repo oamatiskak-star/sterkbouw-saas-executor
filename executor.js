@@ -308,8 +308,3 @@ async function generate2JoursPDF(rows, run, totalAmount) {
   });
 }
 
-if (ENABLE_CALCULATION_RUN_POLLING && HAS_SUPABASE_ENV) {
-  console.log('Executor started, polling every 5 seconds...');
-  pollAndProcess(); // Poll immediately
-  setInterval(pollAndProcess, POLL_INTERVAL);
-}
