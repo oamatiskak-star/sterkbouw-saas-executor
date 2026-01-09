@@ -249,8 +249,9 @@ function main() {
 
     if (!config.isExecutorEnabled) {
         log(LOG_PREFIXES.startup, 'Executor is disabled by configuration (EXECUTOR_ENABLED=false). Process will idle and not poll for tasks.');
-        // By not starting the poller, the process will remain alive due to the Supabase client's
-        // connection pool, but it will not perform any work. This prevents a container crash loop.
+        // Keep the process alive indefinitely without consuming resources. This is necessary
+        // to prevent the container from entering a restart loop when the service is disabled.
+        setInterval(() => {}, 2147483647); // Use max 32-bit signed integer for a long interval.
         return;
     }
 
