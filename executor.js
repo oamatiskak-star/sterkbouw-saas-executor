@@ -1,7 +1,7 @@
 const { createClient } = require('@supabase/supabase-js');
 const PDFDocument = require('pdfkit');
 
-const ENABLE_CALCULATION_RUN_POLLING = process.env.EXECUTOR_POLL_SOURCE === "calculation_runs";
+
 const HAS_SUPABASE_ENV = Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
 if (!HAS_SUPABASE_ENV) {
   console.error('Missing environment variables: SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY');
