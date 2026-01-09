@@ -161,17 +161,6 @@ app.use("/api/executor/start-calculation", startCalculationRouter);
 EXECUTOR LOOP
 ========================
 */
-async function pollExecutorTasks() {
-  const { data: task } = await supabase
-    .from("executor_tasks")
-    .select("*")
-    .eq("status", "open")
-    .eq("assigned_to", "executor")
-    .order("created_at", { ascending: true })
-    .limit(1)
-    .maybeSingle();
-
-  if (!task) return;
 
   try {
     const { data: claimed } = await supabase
@@ -243,16 +232,6 @@ async function initializePortalServicesSafe() {
 STARTUP
 ========================
 */
-if (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") {
-  console.log("[EXECUTOR] main loop started");
-  setInterval(async () => {
-    try {
-      await pollExecutorTasks();
-    } catch (err) {
-      console.error("[EXECUTOR LOOP ERROR]", err);
-    }
-  }, 2000);
-}
 
 app.listen(PORT, "0.0.0.0", async () => {
   console.log("AO EXECUTOR SERVICE LIVE", AO_ROLE, PORT);
