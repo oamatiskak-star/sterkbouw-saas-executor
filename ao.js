@@ -2,33 +2,23 @@
  * ao.js — AO/SterkCalc Executor
  *
  * This file contains the main application logic for the SterkCalc executor service.
- * It combines an Express web server for API endpoints with a background polling
- * mechanism to process asynchronous tasks from the `executor_tasks` table.
+ * It runs a background polling mechanism to process asynchronous tasks from
+ * the `executor_tasks` table.
  *
  * Architecture:
- * - Express Server: Handles HTTP requests for health checks, webhooks, and API calls.
+ * - Worker Only: No HTTP server or API routes are exposed.
  * - Polling Loop: Periodically queries the database for new tasks if the executor role is enabled.
  * - Task Processing: Each task is processed with guards for timeouts and errors.
  * - Configuration-driven: Behavior is controlled by environment variables, loaded via config files.
  * - Fail-safe: Multiple layers of try/catch and defensive checks are implemented to prevent crashes.
  */
 
-import express from "express";
 import dotenv from "dotenv";
 import { createClient } from "@supabase/supabase-js";
 
 // Executor-specific logic and configuration
 import { executorConfig } from "./executor/config.js";
 import { runAction } from "./executor/actionRouter.js";
-
-// API Routers and integration handlers
-import { handleTelegramWebhook } from "./integrations/telegramWebhook.js";
-import uploadTaskRouter from "./api/executor/upload-task.js";
-import startCalculationRouter from "./api/executor/start-calculation.js";
-import aiDrawingRouter from "./api/ai/generate-drawing.js";
-import renderProcessRouter from "./api/executor/render-process.js";
-import aiProcessingRouter from "./api/executor/ai-processing.js";
-import aiEngineRouter from "./api/executor/ai-engine.js";
 
 
 // ========================================
@@ -38,7 +28,6 @@ import aiEngineRouter from "./api/executor/ai-engine.js";
 dotenv.config();
 
 const AO_ROLE = process.env.AO_ROLE;
-const PORT = process.env.PORT || 3000;
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
@@ -57,7 +46,6 @@ if (!SUPABASE_URL || !SUPABASE_KEY) {
 // INITIALIZATION
 // ========================================
 
-const app = express();
 let supabase;
 try {
     supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
@@ -65,41 +53,6 @@ try {
     console.error(`[FATAL] Could not initialize Supabase client: ${error.message}. Check credentials. Exiting.`);
     process.exit(1);
 }
-
-// ========================================
-// MIDDLEWARE
-// ========================================
-
-// Looser CORS for development, should be tightened in production
-app.use((req, res, next) => {
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type,Authorization");
-    if (req.method === "OPTIONS") return res.sendStatus(200);
-    next();
-});
-
-app.use(express.json({ limit: "50mb" }));
-app.use((req, _res, next) => {
-    console.log(`[HTTP] ${req.method} ${req.path}`);
-    next();
-});
-
-// ========================================
-// CORE API ROUTES
-// ========================================
-
-app.get("/", (_req, res) => res.json({ ok: true, message: "AO Executor is running." }));
-app.get("/health", (_req, res) => res.status(200).json({ status: "ok", role: AO_ROLE, timestamp: new Date().toISOString() }));
-app.post("/telegram/webhook", handleTelegramWebhook);
-
-// Executor-specific API routes
-app.use("/api/executor/upload-task", uploadTaskRouter);
-app.use("/api/ai/generate-drawing", aiDrawingRouter);
-app.use("/api/executor/render-process", renderProcessRouter);
-app.use("/api/executor/ai-processing", aiProcessingRouter);
-app.use("/api/executor/ai-engine", aiEngineRouter);
-app.use("/api/executor/start-calculation", startCalculationRouter);
 
 
 // ========================================
@@ -240,22 +193,20 @@ const pollingLoop = async () => {
     }
 };
 
-app.listen(PORT, "0.0.0.0", () => {
-    console.log(`✅ AO Service is live on port ${PORT} with role: ${AO_ROLE}`);
+console.log(`✅ AO Service is live with role: ${AO_ROLE}`);
 
-    const isExecutorRole = AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR";
+const isExecutorRole = AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR";
 
-    if (isExecutorRole && executorConfig.isExecutorEnabled) {
-        console.log(`[EXECUTOR_START] Executor enabled. Starting polling loop...`);
-        console.log(`[EXECUTOR_START] Poll interval: ${executorConfig.pollInterval}ms | Task timeout: ${executorConfig.taskTimeout}ms`);
-        console.log(`[EXECUTOR_START] Allowed actions: ${executorConfig.allowedActions.join(', ')}`);
-        pollingLoop(); // Start the robust polling loop.
-    } else if (isExecutorRole && !executorConfig.isExecutorEnabled) {
-        console.log("[EXECUTOR_START] Executor role is active, but EXECUTOR_ENABLED is false. Polling will NOT start.");
-    } else {
-        console.log("[EXECUTOR_START] Role is not EXECUTOR. Polling loop will not start.");
-    }
-});
+if (isExecutorRole && executorConfig.isExecutorEnabled) {
+    console.log(`[EXECUTOR_START] Executor enabled. Starting polling loop...`);
+    console.log(`[EXECUTOR_START] Poll interval: ${executorConfig.pollInterval}ms | Task timeout: ${executorConfig.taskTimeout}ms`);
+    console.log(`[EXECUTOR_START] Allowed actions: ${executorConfig.allowedActions.join(', ')}`);
+    pollingLoop(); // Start the robust polling loop.
+} else if (isExecutorRole && !executorConfig.isExecutorEnabled) {
+    console.log("[EXECUTOR_START] Executor role is active, but EXECUTOR_ENABLED is false. Polling will NOT start.");
+} else {
+    console.log("[EXECUTOR_START] Role is not EXECUTOR. Polling loop will not start.");
+}
 
 // Handle graceful shutdown by setting a flag that the polling loop checks.
 const shutdown = () => {
