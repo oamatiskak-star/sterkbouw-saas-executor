@@ -731,6 +731,9 @@ async function getCalculationRun(project_id, calculation_run_id) {
 
 export async function handleGenerateStabu(task) {
   if (!task?.id || !task.project_id) return
+  if (task?.status && task.status !== "running") return
+  const action = task?.action || "generate_stabu"
+  console.log(`handler start ${action}`)
 
   const taskId = task.id
   const project_id = task.project_id
@@ -994,7 +997,9 @@ export async function handleGenerateStabu(task) {
       .from("executor_tasks")
       .update({ status: "completed", finished_at: now })
       .eq("id", taskId)
+    console.log(`handler completed ${action}`)
   } catch (err) {
+    console.error(`handler failed ${action}`)
     const message = err?.message || "GENERATE_STABU_FAILED"
     await fail(taskId, resolvedRunId || calculation_run_id, message)
   }
