@@ -1,23 +1,35 @@
 import { createClient } from "@supabase/supabase-js"
 import { sendTelegram } from "../integrations/telegramSender.js"
 
-// PDF – alleen eindproduct
+// PDF = SYSTEM OF RECORD (INTERNE FUNCTIE)
 import { generate2joursPdf } from "./pdf/generate2joursPdf.js"
 
-// Handlers
+// PURE HANDLERS (ALLEEN DATA)
 import { handleUploadFiles } from "./handlers/uploadFiles.js"
 import { handleProjectScan } from "./handlers/projectScan.js"
 import { handleGenerateStabu } from "./handlers/generateStabu.js"
 import { handleStartRekenwolk } from "./handlers/startRekenwolk.js"
+import { handlePlanning } from "./handlers/handlePlanning.js"
+import { handleGenerateRiskReport } from "./handlers/generateRiskReport.js"
+import { handleGenerateReportPdf } from "./handlers/generateReportPdf.js"
+import { handleFinalizeRekenwolk } from "./handlers/finalizeRekenwolk.js"
 
-// Builder / Monteur
+// MONTEUR / BUILDER
 import { runBuilder } from "../builder/index.js"
+
 import { startCalculationFromRun } from "./actions/startCalculationFromRun.js"
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
 )
+
+const CALCULATION_STATES = {
+  DATA_ANALYSED: "DATA_ANALYSED",
+  STABU_DRAFT: "STABU_DRAFT",
+  CALCULATED: "CALCULATED",
+  OFFER_READY: "OFFER_READY"
+}
 
 function log(...args) {
   console.log("[EXECUTOR]", ...args)
@@ -28,15 +40,20 @@ function normalize(raw) {
   return raw.toLowerCase().replace(/[^a-z0-9_]+/g, "_")
 }
 
+/*
+====================================================
+HARD CONTRACT – NO EXCEPTIONS
+====================================================
+1. PDF bestaat DIRECT na upload
+2. Elke task schrijft naar DEZELFDE PDF
+3. Geen enkele stap mag door zonder PDF-write
+4. PDF is leidend, database volgt
+====================================================
+*/
+
 export async function runAction(task) {
   if (!task || !task.id) {
     throw new Error("RUNACTION_INVALID_TASK")
-  }
-
-  // 🔒 HARD GUARD — alleen OPEN executor-taken
-  if (task.status !== "open" || task.assigned_to !== "executor") {
-    log("SKIP_TASK", { id: task.id, status: task.status })
-    return { state: "SKIPPED" }
   }
 
   const payload =
@@ -44,8 +61,9 @@ export async function runAction(task) {
 
   const action = normalize(
     task.action ||
-    payload.action ||
+    task.action_id ||
     payload.actionId ||
+    payload.action ||
     null
   )
 
@@ -53,105 +71,270 @@ export async function runAction(task) {
     throw new Error("ACTION_MISSING")
   }
 
-  const project_id = task.project_id || payload.project_id
+  const project_id =
+    task.project_id ||
+    payload.project_id ||
+    null
+
   if (!project_id) {
     throw new Error("PROJECT_ID_MISSING")
   }
 
-  log("TASK_START", { id: task.id, action, project_id })
+  log("TASK_START", {
+    id: task.id,
+    action,
+    project_id
+  })
 
-  // Markeer task direct als running → voorkomt dubbel uitvoeren
-  await supabase
-    .from("executor_tasks")
-    .update({
-      status: "running",
-      started_at: new Date().toISOString()
+  /*
+  ==================================================
+  0. MONTEUR / SYSTEM REPAIR (BUILDER)
+  ==================================================
+  */
+  if (
+    action === "system_repair_full_chain" ||
+    action === "system_repair_full" ||
+    action === "repair_full_system" ||
+    action === "system_full_scan"
+  ) {
+
+    const result = await runBuilder({
+      ...payload,
+      action,
+      project_id,
+      task_id: task.id
     })
-    .eq("id", task.id)
 
-  try {
-
-    /* ==================================================
-       SYSTEM / BUILDER
-    ================================================== */
-    if (
-      action === "system_repair_full_chain" ||
-      action === "system_full_scan"
-    ) {
-      await runBuilder({ ...payload, action, project_id, task_id: task.id })
-    }
-
-    /* ==================================================
-       UPLOAD
-    ================================================== */
-    else if (action === "upload" || action === "upload_files") {
-      await handleUploadFiles({ id: task.id, project_id, payload })
-    }
-
-    /* ==================================================
-       PROJECT SCAN
-    ================================================== */
-    else if (action === "project_scan") {
-      await handleProjectScan({ id: task.id, project_id, payload })
-    }
-
-    /* ==================================================
-       GENERATE STABU
-    ================================================== */
-    else if (action === "generate_stabu") {
-      await handleGenerateStabu({ id: task.id, project_id, payload })
-    }
-
-    /* ==================================================
-       REKENWOLK = ENIGE PLAATS WAAR PDF WORDT GEMAAKT
-    ================================================== */
-    else if (action === "start_rekenwolk") {
-      await handleStartRekenwolk({ id: task.id, project_id, payload })
-      await generate2joursPdf(project_id)
-    }
-
-    /* ==================================================
-       START CALCULATION (RUN-INIT)
-    ================================================== */
-    else if (action === "start_calculation") {
-      await startCalculationFromRun({
-        task_id: task.id,
-        project_id,
-        payload
-      })
-    }
-
-    else {
-      throw new Error(`UNSUPPORTED_ACTION: ${action}`)
-    }
-
-    // ✅ TASK KLAAR
-    await supabase
-      .from("executor_tasks")
-      .update({
-        status: "completed",
-        finished_at: new Date().toISOString()
-      })
-      .eq("id", task.id)
-
-    log("TASK_COMPLETED", { id: task.id, action })
-    return { state: "DONE", action }
-
-  } catch (err) {
-
-    await supabase
-      .from("executor_tasks")
-      .update({
-        status: "failed",
-        error: err.message,
-        finished_at: new Date().toISOString()
-      })
-      .eq("id", task.id)
-
-    await sendTelegram(
-      `[EXECUTOR FAILED]\nAction: ${action}\nProject: ${project_id}\nError: ${err.message}`
-    )
-
-    throw err
+    log("SYSTEM_REPAIR_DONE", { action })
+    return { state: "DONE", action, result }
   }
+
+  /*
+  ==================================================
+  1. UPLOAD FILES
+  ==================================================
+  */
+  if (action === "upload" || action === "upload_files") {
+
+    await handleUploadFiles({
+      id: task.id,
+      project_id,
+      payload
+    })
+
+    // HARD CONTRACT: PDF MOET DIRECT BESTAAN
+    await generate2joursPdf(project_id)
+
+    log("UPLOAD_DONE + PDF_CREATED")
+    return { state: "DONE", action }
+  }
+
+  /*
+  ==================================================
+  2. PROJECT SCAN / ANALYSE
+  ==================================================
+  */
+  if (action === "project_scan" || action === "analysis") {
+
+    await handleProjectScan({
+      id: task.id,
+      project_id,
+      payload
+    })
+
+    // PDF BIJWERKEN MET SCANRESULTAAT
+    await generate2joursPdf(project_id)
+
+    await supabase
+      .from("calculation_state")
+      .upsert({
+        project_id,
+        state: CALCULATION_STATES.DATA_ANALYSED,
+        updated_at: new Date().toISOString()
+      }, { onConflict: "project_id" })
+
+    log("PROJECT_SCAN_DONE + PDF_UPDATED")
+    return { state: "DONE", action }
+  }
+
+  /*
+  ==================================================
+  3. GENERATE STABU
+  ==================================================
+  */
+  if (action === "generate_stabu") {
+
+    await handleGenerateStabu({
+      id: task.id,
+      project_id,
+      payload
+    })
+
+    // STABU → PDF
+    await generate2joursPdf(project_id)
+
+    await supabase
+      .from("calculation_state")
+      .upsert({
+        project_id,
+        state: CALCULATION_STATES.STABU_DRAFT,
+        updated_at: new Date().toISOString()
+      }, { onConflict: "project_id" })
+
+    log("GENERATE_STABU_DONE + PDF_UPDATED")
+    return { state: "DONE", action }
+  }
+
+  /*
+  ==================================================
+  4. START REKENWOLK (EINDPRODUCT)
+  ==================================================
+  */
+  if (action === "start_rekenwolk") {
+
+    let enrichedPayload = { ...payload };
+
+    // DEFENSIVE CODING: If calculation_run_id is missing, find the latest one for the project.
+    if (!enrichedPayload.calculation_run_id) {
+      log("PAYLOAD_MISSING_RUN_ID: Searching for latest calculation_run_id for project", project_id);
+      const { data: latestRun, error: runError } = await supabase
+        .from('calculation_runs')
+        .select('id')
+        .eq('project_id', project_id)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single();
+      
+      if (runError && runError.code !== 'PGRST116') { // Ignore 'exact one row not found'
+        throw new Error(`Could not find a calculation run for project ${project_id}: ${runError.message}`);
+      }
+      if (!latestRun) {
+        throw new Error(`No calculation run found for project ${project_id}. Cannot proceed.`);
+      }
+
+      log("PAYLOAD_ENRICHED: Found and added calculation_run_id", latestRun.id);
+      enrichedPayload.calculation_run_id = latestRun.id;
+    }
+
+    await handleStartRekenwolk({
+      id: task.id,
+      project_id,
+      payload: enrichedPayload
+    });
+
+
+    // FINAL PDF
+    await generate2joursPdf(project_id)
+
+    await supabase
+      .from("calculation_state")
+      .upsert({
+        project_id,
+        state: CALCULATION_STATES.CALCULATED,
+        updated_at: new Date().toISOString()
+      }, { onConflict: "project_id" })
+
+    log("REKENWOLK_DONE + FINAL_PDF")
+    return { state: "DONE", action }
+  }
+
+  /*
+  ==================================================
+  5. RISICO ANALYSE
+  ==================================================
+  */
+  if (action === "generate_risk_report") {
+    await handleGenerateRiskReport({
+      id: task.id,
+      project_id,
+      payload
+    })
+
+    log("RISK_REPORT_DONE")
+    return { state: "DONE", action }
+  }
+
+  /*
+  ==================================================
+  6. PLANNING / TERMIJNSCHEMA
+  ==================================================
+  */
+  if (action === "planning") {
+    await handlePlanning({
+      id: task.id,
+      project_id,
+      payload
+    })
+
+    log("PLANNING_DONE")
+    return { state: "DONE", action }
+  }
+
+  /*
+  ==================================================
+  7. FINALIZE REKENWOLK
+  ==================================================
+  */
+  if (action === "finalize_rekenwolk") {
+    await handleFinalizeRekenwolk({
+      id: task.id,
+      project_id,
+      payload
+    })
+
+    log("FINALIZE_REKENWOLK_DONE")
+    return { state: "DONE", action }
+  }
+
+  /*
+  ==================================================
+  8. RAPPORTAGE PDF
+  ==================================================
+  */
+  if (action === "rapportage" || action === "generate_report_pdf") {
+    await handleGenerateReportPdf({
+      id: task.id,
+      project_id,
+      payload
+    })
+
+    await supabase
+      .from("calculation_state")
+      .upsert({
+        project_id,
+        state: CALCULATION_STATES.OFFER_READY,
+        updated_at: new Date().toISOString()
+      }, { onConflict: "project_id" })
+
+    log("REPORT_PDF_DONE")
+    return { state: "DONE", action }
+  }
+
+  /*
+  ==================================================
+  5. START CALCULATION (CALCULATION_RUNS)
+  ==================================================
+  */
+  if (action === "start_calculation") {
+
+    await startCalculationFromRun({
+      task_id: task.id,
+      project_id,
+      payload
+    });
+
+    log("START_CALCULATION_STUB_DONE", {
+      task_id: task.id,
+      project_id
+    });
+
+    return { state: "DONE", action };
+  }
+
+  /*
+  ==================================================
+  ONBEKENDE ACTIE = HARD STOP
+  ==================================================
+  */
+  throw new Error(`UNSUPPORTED_ACTION: ${action}`)
 }
