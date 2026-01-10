@@ -114,6 +114,26 @@ export async function handleProjectScan(task) {
           .update({ status: 'scan_completed', current_step: 'Wachten op calculatie', updated_at: new Date().toISOString() })
           .eq('id', calculation_run_id);
     }
+
+    const { data: existingStabu } = await supabase
+      .from('executor_tasks')
+      .select('id')
+      .eq('project_id', project_id)
+      .eq('action', 'generate_stabu')
+      .in('status', ['open', 'running'])
+      .limit(1)
+      .maybeSingle();
+
+    if (!existingStabu?.id) {
+      await supabase.from('executor_tasks').insert({
+        project_id,
+        action: 'generate_stabu',
+        status: 'open',
+        assigned_to: 'executor',
+        payload: { project_id }
+      });
+    }
+
     console.log(`handler completed ${action}`);
 
   } catch (err) {
