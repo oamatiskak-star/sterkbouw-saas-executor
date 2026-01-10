@@ -1,24 +1,33 @@
-import "dotenv/config"
+// executor.js
+// SterkCalc Executor — minimale idle worker (Railway-safe)
 
-console.log("SterkCalc Executor gestart")
-console.log("Status: idle")
+import 'dotenv/config';
 
-const missing = []
-if (!process.env.SUPABASE_URL) missing.push("SUPABASE_URL")
-if (!process.env.SUPABASE_SERVICE_ROLE_KEY) missing.push("SUPABASE_SERVICE_ROLE_KEY")
+console.log('✅ SterkCalc Executor gestart');
+console.log('🟡 Status: idle');
+console.log('🛑 Geen polling, geen HTTP, geen timers die logica uitvoeren');
 
-if (missing.length > 0) {
-  console.error(`Missing environment variables: ${missing.join(", ")}`)
+// Environment check (NO EXIT)
+if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+  console.error('❌ Ontbrekende Supabase env vars');
 }
 
-process.on("SIGTERM", () => {
-  console.log("Shutdown signal received (SIGTERM)")
-  process.exit(0)
-})
+// Graceful shutdown
+let shuttingDown = false;
 
-process.on("SIGINT", () => {
-  console.log("Shutdown signal received (SIGINT)")
-  process.exit(0)
-})
+const shutdown = (signal) => {
+  if (shuttingDown) return;
+  shuttingDown = true;
 
-await new Promise(() => {})
+  console.log(`🛑 Executor shutdown (${signal})`);
+  process.exit(0);
+};
+
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);
+
+// --- KEEP PROCESS ALIVE ---
+// GEEN top-level await
+// GEEN polling
+// GEEN loop
+setInterval(() => {}, 1 << 30);
