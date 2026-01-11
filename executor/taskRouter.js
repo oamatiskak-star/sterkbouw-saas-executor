@@ -9,6 +9,7 @@ import { handleGenerateReportPdf } from "./handlers/generateReportPdf.js"
 import { handleGenerateAssumptionsReport } from "./handlers/generateAssumptionsReport.js"
 import { handleGenerateRiskReport } from "./handlers/generateRiskReport.js"
 import { handleFinalizeRekenwolk } from "./handlers/finalizeRekenwolk.js"
+import { startCalculationFromRun } from "./actions/startCalculationFromRun.js"
 
 function normalize(action) {
   return String(action)
@@ -57,6 +58,13 @@ export async function routeAction(task) {
 
     case "finalize_rekenwolk":
       return handleFinalizeRekenwolk(task)
+
+    case "start_calculation":
+      return startCalculationFromRun({
+        task_id: task.id,
+        project_id: task.project_id || task.payload?.project_id,
+        payload: task.payload || {}
+      })
 
     default:
       throw new Error(`UNKNOWN_ACTION: ${action}`)
