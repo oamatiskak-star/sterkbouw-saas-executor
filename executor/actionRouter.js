@@ -224,7 +224,19 @@ export async function runAction(task) {
 
 
     // FINAL PDF
-    await generate2joursPdf(project_id)
+    const pdfResult = await generate2joursPdf(project_id)
+
+    if (enrichedPayload.calculation_run_id && pdfResult?.pdf_url) {
+      await supabase
+        .from("calculation_runs")
+        .update({
+          status: "completed",
+          current_step: "completed",
+          pdf_url: pdfResult.pdf_url,
+          updated_at: new Date().toISOString()
+        })
+        .eq("id", enrichedPayload.calculation_run_id)
+    }
 
     await supabase
       .from("calculation_state")
