@@ -57,6 +57,7 @@ router.post("/start-calculation", async (req, res) => {
         project_id,
         calculation_run_id,
         status: "open",
+        assigned_to: "executor",
         payload: {
           project_id,
           calculation_run_id
@@ -67,6 +68,7 @@ router.post("/start-calculation", async (req, res) => {
         project_id,
         calculation_run_id,
         status: "open",
+        assigned_to: "executor",
         payload: {
           project_id,
           calculation_run_id
@@ -77,6 +79,7 @@ router.post("/start-calculation", async (req, res) => {
         project_id,
         calculation_run_id,
         status: "open",
+        assigned_to: "executor",
         payload: {
           project_id,
           calculation_run_id
@@ -87,6 +90,7 @@ router.post("/start-calculation", async (req, res) => {
         project_id,
         calculation_run_id,
         status: "open",
+        assigned_to: "executor",
         payload: {
           project_id,
           calculation_run_id
