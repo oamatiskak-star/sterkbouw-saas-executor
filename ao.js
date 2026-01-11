@@ -165,6 +165,7 @@ let isShuttingDown = false;
 let isPollingInFlight = false;
 let isPollingActive = false;
 let pollingTimer = null;
+let idleCheckTimer = null;
 
 async function getExecutorAllowed() {
     try {
@@ -227,6 +228,26 @@ function stopPolling() {
         pollingTimer = null;
     }
     isPollingActive = false;
+    scheduleIdleCheck();
+}
+
+function scheduleIdleCheck() {
+    if (idleCheckTimer || isPollingActive || isShuttingDown) {
+        return;
+    }
+    if (!executorConfig.isExecutorEnabled) {
+        return;
+    }
+    idleCheckTimer = setTimeout(async () => {
+        idleCheckTimer = null;
+        if (isShuttingDown || isPollingActive || !executorConfig.isExecutorEnabled) {
+            return;
+        }
+        await startPollingIfNeeded();
+        if (!isPollingActive && !isShuttingDown && executorConfig.isExecutorEnabled) {
+            scheduleIdleCheck();
+        }
+    }, executorConfig.pollInterval);
 }
 
 async function startPollingIfNeeded() {
@@ -248,6 +269,10 @@ async function startPollingIfNeeded() {
         return;
     }
     isPollingActive = true;
+    if (idleCheckTimer) {
+        clearTimeout(idleCheckTimer);
+        idleCheckTimer = null;
+    }
     console.log("[EXECUTOR_TRIGGERED_BY_TASK]");
     console.log("[POLLING_STARTED]");
     pollingLoop();
@@ -309,6 +334,7 @@ if (isExecutorRole && executorConfig.isExecutorEnabled) {
     console.log(`[EXECUTOR_START] Poll interval: ${executorConfig.pollInterval}ms | Task timeout: ${executorConfig.taskTimeout}ms`);
     console.log(`[EXECUTOR_START] Allowed actions: ${executorConfig.allowedActions.join(', ')}`);
     startPollingIfNeeded();
+    scheduleIdleCheck();
 } else if (isExecutorRole && !executorConfig.isExecutorEnabled) {
     console.log("[EXECUTOR_IDLE_GUARD]");
 } else {
