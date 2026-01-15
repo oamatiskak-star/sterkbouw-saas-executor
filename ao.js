@@ -28,6 +28,22 @@ if (!SUPABASE_URL || !SUPABASE_KEY) process.exit(1);
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
+// ================= EXECUTOR STATE =================
+
+async function ensureExecutorAllowedAtStartup() {
+    try {
+        await supabase
+            .from("executor_state")
+            .update({
+                allowed: true,
+                updated_at: new Date().toISOString(),
+            })
+            .eq("id", EXECUTOR_STATE_ID);
+    } catch {
+        process.exit(1);
+    }
+}
+
 // ================= TASK EXECUTION =================
 
 async function updateTaskStatus(taskId, status, errorMessage = null) {
@@ -104,7 +120,6 @@ async function startPollingIfNeeded() {
     if (!isExecutorEnabledFlag() || isPollingActive) return;
 
     isPollingActive = true;
-    console.log("[POLLING_STARTED]");
     pollingLoop();
 }
 
@@ -136,6 +151,7 @@ const pollingLoop = async () => {
 console.log(`AO Executor live | role=${AO_ROLE}`);
 
 if ((AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") && isExecutorEnabledFlag()) {
+    await ensureExecutorAllowedAtStartup();
     startPollingIfNeeded();
 }
 
