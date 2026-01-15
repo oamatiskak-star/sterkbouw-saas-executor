@@ -1,28 +1,12 @@
 /*
  * ao.js — AO/SterkCalc Executor
- *
- * This file contains the main application logic for the SterkCalc executor service.
- * It runs a background polling mechanism to process asynchronous tasks from
- * the `executor_tasks` table.
- *
- * Architecture:
- * - Worker Only: No HTTP server or API routes are exposed.
- * - Polling Loop: Periodically queries the database for new tasks if the executor role is enabled.
- * - Task Processing: Each task is processed with guards for timeouts and errors.
- * - Configuration-driven: Behavior is controlled by environment variables, loaded via config files.
- * - Fail-safe: Multiple layers of try/catch and defensive checks are implemented to prevent crashes.
  */
 
 import dotenv from "dotenv";
 import { createClient } from "@supabase/supabase-js";
 
-// Executor-specific logic and configuration
 import { executorConfig } from "./executor/config.js";
 import { runAction } from "./executor/actionRouter.js";
-
-// ========================================
-// ENVIRONMENT & CONFIGURATION
-// ========================================
 
 dotenv.config();
 
@@ -39,78 +23,40 @@ function isExecutorEnabledFlag() {
     return executorConfig.isExecutorEnabled === true;
 }
 
-// Startup validation
-if (!AO_ROLE) {
-    console.error("[FATAL] Missing required environment variable: AO_ROLE. Exiting.");
-    process.exit(1);
-}
-if (!SUPABASE_URL || !SUPABASE_KEY) {
-    console.error("[FATAL] Missing Supabase environment variables (SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY). Exiting.");
-    process.exit(1);
-}
+if (!AO_ROLE) process.exit(1);
+if (!SUPABASE_URL || !SUPABASE_KEY) process.exit(1);
 
-// ========================================
-// INITIALIZATION
-// ========================================
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
-let supabase;
-try {
-    supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
-} catch (error) {
-    console.error(`[FATAL] Could not initialize Supabase client: ${error.message}. Check credentials. Exiting.`);
-    process.exit(1);
-}
-
-// ========================================
-// EXECUTOR TASK PROCESSING
-// ========================================
+// ================= TASK EXECUTION =================
 
 async function updateTaskStatus(taskId, status, errorMessage = null) {
     try {
-        const updatePayload = {
+        const payload = {
             status,
             finished_at: new Date().toISOString(),
             ...(errorMessage && { error: errorMessage }),
         };
-        const { error } = await supabase
-            .from("executor_tasks")
-            .update(updatePayload)
-            .eq("id", taskId);
-        if (error) {
-            console.error(`[EXECUTOR_DB] Failed to update task ${taskId} to status ${status}: ${error.message}`);
-        }
-    } catch (err) {
-        console.error(
-            `[EXECUTOR_DB] CRITICAL: Network or unexpected error while updating status for task ${taskId}: ${err.message}`
-        );
-    }
+        await supabase.from("executor_tasks").update(payload).eq("id", taskId);
+    } catch {}
 }
 
 async function runActionWithGuards(task) {
-    console.log(`[TASK_PICKED] Processing task ${task.id}, action: ${task.action}`);
-
-    const taskPromise = runAction(task);
-    const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(
-            () => reject(new Error(`Task timed out after ${executorConfig.taskTimeout / 1000}s`)),
-            executorConfig.taskTimeout
-        )
-    );
-
     try {
-        await Promise.race([taskPromise, timeoutPromise]);
+        await Promise.race([
+            runAction(task),
+            new Promise((_, r) =>
+                setTimeout(() => r(new Error("timeout")), executorConfig.taskTimeout)
+            ),
+        ]);
         await updateTaskStatus(task.id, "completed");
-        console.log(`[TASK_COMPLETED] Task ${task.id} finished successfully.`);
-    } catch (error) {
-        console.error(`[TASK_ABORTED] Task ${task.id} failed: ${error.message}`);
-        await updateTaskStatus(task.id, "failed", error.message);
+    } catch (e) {
+        await updateTaskStatus(task.id, "failed", e.message);
     }
 }
 
 async function pollExecutorTasks() {
-    console.log("[POLL_CYCLE] Polling for an open task...");
-
-    const { data: task, error: queryError } = await supabase
+    const { data: task } = await supabase
         .from("executor_tasks")
         .select("*")
         .eq("status", "open")
@@ -120,20 +66,9 @@ async function pollExecutorTasks() {
         .limit(1)
         .maybeSingle();
 
-    if (queryError) {
-        console.log("[POLLING_BLOCKED_GUARD]");
-        stopPolling();
-        return;
-    }
+    if (!task) return;
 
-    if (!task) {
-        console.log("[POLL_CYCLE] No actionable tasks found.");
-        return;
-    }
-
-    console.log(`[POLL_CYCLE] Found potential task ${task.id}. Attempting to lock...`);
-
-    const { data: lockedTask, error: lockError } = await supabase
+    const { data: locked } = await supabase
         .from("executor_tasks")
         .update({ status: "running", started_at: new Date().toISOString() })
         .eq("id", task.id)
@@ -141,185 +76,68 @@ async function pollExecutorTasks() {
         .select()
         .single();
 
-    if (lockError || !lockedTask) {
-        console.log(`[POLL_CYCLE] Failed to lock task ${task.id}. It was likely taken by another instance.`);
-        return;
-    }
-
-    runActionWithGuards(lockedTask).catch(err => {
-        console.error(
-            `[CRITICAL] Unhandled exception escaped from runActionWithGuards for task ${lockedTask.id}: ${err.message}`
-        );
-    });
+    if (locked) runActionWithGuards(locked).catch(() => {});
 }
 
-// ========================================
-// SERVER STARTUP & POLLING LOOP
-// ========================================
+// ================= POLLING =================
 
-let isShuttingDown = false;
-let isPollingInFlight = false;
 let isPollingActive = false;
 let pollingTimer = null;
+let isPollingInFlight = false;
 
 async function getExecutorAllowed() {
-    try {
-        const { data, error } = await supabase
-            .from("executor_state")
-            .select("allowed")
-            .eq("id", EXECUTOR_STATE_ID)
-            .maybeSingle();
-
-        if (error || !data) {
-            console.log("[POLLING_BLOCKED_GUARD]");
-            return false;
-        }
-
-        return data.allowed === true;
-    } catch {
-        console.log("[POLLING_BLOCKED_GUARD]");
-        return false;
-    }
-}
-
-async function setExecutorAllowedFalse() {
-    try {
-        await supabase
-            .from("executor_state")
-            .update({ allowed: false, updated_at: new Date().toISOString() })
-            .eq("id", EXECUTOR_STATE_ID);
-    } catch {
-        console.log("[POLLING_BLOCKED_GUARD]");
-    }
-}
-
-async function hasActiveTasks() {
-    try {
-        const { data, error } = await supabase
-            .from("executor_tasks")
-            .select("id")
-            .eq("assigned_to", "executor")
-            .in("status", ["open", "running"])
-            .limit(1)
-            .maybeSingle();
-
-        if (error) {
-            stopPolling();
-            console.log("[POLLING_BLOCKED_GUARD]");
-            return null;
-        }
-
-        return Boolean(data);
-    } catch {
-        stopPolling();
-        console.log("[POLLING_BLOCKED_GUARD]");
-        return null;
-    }
+    const { data } = await supabase
+        .from("executor_state")
+        .select("allowed")
+        .eq("id", EXECUTOR_STATE_ID)
+        .maybeSingle();
+    return data?.allowed === true;
 }
 
 function stopPolling() {
-    if (pollingTimer) {
-        clearTimeout(pollingTimer);
-        pollingTimer = null;
-    }
+    if (pollingTimer) clearTimeout(pollingTimer);
+    pollingTimer = null;
     isPollingActive = false;
 }
 
 async function startPollingIfNeeded() {
-    if (isShuttingDown || isPollingActive) {
-        return;
-    }
-    if (!isExecutorEnabledFlag()) {
-        console.log("[EXECUTOR_IDLE_GUARD]");
-        return;
-    }
-    const isAllowed = await getExecutorAllowed();
-    if (!isAllowed) {
-        console.log("[EXECUTOR_IDLE_GUARD]");
-        return;
-    }
-    const hasTasks = await hasActiveTasks();
-    if (!hasTasks) {
-        console.log("[EXECUTOR_IDLE_GUARD]");
-        return;
-    }
+    if (!isExecutorEnabledFlag() || isPollingActive) return;
+
     isPollingActive = true;
-    console.log("[EXECUTOR_TRIGGERED_BY_TASK]");
     console.log("[POLLING_STARTED]");
     pollingLoop();
 }
 
 const pollingLoop = async () => {
-    if (isShuttingDown) {
-        console.log("[POLLER] Loop stopping due to shutdown signal.");
-        return;
-    }
     if (!isExecutorEnabledFlag() || !isPollingActive) {
-        console.log("[EXECUTOR_IDLE_GUARD]");
         stopPolling();
         return;
     }
-    const isAllowed = await getExecutorAllowed();
-    if (!isAllowed) {
-        console.log("[POLLING_BLOCKED_GUARD]");
+
+    const allowed = await getExecutorAllowed();
+    if (!allowed) {
         stopPolling();
         return;
     }
-    if (isPollingInFlight) {
-        console.log("[POLLING_BLOCKED_GUARD]");
-        return;
-    }
+
+    if (isPollingInFlight) return;
     isPollingInFlight = true;
+
     try {
         await pollExecutorTasks();
-    } catch {
-        console.log("[POLLING_BLOCKED_GUARD]");
-        stopPolling();
     } finally {
         isPollingInFlight = false;
-        const hasTasks = await hasActiveTasks();
-        if (hasTasks === null) {
-            return;
-        }
-        if (!hasTasks) {
-            await setExecutorAllowedFalse();
-            console.log("[EXECUTOR_CHAIN_COMPLETE]");
-            console.log("[POLLING_STOPPED_IDLE]");
-            stopPolling();
-            return;
-        }
-        if (!isShuttingDown && isExecutorEnabledFlag() && isPollingActive) {
-            pollingTimer = setTimeout(pollingLoop, executorConfig.pollInterval);
-        }
+        pollingTimer = setTimeout(pollingLoop, executorConfig.pollInterval);
     }
 };
 
-console.log(`✅ AO Service is live with role: ${AO_ROLE}`);
+// ================= STARTUP =================
 
-const isExecutorRole = AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR";
+console.log(`AO Executor live | role=${AO_ROLE}`);
 
-if (isExecutorRole && isExecutorEnabledFlag()) {
-    console.log("[EXECUTOR_START] Executor enabled. Checking for active tasks...");
-    console.log(
-        `[EXECUTOR_START] Poll interval: ${executorConfig.pollInterval}ms | Task timeout: ${executorConfig.taskTimeout}ms`
-    );
-    console.log(`[EXECUTOR_START] Allowed actions: ${executorConfig.allowedActions.join(", ")}`);
+if ((AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") && isExecutorEnabledFlag()) {
     startPollingIfNeeded();
-} else {
-    console.log("[EXECUTOR_IDLE_GUARD]");
 }
 
-const shutdown = () => {
-    if (isShuttingDown) return;
-    console.log("[SHUTDOWN] Signal received. The polling loop will stop after the current cycle.");
-    isShuttingDown = true;
-    stopPolling();
-
-    setTimeout(() => {
-        console.log("[SHUTDOWN] Exiting process.");
-        process.exit(0);
-    }, executorConfig.pollInterval + 1000);
-};
-
-process.on("SIGTERM", shutdown);
-process.on("SIGINT", shutdown);
+process.on("SIGTERM", stopPolling);
+process.on("SIGINT", stopPolling);
