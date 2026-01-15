@@ -54,4 +54,4 @@ COPY --from=node-builder /app /app
 COPY --from=python-builder /ai-engine /ai-engine
 COPY --from=node-builder /usr/local/bin/node /usr/local/bin/node
 
-CMD ["node", "executor.js"]
+CMD ["node", "ao.js"]
