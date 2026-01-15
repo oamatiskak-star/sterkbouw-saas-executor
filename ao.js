@@ -32,6 +32,14 @@ const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const EXECUTOR_STATE_ID = "00000000-0000-0000-0000-000000000001";
 
+function isExecutorEnabledFlag() {
+    const envValue = process.env.EXECUTOR_ENABLED;
+    if (typeof envValue === "string") {
+        return envValue.trim().toLowerCase() === "true";
+    }
+    return executorConfig.isExecutorEnabled === true;
+}
+
 // Startup validation
 if (!AO_ROLE) {
     console.error("[FATAL] Missing required environment variable: AO_ROLE. Exiting.");
@@ -233,7 +241,7 @@ async function startPollingIfNeeded() {
     if (isShuttingDown || isPollingActive) {
         return;
     }
-    if (!executorConfig.isExecutorEnabled) {
+    if (!isExecutorEnabledFlag()) {
         console.log("[EXECUTOR_IDLE_GUARD]");
         return;
     }
@@ -304,7 +312,7 @@ console.log(`✅ AO Service is live with role: ${AO_ROLE}`);
 
 const isExecutorRole = AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR";
 
-if (isExecutorRole && executorConfig.isExecutorEnabled) {
+if (isExecutorRole && isExecutorEnabledFlag()) {
     console.log(`[EXECUTOR_START] Executor enabled. Checking for active tasks...`);
     console.log(`[EXECUTOR_START] Poll interval: ${executorConfig.pollInterval}ms | Task timeout: ${executorConfig.taskTimeout}ms`);
     console.log(`[EXECUTOR_START] Allowed actions: ${executorConfig.allowedActions.join(', ')}`);
