@@ -268,7 +268,7 @@ const pollingLoop = async () => {
         console.log("[POLLER] Loop stopping due to shutdown signal.");
         return;
     }
-    if (!executorConfig.isExecutorEnabled || !isPollingActive) {
+    if (!isExecutorEnabledFlag() || !isPollingActive) {
         console.log("[EXECUTOR_IDLE_GUARD]");
         stopPolling();
         return;
@@ -302,7 +302,7 @@ const pollingLoop = async () => {
             stopPolling();
             return;
         }
-        if (!isShuttingDown && executorConfig.isExecutorEnabled && isPollingActive) {
+        if (!isShuttingDown && isExecutorEnabledFlag() && isPollingActive) {
             pollingTimer = setTimeout(pollingLoop, executorConfig.pollInterval);
         }
     }
