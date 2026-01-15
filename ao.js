@@ -20,7 +20,6 @@ import { createClient } from "@supabase/supabase-js";
 import { executorConfig } from "./executor/config.js";
 import { runAction } from "./executor/actionRouter.js";
 
-
 // ========================================
 // ENVIRONMENT & CONFIGURATION
 // ========================================
@@ -50,7 +49,6 @@ if (!SUPABASE_URL || !SUPABASE_KEY) {
     process.exit(1);
 }
 
-
 // ========================================
 // INITIALIZATION
 // ========================================
@@ -63,14 +61,10 @@ try {
     process.exit(1);
 }
 
-
 // ========================================
 // EXECUTOR TASK PROCESSING
 // ========================================
 
-/**
- * Updates the status of a task in the database. Hardened to not throw exceptions.
- */
 async function updateTaskStatus(taskId, status, errorMessage = null) {
     try {
         const updatePayload = {
@@ -78,25 +72,29 @@ async function updateTaskStatus(taskId, status, errorMessage = null) {
             finished_at: new Date().toISOString(),
             ...(errorMessage && { error: errorMessage }),
         };
-        const { error } = await supabase.from("executor_tasks").update(updatePayload).eq("id", taskId);
+        const { error } = await supabase
+            .from("executor_tasks")
+            .update(updatePayload)
+            .eq("id", taskId);
         if (error) {
             console.error(`[EXECUTOR_DB] Failed to update task ${taskId} to status ${status}: ${error.message}`);
         }
     } catch (err) {
-        console.error(`[EXECUTOR_DB] CRITICAL: Network or unexpected error while updating status for task ${taskId}: ${err.message}`);
+        console.error(
+            `[EXECUTOR_DB] CRITICAL: Network or unexpected error while updating status for task ${taskId}: ${err.message}`
+        );
     }
 }
 
-/**
- * Wraps the action execution with timeout and error handling guards.
- * This function will not throw.
- */
 async function runActionWithGuards(task) {
     console.log(`[TASK_PICKED] Processing task ${task.id}, action: ${task.action}`);
 
     const taskPromise = runAction(task);
     const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error(`Task timed out after ${executorConfig.taskTimeout / 1000}s`)), executorConfig.taskTimeout)
+        setTimeout(
+            () => reject(new Error(`Task timed out after ${executorConfig.taskTimeout / 1000}s`)),
+            executorConfig.taskTimeout
+        )
     );
 
     try {
@@ -109,13 +107,9 @@ async function runActionWithGuards(task) {
     }
 }
 
-/**
- * Polls for new tasks and hands them off for processing.
- */
 async function pollExecutorTasks() {
     console.log("[POLL_CYCLE] Polling for an open task...");
 
-    // 1. Find a potential task matching the configured whitelist
     const { data: task, error: queryError } = await supabase
         .from("executor_tasks")
         .select("*")
@@ -139,31 +133,25 @@ async function pollExecutorTasks() {
 
     console.log(`[POLL_CYCLE] Found potential task ${task.id}. Attempting to lock...`);
 
-    // 2. Atomically lock the task by updating its status.
     const { data: lockedTask, error: lockError } = await supabase
         .from("executor_tasks")
         .update({ status: "running", started_at: new Date().toISOString() })
         .eq("id", task.id)
-        .eq("status", "open") // Critial condition to prevent race
+        .eq("status", "open")
         .select()
-        .single(); // Expect one row back
+        .single();
 
     if (lockError || !lockedTask) {
         console.log(`[POLL_CYCLE] Failed to lock task ${task.id}. It was likely taken by another instance.`);
         return;
     }
 
-    // 3. Process the task without blocking the polling loop.
-    // Attach a catch() to the promise to prevent any possibility of an unhandled rejection.
     runActionWithGuards(lockedTask).catch(err => {
-        console.error(`[CRITICAL] Unhandled exception escaped from runActionWithGuards for task ${lockedTask.id}: ${err.message}`);
+        console.error(
+            `[CRITICAL] Unhandled exception escaped from runActionWithGuards for task ${lockedTask.id}: ${err.message}`
+        );
     });
 }
-
-
-// ========================================
-// SERVER STARTUP
-// ========================================
 
 // ========================================
 // SERVER STARTUP & POLLING LOOP
@@ -261,8 +249,6 @@ async function startPollingIfNeeded() {
     pollingLoop();
 }
 
-// A recursive setTimeout loop is more robust than setInterval for async operations,
-// as it guarantees that one poll finishes before the next one is scheduled, preventing overlap.
 const pollingLoop = async () => {
     if (isShuttingDown) {
         console.log("[POLLER] Loop stopping due to shutdown signal.");
@@ -286,7 +272,7 @@ const pollingLoop = async () => {
     isPollingInFlight = true;
     try {
         await pollExecutorTasks();
-    } catch (err) {
+    } catch {
         console.log("[POLLING_BLOCKED_GUARD]");
         stopPolling();
     } finally {
@@ -313,29 +299,27 @@ console.log(`✅ AO Service is live with role: ${AO_ROLE}`);
 const isExecutorRole = AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR";
 
 if (isExecutorRole && isExecutorEnabledFlag()) {
-    console.log(`[EXECUTOR_START] Executor enabled. Checking for active tasks...`);
-    console.log(`[EXECUTOR_START] Poll interval: ${executorConfig.pollInterval}ms | Task timeout: ${executorConfig.taskTimeout}ms`);
-    console.log(`[EXECUTOR_START] Allowed actions: ${executorConfig.allowedActions.join(', ')}`);
+    console.log("[EXECUTOR_START] Executor enabled. Checking for active tasks...");
+    console.log(
+        `[EXECUTOR_START] Poll interval: ${executorConfig.pollInterval}ms | Task timeout: ${executorConfig.taskTimeout}ms`
+    );
+    console.log(`[EXECUTOR_START] Allowed actions: ${executorConfig.allowedActions.join(", ")}`);
     startPollingIfNeeded();
-} else if (isExecutorRole && !executorConfig.isExecutorEnabled) {
-    console.log("[EXECUTOR_IDLE_GUARD]");
 } else {
     console.log("[EXECUTOR_IDLE_GUARD]");
 }
 
-// Handle graceful shutdown by setting a flag that the polling loop checks.
 const shutdown = () => {
     if (isShuttingDown) return;
     console.log("[SHUTDOWN] Signal received. The polling loop will stop after the current cycle.");
     isShuttingDown = true;
     stopPolling();
 
-    // Allow time for any in-flight request to complete before exiting.
     setTimeout(() => {
         console.log("[SHUTDOWN] Exiting process.");
         process.exit(0);
-    }, executorConfig.pollInterval + 1000); // Wait for one poll interval + a buffer
+    }, executorConfig.pollInterval + 1000);
 };
 
-process.on('SIGTERM', shutdown);
-process.on('SIGINT', shutdown);
+process.on("SIGTERM", shutdown);
+process.on("SIGINT", shutdown);
