@@ -32,6 +32,7 @@ if (pollInterval < minPollInterval) {
 // Defines which actions this executor is allowed to run.
 // This is a hard guard. Actions not on this list will not be picked up.
 const allowedActions = [
+    '__debug_action__',
     'system_repair_full_chain',
     'system_repair_full',
     'repair_full_system',
