@@ -5,7 +5,9 @@
 import dotenv from "dotenv";
 import { createClient } from "@supabase/supabase-js";
 
-import { executorConfig } from "./executor/config.js";
+// ✅ CORRECT PAD: config.js staat in repo root
+import { executorConfig } from "./config.js";
+
 import { runAction } from "./executor/actionRouter.js";
 
 dotenv.config();
@@ -32,7 +34,10 @@ async function updateTaskStatus(taskId, status, errorMessage = null) {
             finished_at: new Date().toISOString(),
             ...(errorMessage && { error: errorMessage }),
         };
-        await supabase.from("executor_tasks").update(payload).eq("id", taskId);
+        await supabase
+            .from("executor_tasks")
+            .update(payload)
+            .eq("id", taskId);
     } catch {}
 }
 
@@ -65,7 +70,10 @@ async function pollExecutorTasks() {
 
     const { data: locked } = await supabase
         .from("executor_tasks")
-        .update({ status: "running", started_at: new Date().toISOString() })
+        .update({
+            status: "running",
+            started_at: new Date().toISOString(),
+        })
         .eq("id", task.id)
         .eq("status", "open")
         .select()
@@ -91,7 +99,10 @@ async function pollingLoop() {
         await pollExecutorTasks();
     } finally {
         isPollingInFlight = false;
-        pollingTimer = setTimeout(pollingLoop, executorConfig.pollInterval);
+        pollingTimer = setTimeout(
+            pollingLoop,
+            executorConfig.pollInterval
+        );
     }
 }
 
@@ -99,7 +110,10 @@ async function pollingLoop() {
 
 console.log(`AO Executor live | role=${AO_ROLE}`);
 
-if ((AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") && isExecutorEnabledFlag()) {
+if (
+    (AO_ROLE === "EXECUTOR" || AO_ROLE === "AO_EXECUTOR") &&
+    isExecutorEnabledFlag()
+) {
     console.log("[POLLING_STARTED]");
     pollingTimer = setTimeout(pollingLoop, 0);
 }
