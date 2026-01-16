@@ -1,6 +1,7 @@
 // executor/handlers/generateStabu.js
 import { createClient } from "@supabase/supabase-js"
-import * as pdfjsLib from "pdfjs-dist/build/pdf.js";
+import * as pdfjsLib from "pdfjs-dist/build/pdf.mjs";
+
 
 
 const supabase = createClient(
