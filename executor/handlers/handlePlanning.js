@@ -1,4 +1,5 @@
-import supabase from "../../supabaseClient.js"
+import { supabase } from "../../lib/supabase.js";
+
 
 function assert(cond, msg) {
   if (!cond) throw new Error(msg)
