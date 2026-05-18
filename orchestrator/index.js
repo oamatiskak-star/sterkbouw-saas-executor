@@ -4,6 +4,8 @@
 import { isOrchestratorEnabled, WORKER_ID } from './state.js'
 import { startHeartbeat, markOffline } from './heartbeat.js'
 import { startPoller, stopPoller } from './poller.js'
+import { startWatchdog, stopWatchdog } from './watchdog.js'
+import { startMemorySync, stopMemorySync } from './memorySync.js'
 import { emitEvent } from './logging.js'
 
 let started = false
@@ -18,12 +20,21 @@ export function startOrchestrator() {
 
   console.log(`[orchestrator] starten als worker=${WORKER_ID}`)
   startHeartbeat()
+
+  // Memory sync vóór poller starten — handlers kunnen meteen context lezen.
+  startMemorySync().catch((e) => {
+    console.error(`[orchestrator] memorySync startup faalde: ${e?.message ?? e}`)
+  })
+
+  startWatchdog()
   startPoller()
   emitEvent('worker_started', { worker_id: WORKER_ID }, { severity: 'info' })
 
   const shutdown = async (signal) => {
     console.log(`[orchestrator] shutdown via ${signal}`)
     stopPoller()
+    stopWatchdog()
+    stopMemorySync()
     await markOffline()
     await emitEvent('worker_stopped', { worker_id: WORKER_ID, signal }, { severity: 'info' })
   }

@@ -17,8 +17,9 @@ import { mkdir } from 'node:fs/promises'
 import path from 'node:path'
 import { CLAUDE_CODE_BIN, WORK_DIR } from '../state.js'
 import { logTask } from '../logging.js'
+import { loadContext, renderContext } from '../memoryContext.js'
 
-function buildPrompt(task) {
+function buildPrompt(task, memoryCtx) {
   const lines = [
     `# Taak: ${task.title}`,
     '',
@@ -37,6 +38,8 @@ function buildPrompt(task) {
   if (task.escalation_response) {
     lines.push('', '## Human input (na escalation)', JSON.stringify(task.escalation_response))
   }
+  const ctx = renderContext(memoryCtx ?? {})
+  if (ctx) lines.push('', ctx)
   return lines.join('\n')
 }
 
@@ -46,7 +49,9 @@ export async function runClaudeCode(task) {
   await mkdir(workdir, { recursive: true })
 
   const allowedTools = (task.allowed_actions ?? []).join(',')
-  const prompt = buildPrompt(task)
+  const memoryCtx = await loadContext()
+  await logTask(task.id, 'info', 'Memory context geladen', { keys: Object.keys(memoryCtx) })
+  const prompt = buildPrompt(task, memoryCtx)
 
   const args = ['--print']
   if (allowedTools) args.push('--allowed-tools', allowedTools)

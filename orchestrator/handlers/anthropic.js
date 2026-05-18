@@ -13,6 +13,7 @@ import path from 'node:path'
 import { ANTHROPIC_API_KEY, ANTHROPIC_MODEL, WORK_DIR } from '../state.js'
 import { logTask } from '../logging.js'
 import { ask, WaitingForHumanInput } from '../escalation.js'
+import { loadContext, renderContext } from '../memoryContext.js'
 
 const TOOL_DEFS = {
   read_file: {
@@ -99,8 +100,8 @@ async function runTool(name, input, ctx, task) {
   throw new Error(`onbekend tool: ${name}`)
 }
 
-function systemPrompt(task) {
-  return [
+function systemPrompt(task, memoryCtx) {
+  const base = [
     `Je bent een AI-agent in de Orlando Core OS orchestrator (worker-context).`,
     `Taak: "${task.title}".`,
     `Werk methodisch elk objective af. Eindig altijd met de complete-tool.`,
@@ -108,6 +109,8 @@ function systemPrompt(task) {
       ? `Safe mode: ALLEEN read-only acties. Geen schrijven, geen netwerk.`
       : ``,
   ].filter(Boolean).join(' ')
+  const ctx = renderContext(memoryCtx)
+  return ctx ? `${base}\n${ctx}` : base
 }
 
 function userPrompt(task) {
@@ -137,16 +140,21 @@ export async function runAnthropic(task) {
 
   const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY })
   const tools = selectTools(task.allowed_actions)
+  const memoryCtx = await loadContext()
+  await logTask(task.id, 'info', 'Memory context geladen', {
+    keys: Object.keys(memoryCtx),
+  })
 
   const ctx = { workdir, completed: false, summary: '' }
   const messages = [{ role: 'user', content: userPrompt(task) }]
+  const sys = systemPrompt(task, memoryCtx)
 
   const MAX_TURNS = 24
   for (let turn = 0; turn < MAX_TURNS; turn++) {
     const resp = await anthropic.messages.create({
       model:       ANTHROPIC_MODEL,
       max_tokens:  2048,
-      system:      systemPrompt(task),
+      system:      sys,
       tools,
       messages,
     })
