@@ -9,6 +9,7 @@ import { createClient } from "@supabase/supabase-js";
 import { executorConfig } from "./config.js";
 
 import { runAction } from "./executor/actionRouter.js";
+import { startOrchestrator } from "./orchestrator/index.js";
 
 dotenv.config();
 
@@ -117,6 +118,10 @@ if (
     console.log("[POLLING_STARTED]");
     pollingTimer = setTimeout(pollingLoop, 0);
 }
+
+// Orchestrator (F2) draait onafhankelijk van de legacy executor poller.
+// Activeert zichzelf alleen als ORCHESTRATOR_ENABLED=true.
+startOrchestrator();
 
 process.on("SIGTERM", () => {
     if (pollingTimer) clearTimeout(pollingTimer);
