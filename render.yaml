@@ -22,6 +22,31 @@ services:
         value: https://ai-engine.onrender.com
       - key: BACKEND_URL
         value: https://sterkbouw-saas-back.onrender.com
+      # ── Orchestrator (F2+F3) ─────────────────────────────────────────────
+      # Activeert orchestrator-laag naast bestaande executor_tasks poller.
+      - key: ORCHESTRATOR_ENABLED
+        value: "true"
+      - key: ORCHESTRATOR_WORKER_ID
+        value: render-orch-1
+      - key: ORCHESTRATOR_POLL_INTERVAL_MS
+        value: "2000"
+      - key: ORCHESTRATOR_HEARTBEAT_INTERVAL_MS
+        value: "10000"
+      - key: ORCHESTRATOR_WATCHDOG_INTERVAL_MS
+        value: "30000"
+      - key: ORCHESTRATOR_WORKER_TIMEOUT_S
+        value: "60"
+      - key: ORCHESTRATOR_MAX_CONCURRENCY
+        value: "1"
+      - key: ORCHESTRATOR_TASK_TIMEOUT_MS
+        value: "600000"
+      - key: ORCHESTRATOR_WORK_DIR
+        value: /tmp/orchestrator
+      - key: ANTHROPIC_MODEL
+        value: claude-sonnet-4-6
+      # Secret — handmatig in te vullen via Render dashboard
+      - key: ANTHROPIC_API_KEY
+        sync: false
     healthCheckPath: /ping
     autoDeploy: true
 
