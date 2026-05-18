@@ -19,6 +19,7 @@
     "format": "prettier --write ."
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.95.2",
     "@supabase/supabase-js": "^2.39.0",
     "node-fetch": "^3.3.2",
     "express": "^4.18.2",
