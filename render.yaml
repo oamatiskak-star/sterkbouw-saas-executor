@@ -56,6 +56,9 @@ services:
       # Secret — handmatig in te vullen via Render dashboard
       - key: ANTHROPIC_API_KEY
         sync: false
+      # YouTube Data API v3 key voor Viral Intelligence Engine scanner
+      - key: YOUTUBE_API_KEY
+        sync: false
     healthCheckPath: /ping
     autoDeploy: true
 
