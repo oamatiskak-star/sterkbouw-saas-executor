@@ -153,10 +153,11 @@ export async function runAnthropic(task) {
   const sys = systemPrompt(task, memoryCtx)
 
   const MAX_TURNS = 24
+  const MAX_TOKENS = parseInt(process.env.ORCHESTRATOR_MAX_TOKENS ?? '16384', 10)
   for (let turn = 0; turn < MAX_TURNS; turn++) {
     const resp = await anthropic.messages.create({
       model:       ANTHROPIC_MODEL,
-      max_tokens:  2048,
+      max_tokens:  MAX_TOKENS,
       system:      sys,
       tools,
       messages,
@@ -166,6 +167,23 @@ export async function runAnthropic(task) {
       usage: resp.usage,
     })
 
+    // Capture partial text als max_tokens is gehit — dan eindigt deze turn
+    // mogelijk zonder complete() tool call en gaat de output anders verloren.
+    const textParts = resp.content
+      .filter((c) => c.type === 'text')
+      .map((c) => c.text)
+      .join('\n')
+
+    if (resp.stop_reason === 'max_tokens') {
+      await logTask(task.id, 'warn', `LLM bereikte max_tokens (${MAX_TOKENS}) — output mogelijk afgekapt`, {
+        partial_text_len: textParts.length,
+      })
+      if (textParts) {
+        // Behoud zoveel mogelijk; complete() krijgt mogelijk niet de kans om te firen
+        ctx.summary = textParts.slice(0, 8000)
+      }
+    }
+
     messages.push({ role: 'assistant', content: resp.content })
 
     const toolUses = resp.content.filter((c) => c.type === 'tool_use')
@@ -173,11 +191,13 @@ export async function runAnthropic(task) {
     if (toolUses.length === 0) {
       // Geen tool call — sluit af veilig
       await logTask(task.id, 'warn', 'LLM stopte zonder complete-tool')
-      ctx.summary = resp.content
-        .filter((c) => c.type === 'text')
-        .map((c) => c.text)
-        .join('\n')
-        .slice(0, 2000)
+      if (textParts) ctx.summary = textParts.slice(0, 8000)
+      ctx.completed = true
+      break
+    }
+
+    // Stop ook bij max_tokens als de tool_use mogelijk corrupt is
+    if (resp.stop_reason === 'max_tokens') {
       ctx.completed = true
       break
     }
