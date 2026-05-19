@@ -1,17 +1,19 @@
 // Dispatcher: routeert op task.executor.
 
-import { runAnthropic      } from './anthropic.js'
-import { runClaudeCode     } from './claudeCode.js'
-import { runShell          } from './shell.js'
-import { runViralScanner   } from './viralScanner.js'
-import { runContentFactory } from './forge.js'
+import { runAnthropic       } from './anthropic.js'
+import { runClaudeCode      } from './claudeCode.js'
+import { runShell           } from './shell.js'
+import { runViralScanner    } from './viralScanner.js'
+import { runContentFactory  } from './forge.js'
+import { runGravityDetector } from './gravityDetector.js'
 
 export const HANDLERS = {
-  anthropic:         runAnthropic,
-  'claude-code':     runClaudeCode,
-  shell:             runShell,
-  'viral_scanner':   runViralScanner,
-  'content_factory': runContentFactory,
+  anthropic:           runAnthropic,
+  'claude-code':       runClaudeCode,
+  shell:               runShell,
+  'viral_scanner':     runViralScanner,
+  'content_factory':   runContentFactory,
+  'gravity_detector':  runGravityDetector,
 }
 
 export function selectHandler(task) {
