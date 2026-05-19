@@ -12,6 +12,7 @@ import { runTrendScanner    } from './trendScanner.js'
 import { runRetentionLab    } from './retentionLab.js'
 import { runWinnerExtractor } from './winnerExtractor.js'
 import { runAudioScanner    } from './audioScanner.js'
+import { runSponsorEngine   } from './sponsorEngine.js'
 
 export const HANDLERS = {
   anthropic:           runAnthropic,
@@ -26,6 +27,7 @@ export const HANDLERS = {
   'retention_lab':     runRetentionLab,
   'winner_extractor':  runWinnerExtractor,
   'audio_scanner':     runAudioScanner,
+  'sponsor_engine':    runSponsorEngine,
 }
 
 export function selectHandler(task) {
