@@ -9,6 +9,7 @@ import { runGravityDetector } from './gravityDetector.js'
 import { runAtlasUpload     } from './atlas.js'
 import { runRenderer        } from './renderer.js'
 import { runTrendScanner    } from './trendScanner.js'
+import { runRetentionLab    } from './retentionLab.js'
 
 export const HANDLERS = {
   anthropic:           runAnthropic,
@@ -20,6 +21,7 @@ export const HANDLERS = {
   'atlas_upload':      runAtlasUpload,
   'renderer':          runRenderer,
   'trend_scanner':     runTrendScanner,
+  'retention_lab':     runRetentionLab,
 }
 
 export function selectHandler(task) {
