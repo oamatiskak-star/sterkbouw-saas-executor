@@ -50,13 +50,40 @@ function buildClient() {
   })
 }
 
-function buildSystemPrompt() {
-  return [
+async function loadTopHooks(supabase, limit = 5) {
+  const { data, error } = await supabase
+    .from('hook_library')
+    .select('hook_text, hook_pattern, success_score, hook_kind, replay_friendly')
+    .gte('success_score', 60)
+    .order('success_score', { ascending: false })
+    .order('created_at', { ascending: false })
+    .limit(limit)
+  if (error) return []
+  return data ?? []
+}
+
+function buildSystemPrompt(topHooks) {
+  const base = [
     'Je bent Forge, de Content Factory persona binnen Orlando Core OS Media Holding.',
     'Je vertaalt viral signalen en kanaal-niches naar concrete, render-klare content briefs.',
     'Schrijf de brief in het Nederlands tenzij anders gevraagd. Visual/audio prompts mogen in het Engels voor compatibiliteit met gen-modellen.',
     'Eindig altijd met de content_brief tool.',
   ].join(' ')
+
+  if (!topHooks || topHooks.length === 0) return base
+
+  const hooksBlock = topHooks
+    .map((h, i) => `${i + 1}. "${h.hook_text}" — pattern=${h.hook_pattern ?? '—'}, score=${h.success_score}${h.replay_friendly ? ', replay-friendly' : ''}`)
+    .join('\n')
+
+  return `${base}
+
+## Top bewezen hooks uit de Hook Library
+Gebruik deze als inspiratie voor pacing, ritme en pattern. NIET kopiëren, maar wel hetzelfde hook-pattern toepassen wanneer het past:
+
+${hooksBlock}
+
+Kies bewust een hook_pattern (curiosity_gap / pattern_break / visual_shock / dopamine_hit / etc) en zet die in de brief.`
 }
 
 async function buildUserPrompt(supabase, payload) {
@@ -116,7 +143,8 @@ async function buildUserPrompt(supabase, payload) {
 async function callForge(task, supabase) {
   if (!ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY ontbreekt')
   const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY })
-  const system = buildSystemPrompt()
+  const topHooks = await loadTopHooks(supabase, 5)
+  const system = buildSystemPrompt(topHooks)
   const userPrompt = await buildUserPrompt(supabase, task.payload ?? {})
 
   const resp = await anthropic.messages.create({
