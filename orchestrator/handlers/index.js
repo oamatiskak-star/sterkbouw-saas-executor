@@ -6,6 +6,7 @@ import { runShell           } from './shell.js'
 import { runViralScanner    } from './viralScanner.js'
 import { runContentFactory  } from './forge.js'
 import { runGravityDetector } from './gravityDetector.js'
+import { runAtlasUpload     } from './atlas.js'
 
 export const HANDLERS = {
   anthropic:           runAnthropic,
@@ -14,6 +15,7 @@ export const HANDLERS = {
   'viral_scanner':     runViralScanner,
   'content_factory':   runContentFactory,
   'gravity_detector':  runGravityDetector,
+  'atlas_upload':      runAtlasUpload,
 }
 
 export function selectHandler(task) {
