@@ -10,6 +10,7 @@ import { runAtlasUpload     } from './atlas.js'
 import { runRenderer        } from './renderer.js'
 import { runTrendScanner    } from './trendScanner.js'
 import { runRetentionLab    } from './retentionLab.js'
+import { runWinnerExtractor } from './winnerExtractor.js'
 
 export const HANDLERS = {
   anthropic:           runAnthropic,
@@ -22,6 +23,7 @@ export const HANDLERS = {
   'renderer':          runRenderer,
   'trend_scanner':     runTrendScanner,
   'retention_lab':     runRetentionLab,
+  'winner_extractor':  runWinnerExtractor,
 }
 
 export function selectHandler(task) {
