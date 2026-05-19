@@ -48,7 +48,7 @@ services:
       - key: ORCHESTRATOR_MAX_CONCURRENCY
         value: "1"
       - key: ORCHESTRATOR_TASK_TIMEOUT_MS
-        value: "600000"
+        value: "900000"
       - key: ORCHESTRATOR_WORK_DIR
         value: /tmp/orchestrator
       - key: ANTHROPIC_MODEL
@@ -58,6 +58,9 @@ services:
         sync: false
       # YouTube Data API v3 key voor Viral Intelligence Engine scanner
       - key: YOUTUBE_API_KEY
+        sync: false
+      # Replicate API token voor Phase 2.5 render pipeline (text/image-to-video)
+      - key: REPLICATE_API_TOKEN
         sync: false
     healthCheckPath: /ping
     autoDeploy: true
