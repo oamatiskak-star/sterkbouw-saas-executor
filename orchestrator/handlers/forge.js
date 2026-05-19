@@ -177,9 +177,13 @@ export async function runContentFactory(task) {
   const brief = await callForge(task, supabase)
 
   // Bak optionele metadata in content_brief zodat triggers / aggregaties
-  // de oorsprong kunnen vinden (Phase 6 winner extraction link)
-  if (payload.winner_job_id) brief._winner_job_id = payload.winner_job_id
-  if (payload.variant_kind)  brief._variant_kind = payload.variant_kind
+  // de oorsprong kunnen vinden
+  // - Phase 6 winner extraction: _winner_job_id
+  // - Phase 11 language expansion: _language_target_id
+  if (payload.winner_job_id)        brief._winner_job_id = payload.winner_job_id
+  if (payload.variant_kind)         brief._variant_kind = payload.variant_kind
+  if (payload.language_target_id)   brief._language_target_id = payload.language_target_id
+  if (payload.language)             brief._language = payload.language
 
   // Insert in media_holding_content_items
   const insert = {
