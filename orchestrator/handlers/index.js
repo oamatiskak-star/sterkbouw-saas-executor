@@ -17,6 +17,7 @@ import { runMonetizationTracker } from './monetizationTracker.js'
 import { runLanguageExpander    } from './languageExpander.js'
 import { runCronDispatcher      } from './cronDispatcher.js'
 import { runAffiliateInjector   } from './affiliateInjector.js'
+import { runLaunchStep          } from './launchStep.js'
 
 export const HANDLERS = {
   anthropic:               runAnthropic,
@@ -36,6 +37,7 @@ export const HANDLERS = {
   'language_expander':     runLanguageExpander,
   'cron_dispatcher':       runCronDispatcher,
   'affiliate_injector':    runAffiliateInjector,
+  'launch_step':           runLaunchStep,
 }
 
 export function selectHandler(task) {
