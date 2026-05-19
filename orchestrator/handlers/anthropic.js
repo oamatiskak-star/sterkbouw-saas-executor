@@ -104,9 +104,13 @@ async function runTool(name, input, ctx, task) {
 }
 
 function systemPrompt(task, memoryCtx) {
+  const persona = task.payload?.persona
+  const personaPrefix = persona
+    ? `Je acteert als persona "${persona}" binnen de Orlando Core OS Agent Identity Layer. Spreek vanuit deze rol en houd consistent met de verantwoordelijkheid van deze persona. `
+    : `Je bent een AI-agent in de Orlando Core OS orchestrator (worker-context). `
+
   const base = [
-    `Je bent een AI-agent in de Orlando Core OS orchestrator (worker-context).`,
-    `Taak: "${task.title}".`,
+    personaPrefix + `Taak: "${task.title}".`,
     `Werk methodisch elk objective af. Eindig altijd met de complete-tool.`,
     task.safe_mode
       ? `Safe mode: ALLEEN read-only acties. Geen schrijven, geen netwerk.`
