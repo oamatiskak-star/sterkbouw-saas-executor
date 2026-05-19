@@ -15,6 +15,7 @@ import { runAudioScanner        } from './audioScanner.js'
 import { runSponsorEngine       } from './sponsorEngine.js'
 import { runMonetizationTracker } from './monetizationTracker.js'
 import { runLanguageExpander    } from './languageExpander.js'
+import { runCronDispatcher      } from './cronDispatcher.js'
 
 export const HANDLERS = {
   anthropic:               runAnthropic,
@@ -32,6 +33,7 @@ export const HANDLERS = {
   'sponsor_engine':        runSponsorEngine,
   'monetization_tracker':  runMonetizationTracker,
   'language_expander':     runLanguageExpander,
+  'cron_dispatcher':       runCronDispatcher,
 }
 
 export function selectHandler(task) {
