@@ -58,10 +58,13 @@ const TOOL_DEFS = {
 function selectTools(allowedActions) {
   const tools = [TOOL_DEFS.complete]
   const a = new Set(allowedActions ?? [])
-  if (a.has('read')) {
+  // '*' wildcard betekent: alle non-write tools (read + ask_human + complete).
+  // Schrijf/shell/netwerk-acties zitten bewust niet in deze handler.
+  const all = a.has('*')
+  if (all || a.has('read')) {
     tools.push(TOOL_DEFS.read_file, TOOL_DEFS.list_dir)
   }
-  if (a.has('ask_human')) {
+  if (all || a.has('ask_human')) {
     tools.push(TOOL_DEFS.ask_human)
   }
   return tools

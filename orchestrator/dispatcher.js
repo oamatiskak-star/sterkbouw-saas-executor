@@ -7,13 +7,17 @@ import { WaitingForHumanInput } from './escalation.js'
 import { logTask, logError } from './logging.js'
 
 async function setCompleted(taskId, summary) {
+  const safeSummary =
+    typeof summary === 'string' ? summary.slice(0, 8000) : null
+
   await supabase.from('orchestrator_tasks').update({
-    status:      'completed',
-    finished_at: new Date().toISOString(),
-    paused_state: null,
-    error:       null,
+    status:         'completed',
+    finished_at:    new Date().toISOString(),
+    paused_state:   null,
+    error:          null,
+    result_summary: safeSummary,
   }).eq('id', taskId)
-  await logTask(taskId, 'info', 'Task completed', { summary: summary?.slice?.(0, 500) })
+  await logTask(taskId, 'info', 'Task completed', { summary: safeSummary?.slice?.(0, 500) })
 }
 
 async function setFailedOrRetry(task, err) {
