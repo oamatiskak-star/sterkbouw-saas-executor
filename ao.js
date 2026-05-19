@@ -2,6 +2,7 @@
  * ao.js — AO/SterkCalc Executor (FIXED POLLING ENGINE)
  */
 
+import http from "node:http";
 import dotenv from "dotenv";
 import { createClient } from "@supabase/supabase-js";
 
@@ -123,12 +124,30 @@ if (
 // Activeert zichzelf alleen als ORCHESTRATOR_ENABLED=true.
 startOrchestrator();
 
+// Render `type: web` vereist een gebonden HTTP-poort + health check.
+// Minimale server: /ping → 200 OK, alles anders → 404.
+const PORT = parseInt(process.env.PORT ?? "10000", 10);
+const httpServer = http.createServer((req, res) => {
+    if (req.url === "/ping" || req.url === "/health") {
+        res.writeHead(200, { "content-type": "text/plain" });
+        res.end("OK");
+        return;
+    }
+    res.writeHead(404, { "content-type": "text/plain" });
+    res.end("not found");
+});
+httpServer.listen(PORT, () => {
+    console.log(`[HTTP] listening on :${PORT}`);
+});
+
 process.on("SIGTERM", () => {
     if (pollingTimer) clearTimeout(pollingTimer);
+    httpServer.close();
     process.exit(0);
 });
 
 process.on("SIGINT", () => {
     if (pollingTimer) clearTimeout(pollingTimer);
+    httpServer.close();
     process.exit(0);
 });

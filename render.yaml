@@ -18,12 +18,21 @@ services:
         sync: false
       - key: SUPABASE_KEY
         sync: false
+      # ao.js verwacht SUPABASE_SERVICE_ROLE_KEY (niet SUPABASE_KEY).
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
       - key: AI_ENGINE_URL
         value: https://ai-engine.onrender.com
       - key: BACKEND_URL
         value: https://sterkbouw-saas-back.onrender.com
       # ── Orchestrator (F2+F3) ─────────────────────────────────────────────
       # Activeert orchestrator-laag naast bestaande executor_tasks poller.
+      # Orchestrator schrijft naar orlando-core-os Supabase (apart project van
+      # de sterkbouw executor_tasks DB). Beide secrets in Render dashboard zetten.
+      - key: ORCHESTRATOR_SUPABASE_URL
+        sync: false
+      - key: ORCHESTRATOR_SUPABASE_SERVICE_ROLE_KEY
+        sync: false
       - key: ORCHESTRATOR_ENABLED
         value: "true"
       - key: ORCHESTRATOR_WORKER_ID

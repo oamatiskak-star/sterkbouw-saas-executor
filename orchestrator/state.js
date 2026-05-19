@@ -4,16 +4,25 @@
 import { createClient } from '@supabase/supabase-js'
 import os from 'node:os'
 
-const SUPABASE_URL = process.env.SUPABASE_URL
-const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY
+// Orchestrator-tabellen leven in orlando-core-os Supabase.
+// ao.js (executor_tasks) leeft op sterkbouw Supabase.
+// Daarom dedicated ORCHESTRATOR_* env vars met fallback naar de bestaande
+// SUPABASE_* zodat lokaal draaien tegen één DB nog steeds werkt.
+const ORCH_SUPABASE_URL =
+  process.env.ORCHESTRATOR_SUPABASE_URL ?? process.env.SUPABASE_URL
+const ORCH_SUPABASE_KEY =
+  process.env.ORCHESTRATOR_SUPABASE_SERVICE_ROLE_KEY ??
+  process.env.SUPABASE_SERVICE_ROLE_KEY
 
-if (!SUPABASE_URL || !SUPABASE_KEY) {
-  // De executor controleert dit al bij startup; hier nogmaals voor zekerheid.
-  console.warn('[orchestrator] SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY ontbreken — orchestrator inactief')
+if (!ORCH_SUPABASE_URL || !ORCH_SUPABASE_KEY) {
+  console.warn(
+    '[orchestrator] ORCHESTRATOR_SUPABASE_URL / ORCHESTRATOR_SUPABASE_SERVICE_ROLE_KEY ' +
+    '(of SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY fallback) ontbreken — orchestrator inactief'
+  )
 }
 
-export const supabase = SUPABASE_URL && SUPABASE_KEY
-  ? createClient(SUPABASE_URL, SUPABASE_KEY, {
+export const supabase = ORCH_SUPABASE_URL && ORCH_SUPABASE_KEY
+  ? createClient(ORCH_SUPABASE_URL, ORCH_SUPABASE_KEY, {
       auth: { persistSession: false, autoRefreshToken: false },
     })
   : null
